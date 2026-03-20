@@ -78,7 +78,8 @@ router.post('/login', async (req: Request, res: Response) => {
       }
     });
   } catch (error: any) {
-    res.status(401).json({ success: false, error: error.message });
+    console.error('Login error:', error);
+    res.status(401).json({ success: false, error: String(error?.message || 'Nao foi possivel entrar.') });
   }
 });
 

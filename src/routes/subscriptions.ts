@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authMiddleware } from '../middleware/auth';
+import { authMiddleware, blockAccessProfilesMiddleware } from '../middleware/auth';
 import * as subscriptionService from '../services/subscriptionService';
 import * as mercadoPagoService from '../services/mercadoPagoService';
 
@@ -20,7 +20,7 @@ router.get('/tiers', async (req: Request, res: Response) => {
 });
 
 // GET /subscriptions/current - Get current user's subscription
-router.get('/current', authMiddleware, async (req: Request, res: Response) => {
+router.get('/current', authMiddleware, blockAccessProfilesMiddleware('clientes_sb'), async (req: Request, res: Response) => {
   try {
     const subscription = await subscriptionService.getUserSubscriptionWithTierInfo(req.user!.id);
 
@@ -34,7 +34,7 @@ router.get('/current', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // POST /subscriptions/create-checkout - Create Mercado Pago checkout
-router.post('/create-checkout', authMiddleware, async (req: Request, res: Response) => {
+router.post('/create-checkout', authMiddleware, blockAccessProfilesMiddleware('clientes_sb'), async (req: Request, res: Response) => {
   try {
     const { tierId } = req.body;
 
@@ -83,7 +83,7 @@ router.post('/create-checkout', authMiddleware, async (req: Request, res: Respon
 });
 
 // POST /subscriptions/cancel - Cancel user's subscription
-router.post('/cancel', authMiddleware, async (req: Request, res: Response) => {
+router.post('/cancel', authMiddleware, blockAccessProfilesMiddleware('clientes_sb'), async (req: Request, res: Response) => {
   try {
     const subscription = await subscriptionService.getUserSubscription(req.user!.id);
 

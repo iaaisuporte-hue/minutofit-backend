@@ -22,6 +22,10 @@ router.post('/checkins', authMiddleware, async (req: Request, res: Response) => 
       return res.status(400).json({ success: false, error: 'Invalid check-in source' });
     }
 
+    if (req.user?.accessProfile === 'clientes_sb' && source === 'activity') {
+      return res.status(403).json({ success: false, error: 'Activity check-ins are not available for this profile' });
+    }
+
     const data = await recordGamificationCheckin({
       userId: req.user!.id,
       source,

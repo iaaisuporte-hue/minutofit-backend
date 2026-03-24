@@ -15,6 +15,15 @@ Node.js/Express/TypeScript backend for the MinutoFit Fitness SaaS platform with 
 ✅ CORS enabled
 ✅ Webhook handling for payments
 
+## Access Profile Convention
+
+- Canonical restricted student access profile: `clientes_sb`
+- Do not use alternative names such as `bsclientes`
+- Keep this identifier aligned with:
+  - backend `users.access_profile`
+  - frontend access control profile key
+  - mobile app session/profile mapping
+
 ## Prerequisites
 
 - Node.js 18+
@@ -121,6 +130,16 @@ The API will be available at `http://localhost:3000/api`
 - `POST /api/subscriptions/create-checkout` - Create Mercado Pago checkout (requires JWT)
 - `POST /api/subscriptions/cancel` - Cancel subscription (requires JWT)
 
+### Videos
+
+- `GET /api/videos/search` - Search videos (requires JWT)
+  - Query params:
+  - `tags=slug1,slug2`
+  - `limit=10` (max 50)
+  - `visualSupport=true|false` (maps to audio description availability)
+  - `auditorySupport=true|false` (maps to subtitles or Libras)
+  - `motorSupport=true|false` (maps to low impact friendly)
+
 ### Admin
 
 - `GET /api/admin/dashboard/metrics` - Dashboard metrics (admin only)
@@ -169,6 +188,16 @@ The API will be available at `http://localhost:3000/api`
 - `tags` - Video tags
 - `video_tags` - Video-tag relationships
 - `video_access` - Subscription tier access control for videos
+
+### Video Accessibility Fields
+
+The `videos` table includes accessibility-oriented metadata fields to support inclusive workout delivery:
+
+- `has_subtitles` - Indicates subtitle/closed-caption availability
+- `has_libras` - Indicates Libras/sign-language companion availability
+- `has_audio_description` - Indicates audio description track availability
+- `low_impact_friendly` - Indicates safer adaptation for reduced mobility contexts
+- `accessibility_notes` - Human-readable guidance for adaptations and care notes
 
 ## Scripts
 

@@ -57,3 +57,17 @@ export function adminMiddleware(req: Request, res: Response, next: NextFunction)
 
   next();
 }
+
+export function blockAccessProfilesMiddleware(...blockedProfiles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    if (req.user.accessProfile && blockedProfiles.includes(req.user.accessProfile)) {
+      return res.status(403).json({ success: false, error: 'Access restricted for this profile' });
+    }
+
+    next();
+  };
+}

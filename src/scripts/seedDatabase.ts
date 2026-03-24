@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) UNIQUE NOT NULL,
   password VARCHAR(255),
   role VARCHAR(50) NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'personal', 'nutri', 'admin')),
+  access_profile VARCHAR(50),
   name VARCHAR(255),
   cpf VARCHAR(11) UNIQUE,
   phone VARCHAR(20),
@@ -74,6 +75,11 @@ CREATE TABLE IF NOT EXISTS videos (
   url VARCHAR(500) NOT NULL,
   thumbnail_url VARCHAR(500),
   duration_seconds INTEGER,
+  has_subtitles BOOLEAN NOT NULL DEFAULT FALSE,
+  has_libras BOOLEAN NOT NULL DEFAULT FALSE,
+  has_audio_description BOOLEAN NOT NULL DEFAULT FALSE,
+  low_impact_friendly BOOLEAN NOT NULL DEFAULT FALSE,
+  accessibility_notes TEXT,
   personal_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -188,6 +194,7 @@ async function runMigration() {
     await ensureUserRegistrationFields();
     await ensureGamificationTables();
     await ensurePersonalTables();
+    await ensureVideoAccessibilityFields();
 
     console.log('✅ Database schema created successfully');
     
@@ -214,6 +221,7 @@ async function runMigration() {
 async function ensureUserRegistrationFields() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cpf VARCHAR(11)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20)`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS access_profile VARCHAR(50)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_historico_hipertensao BOOLEAN DEFAULT TRUE`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_historico_cardiaco BOOLEAN DEFAULT TRUE`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_restricao_medica_exercicio BOOLEAN DEFAULT TRUE`);
@@ -290,6 +298,14 @@ async function ensurePersonalTables() {
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_personal_assignments_student_id ON personal_student_assignments(student_id, status)`);
 }
 
+async function ensureVideoAccessibilityFields() {
+  await pool.query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS has_subtitles BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS has_libras BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS has_audio_description BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS low_impact_friendly BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE videos ADD COLUMN IF NOT EXISTS accessibility_notes TEXT`);
+}
+
 async function seedSubscriptionTiers() {
   const tiers = [
     { name: 'Free', price_brl: 0, max_videos_per_month: 10, features: { includes: ['limited_videos', 'basic_support'] } },
@@ -360,9 +376,20 @@ async function seedUsers() {
       password: '123456',
       name: 'Aluno Demo',
       role: 'user',
+      accessProfile: 'clientes_sb',
       cpf: '12345678909',
       phone: '85999990003',
       tierName: 'Free',
+    },
+    {
+      email: 'gerencia@minutofit.com.br',
+      password: '123456',
+      name: 'Gerencia MinutoFit',
+      role: 'admin',
+      accessProfile: 'admin_owner',
+      cpf: '98765432100',
+      phone: '85999990009',
+      tierName: 'Premium',
     },
     {
       email: 'natalia.freitas@treinai.com',
@@ -429,6 +456,7 @@ async function seedUsers() {
          email,
          password,
          role,
+         access_profile,
          name,
          cpf,
          phone,
@@ -441,10 +469,11 @@ async function seedUsers() {
          aceita_responsabilidade_informacoes,
          profile_completed
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE, TRUE, TRUE, TRUE, TRUE, TRUE)
        ON CONFLICT (email) DO UPDATE SET
          password = EXCLUDED.password,
          role = EXCLUDED.role,
+         access_profile = EXCLUDED.access_profile,
          name = EXCLUDED.name,
          cpf = EXCLUDED.cpf,
          phone = EXCLUDED.phone,
@@ -456,7 +485,17 @@ async function seedUsers() {
          apto_para_atividade_fisica = EXCLUDED.apto_para_atividade_fisica,
          aceita_responsabilidade_informacoes = EXCLUDED.aceita_responsabilidade_informacoes
        RETURNING id`,
-      [user.email, hashedPassword, user.role, user.name, user.cpf, user.phone, user.fitnessGoal || null, user.experienceLevel || null]
+      [
+        user.email,
+        hashedPassword,
+        user.role,
+        user.accessProfile || null,
+        user.name,
+        user.cpf,
+        user.phone,
+        user.fitnessGoal || null,
+        user.experienceLevel || null,
+      ]
     );
 
     const userId = insertResult.rows[0].id;
@@ -489,9 +528,13 @@ async function seedUsers() {
   await pool.query(`UPDATE users SET cpf = '52998224725' WHERE email = 'admin@treinai.com' AND (cpf IS NULL OR cpf = '')`);
   await pool.query(`UPDATE users SET cpf = '11144477735' WHERE email = 'personal@treinai.com' AND (cpf IS NULL OR cpf = '')`);
   await pool.query(`UPDATE users SET cpf = '12345678909' WHERE email = 'teste1@treinai.com' AND (cpf IS NULL OR cpf = '')`);
+  await pool.query(`UPDATE users SET cpf = '98765432100' WHERE email = 'gerencia@minutofit.com.br' AND (cpf IS NULL OR cpf = '')`);
   await pool.query(`UPDATE users SET phone = '85999990001' WHERE email = 'admin@treinai.com' AND (phone IS NULL OR phone = '')`);
   await pool.query(`UPDATE users SET phone = '85999990002' WHERE email = 'personal@treinai.com' AND (phone IS NULL OR phone = '')`);
   await pool.query(`UPDATE users SET phone = '85999990003' WHERE email = 'teste1@treinai.com' AND (phone IS NULL OR phone = '')`);
+  await pool.query(`UPDATE users SET phone = '85999990009' WHERE email = 'gerencia@minutofit.com.br' AND (phone IS NULL OR phone = '')`);
+  await pool.query(`UPDATE users SET access_profile = 'clientes_sb' WHERE email = 'teste1@treinai.com'`);
+  await pool.query(`UPDATE users SET role = 'admin', access_profile = 'admin_owner' WHERE email = 'gerencia@minutofit.com.br'`);
   await pool.query(`UPDATE users SET sem_historico_hipertensao = TRUE WHERE sem_historico_hipertensao IS NULL`);
   await pool.query(`UPDATE users SET sem_historico_cardiaco = TRUE WHERE sem_historico_cardiaco IS NULL`);
   await pool.query(`UPDATE users SET sem_restricao_medica_exercicio = TRUE WHERE sem_restricao_medica_exercicio IS NULL`);

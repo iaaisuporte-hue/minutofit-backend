@@ -8,6 +8,7 @@ import webhookRoutes from './routes/webhooks';
 import adminRoutes from './routes/admin';
 import gamificationRoutes from './routes/gamification';
 import personalRoutes from './routes/personal';
+import videoRoutes from './routes/videos';
 
 dotenv.config();
 
@@ -31,12 +32,18 @@ function parseAllowedOrigins() {
 
 const allowedOrigins = parseAllowedOrigins();
 const vercelPreviewPattern = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
+const localDevOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
 
 // Middleware
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if ((process.env.NODE_ENV || 'development') !== 'production' && localDevOriginPattern.test(origin)) {
         callback(null, true);
         return;
       }
@@ -62,6 +69,7 @@ app.use('/api/webhooks', webhookRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/personal', personalRoutes);
+app.use('/api/videos', videoRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

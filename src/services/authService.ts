@@ -2,6 +2,16 @@ import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
 import { generateAccessToken, generateRefreshToken, JWTPayload } from '../utils/jwt';
 
+export type AccessProfile =
+  | 'admin_owner'
+  | 'admin_operations'
+  | 'admin_finance'
+  | 'admin_support'
+  | 'clientes_sb'
+  | 'user_default'
+  | 'personal_default'
+  | 'nutri_default';
+
 export interface HealthFlags {
   semHistoricoHipertensao: boolean;
   semHistoricoCardiaco: boolean;
@@ -28,6 +38,7 @@ export interface User {
   oauthGoogleId?: string;
   oauthAppleId?: string;
   subscriptionTier?: string;
+  accessProfile?: AccessProfile;
 }
 
 const USER_SELECT_FIELDS = `
@@ -49,6 +60,7 @@ const USER_SELECT_FIELDS = `
   apto_para_atividade_fisica,
   aceita_responsabilidade_informacoes,
   profile_completed,
+  access_profile,
   oauth_google_id,
   oauth_apple_id,
   oauth_provider
@@ -200,7 +212,8 @@ export async function registerUser(
       id: user.id,
       email: user.email,
       role: user.role,
-      profileCompleted: user.profileCompleted
+      profileCompleted: user.profileCompleted,
+      accessProfile: user.accessProfile,
     });
 
     const refreshToken = generateRefreshToken({
@@ -261,7 +274,8 @@ export async function loginUser(
     id: user.id,
     email: user.email,
     role: user.role,
-    profileCompleted: user.profileCompleted
+    profileCompleted: user.profileCompleted,
+    accessProfile: user.accessProfile,
   });
 
   const refreshToken = generateRefreshToken({
@@ -332,7 +346,8 @@ export async function loginOrCreateOAuthUser(
       id: user.id,
       email: user.email,
       role: user.role,
-      profileCompleted: user.profileCompleted
+      profileCompleted: user.profileCompleted,
+      accessProfile: user.accessProfile,
     });
 
     const refreshToken = generateRefreshToken({
@@ -441,6 +456,7 @@ function mapUserRow(row: any): User {
       aceitaResponsabilidadeInformacoes: row.aceita_responsabilidade_informacoes,
     },
     profileCompleted: row.profile_completed || false,
+    accessProfile: row.access_profile || undefined,
     oauthGoogleId: row.oauth_google_id,
     oauthAppleId: row.oauth_apple_id
   };

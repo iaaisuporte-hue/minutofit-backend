@@ -5,6 +5,7 @@ export interface JWTPayload {
   email: string;
   role: 'user' | 'personal' | 'nutri' | 'admin';
   profileCompleted: boolean;
+  accessProfile?: string;
 }
 
 export interface RefreshTokenPayload {

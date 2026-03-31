@@ -1,6 +1,15 @@
 import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
-import { generateAccessToken, generateRefreshToken, JWTPayload } from '../utils/jwt';
+import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
+import { assertStrongPassword } from '../utils/passwordPolicy';
+import {
+  PARQ_FORM_VERSION,
+  assertParqSignature,
+  parseAndValidateOnboarding,
+  parseAndValidateParqAnswers,
+  type OnboardingAnswersInput,
+  type ParqAnswerInput,
+} from './complianceValidation';
 
 export type AccessProfile =
   | 'admin_owner'
@@ -39,6 +48,13 @@ export interface User {
   oauthAppleId?: string;
   subscriptionTier?: string;
   accessProfile?: AccessProfile;
+  onboardingAnswers?: OnboardingAnswersInput;
+  parqAnswers?: ParqAnswerInput[];
+  parqSignedAt?: string;
+  parqFormVersion?: string;
+  parqAnyYes?: boolean;
+  /** Triagem de saude + onboarding de treino + PAR-Q assinado (apenas papel user). */
+  studentComplianceComplete?: boolean;
 }
 
 const USER_SELECT_FIELDS = `
@@ -63,7 +79,13 @@ const USER_SELECT_FIELDS = `
   access_profile,
   oauth_google_id,
   oauth_apple_id,
-  oauth_provider
+  oauth_provider,
+  onboarding_answers,
+  parq_answers,
+  parq_form_version,
+  parq_signed_at,
+  parq_signature_data,
+  parq_any_yes
 `;
 
 export function normalizeCpf(cpf: string): string {
@@ -148,7 +170,8 @@ export async function registerUser(
     cpf: string;
     phone: string;
     role?: 'user' | 'personal' | 'nutri' | 'admin';
-    healthFlags: HealthFlags;
+    /** Se omitido, triagem fica pendente (NULL no banco) ate /auth/student-compliance. */
+    healthFlags?: HealthFlags;
   }
 ): Promise<{ user: User; accessToken: string; refreshToken: string }> {
   const email = data.email.toLowerCase().trim();
@@ -165,9 +188,15 @@ export async function registerUser(
     throw new Error('Telefone invalido.');
   }
 
-  validateHealthFlags(data.healthFlags);
+  assertStrongPassword(data.password);
+
+  if (data.healthFlags) {
+    validateHealthFlags(data.healthFlags);
+  }
 
   const hashedPassword = await bcryptjs.hash(data.password, 10);
+
+  const hf = data.healthFlags;
 
   try {
     const result = await pool.query(
@@ -194,11 +223,11 @@ export async function registerUser(
         name,
         cpf,
         phone,
-        data.healthFlags.semHistoricoHipertensao,
-        data.healthFlags.semHistoricoCardiaco,
-        data.healthFlags.semRestricaoMedicaExercicio,
-        data.healthFlags.aptoParaAtividadeFisica,
-        data.healthFlags.aceitaResponsabilidadeInformacoes,
+        hf ? hf.semHistoricoHipertensao : null,
+        hf ? hf.semHistoricoCardiaco : null,
+        hf ? hf.semRestricaoMedicaExercicio : null,
+        hf ? hf.aptoParaAtividadeFisica : null,
+        hf ? hf.aceitaResponsabilidadeInformacoes : null,
         false,
       ]
     );
@@ -388,6 +417,93 @@ export async function completeUserProfile(
   return mapUserRow(result.rows[0]);
 }
 
+export async function saveStudentCompliance(
+  userId: number,
+  payload: {
+    healthFlags: HealthFlags;
+    onboardingAnswers: unknown;
+    parqAnswers: unknown;
+    parqSignatureDataUrl: string;
+    parqFormVersion?: string;
+  }
+): Promise<User> {
+  validateHealthFlags(payload.healthFlags);
+  const onboarding = parseAndValidateOnboarding(payload.onboardingAnswers);
+  const parq = parseAndValidateParqAnswers(payload.parqAnswers);
+  assertParqSignature(payload.parqSignatureDataUrl);
+
+  const version = String(payload.parqFormVersion || PARQ_FORM_VERSION).slice(0, 64);
+  const anyYes = parq.some((a) => a.yes);
+
+  const result = await pool.query(
+    `UPDATE users SET
+      sem_historico_hipertensao = $1,
+      sem_historico_cardiaco = $2,
+      sem_restricao_medica_exercicio = $3,
+      apto_para_atividade_fisica = $4,
+      aceita_responsabilidade_informacoes = $5,
+      onboarding_answers = $6::jsonb,
+      parq_answers = $7::jsonb,
+      parq_form_version = $8,
+      parq_signed_at = NOW(),
+      parq_signature_data = $9,
+      parq_any_yes = $10
+    WHERE id = $11 AND role = 'user'
+    RETURNING ${USER_SELECT_FIELDS}`,
+    [
+      payload.healthFlags.semHistoricoHipertensao,
+      payload.healthFlags.semHistoricoCardiaco,
+      payload.healthFlags.semRestricaoMedicaExercicio,
+      payload.healthFlags.aptoParaAtividadeFisica,
+      payload.healthFlags.aceitaResponsabilidadeInformacoes,
+      JSON.stringify(onboarding),
+      JSON.stringify(parq),
+      version,
+      payload.parqSignatureDataUrl,
+      anyYes,
+      userId,
+    ]
+  );
+
+  if (result.rows.length === 0) {
+    throw new Error('Usuario nao encontrado ou sem permissao.');
+  }
+
+  return mapUserRow(result.rows[0]);
+}
+
+function rowHealthComplete(row: any): boolean {
+  return (
+    row.sem_historico_hipertensao === true &&
+    row.sem_historico_cardiaco === true &&
+    row.sem_restricao_medica_exercicio === true &&
+    row.apto_para_atividade_fisica === true &&
+    row.aceita_responsabilidade_informacoes === true
+  );
+}
+
+function rowOnboardingComplete(row: any): boolean {
+  try {
+    parseAndValidateOnboarding(row.onboarding_answers);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function rowParqComplete(row: any): boolean {
+  if (!row.parq_signed_at || !row.parq_signature_data) {
+    return false;
+  }
+  try {
+    assertParqSignature(String(row.parq_signature_data));
+    parseAndValidateParqAnswers(row.parq_answers);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function getUserById(userId: number): Promise<User> {
   const result = await pool.query(
     `SELECT ${USER_SELECT_FIELDS}
@@ -417,6 +533,37 @@ export async function getUserById(userId: number): Promise<User> {
   return user;
 }
 
+export async function refreshWithRefreshToken(
+  refreshToken: string
+): Promise<{ user: User; accessToken: string; refreshToken: string }> {
+  let payload: { id: number; email: string };
+  try {
+    payload = verifyRefreshToken(refreshToken);
+  } catch {
+    throw new Error('Invalid or expired refresh token');
+  }
+
+  const user = await getUserById(payload.id);
+  if (user.email.toLowerCase() !== payload.email.toLowerCase()) {
+    throw new Error('Invalid refresh token');
+  }
+
+  const accessToken = generateAccessToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    profileCompleted: user.profileCompleted,
+    accessProfile: user.accessProfile,
+  });
+
+  const newRefreshToken = generateRefreshToken({
+    id: user.id,
+    email: user.email,
+  });
+
+  return { user, accessToken, refreshToken: newRefreshToken };
+}
+
 async function assignFreeSubscription(userId: number): Promise<void> {
   // Get Free tier ID
   const tierResult = await pool.query(
@@ -435,6 +582,41 @@ async function assignFreeSubscription(userId: number): Promise<void> {
 }
 
 function mapUserRow(row: any): User {
+  const healthDefined =
+    row.sem_historico_hipertensao !== null &&
+    row.sem_historico_hipertensao !== undefined &&
+    row.sem_historico_cardiaco !== null &&
+    row.sem_historico_cardiaco !== undefined &&
+    row.sem_restricao_medica_exercicio !== null &&
+    row.sem_restricao_medica_exercicio !== undefined &&
+    row.apto_para_atividade_fisica !== null &&
+    row.apto_para_atividade_fisica !== undefined &&
+    row.aceita_responsabilidade_informacoes !== null &&
+    row.aceita_responsabilidade_informacoes !== undefined;
+
+  let onboardingAnswers: OnboardingAnswersInput | undefined;
+  if (row.onboarding_answers) {
+    try {
+      onboardingAnswers = parseAndValidateOnboarding(row.onboarding_answers);
+    } catch {
+      onboardingAnswers = undefined;
+    }
+  }
+
+  let parqAnswers: ParqAnswerInput[] | undefined;
+  if (row.parq_answers) {
+    try {
+      parqAnswers = parseAndValidateParqAnswers(row.parq_answers);
+    } catch {
+      parqAnswers = undefined;
+    }
+  }
+
+  const studentComplianceComplete =
+    row.role === 'user'
+      ? rowHealthComplete(row) && rowOnboardingComplete(row) && rowParqComplete(row)
+      : undefined;
+
   return {
     id: row.id,
     email: row.email,
@@ -448,16 +630,24 @@ function mapUserRow(row: any): User {
     heightCm: row.height_cm,
     weightKg: row.weight_kg,
     dietaryRestrictions: row.dietary_restrictions,
-    healthFlags: {
-      semHistoricoHipertensao: row.sem_historico_hipertensao,
-      semHistoricoCardiaco: row.sem_historico_cardiaco,
-      semRestricaoMedicaExercicio: row.sem_restricao_medica_exercicio,
-      aptoParaAtividadeFisica: row.apto_para_atividade_fisica,
-      aceitaResponsabilidadeInformacoes: row.aceita_responsabilidade_informacoes,
-    },
+    healthFlags: healthDefined
+      ? {
+          semHistoricoHipertensao: row.sem_historico_hipertensao,
+          semHistoricoCardiaco: row.sem_historico_cardiaco,
+          semRestricaoMedicaExercicio: row.sem_restricao_medica_exercicio,
+          aptoParaAtividadeFisica: row.apto_para_atividade_fisica,
+          aceitaResponsabilidadeInformacoes: row.aceita_responsabilidade_informacoes,
+        }
+      : undefined,
     profileCompleted: row.profile_completed || false,
     accessProfile: row.access_profile || undefined,
     oauthGoogleId: row.oauth_google_id,
-    oauthAppleId: row.oauth_apple_id
+    oauthAppleId: row.oauth_apple_id,
+    onboardingAnswers,
+    parqAnswers,
+    parqSignedAt: row.parq_signed_at ? new Date(row.parq_signed_at).toISOString() : undefined,
+    parqFormVersion: row.parq_form_version || undefined,
+    parqAnyYes: typeof row.parq_any_yes === 'boolean' ? row.parq_any_yes : undefined,
+    studentComplianceComplete,
   };
 }

@@ -27,6 +27,12 @@ CREATE TABLE IF NOT EXISTS users (
   oauth_google_id VARCHAR(255) UNIQUE,
   oauth_apple_id VARCHAR(255) UNIQUE,
   oauth_provider VARCHAR(50),
+  onboarding_answers JSONB,
+  parq_answers JSONB,
+  parq_form_version VARCHAR(64),
+  parq_signed_at TIMESTAMPTZ,
+  parq_signature_data TEXT,
+  parq_any_yes BOOLEAN,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -53,6 +59,34 @@ CREATE TABLE IF NOT EXISTS user_subscriptions (
   active_to TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Plans (ACL by plan)
+CREATE TABLE IF NOT EXISTS plans (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(50) NOT NULL UNIQUE,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Features catalog
+CREATE TABLE IF NOT EXISTS features (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  description TEXT,
+  key VARCHAR(100) NOT NULL UNIQUE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Plan-feature matrix
+CREATE TABLE IF NOT EXISTS plan_features (
+  plan_id INTEGER NOT NULL REFERENCES plans(id) ON DELETE CASCADE,
+  feature_id INTEGER NOT NULL REFERENCES features(id) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (plan_id, feature_id)
 );
 
 -- Payments ledger
@@ -167,6 +201,8 @@ CREATE INDEX IF NOT EXISTS idx_users_oauth_google ON users(oauth_google_id);
 CREATE INDEX IF NOT EXISTS idx_users_oauth_apple ON users(oauth_apple_id);
 CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON user_subscriptions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_subscriptions_status ON user_subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_plan_features_plan_id ON plan_features(plan_id);
+CREATE INDEX IF NOT EXISTS idx_plan_features_feature_id ON plan_features(feature_id);
 CREATE INDEX IF NOT EXISTS idx_videos_personal_id ON videos(personal_id);
 CREATE INDEX IF NOT EXISTS idx_videos_created_at ON videos(created_at);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
@@ -200,6 +236,7 @@ async function runMigration() {
     
     // Seed default subscription tiers
     await seedSubscriptionTiers();
+    await seedPlansAndFeatures();
     
     // Seed default tags
     await seedTags();
@@ -320,6 +357,88 @@ async function seedSubscriptionTiers() {
        ON CONFLICT (name) DO NOTHING`,
       [tier.name, tier.price_brl, tier.max_videos_per_month, JSON.stringify(tier.features)]
     );
+  }
+}
+
+async function seedPlansAndFeatures() {
+  const plans = [
+    { name: 'Free', description: 'Plano gratuito com funcionalidades essenciais.' },
+    { name: 'Pro', description: 'Plano intermediario com recursos avancados.' },
+    { name: 'Premium', description: 'Plano completo com todos os recursos do app.' },
+  ];
+
+  for (const plan of plans) {
+    await pool.query(
+      `INSERT INTO plans (name, description)
+       VALUES ($1, $2)
+       ON CONFLICT (name) DO UPDATE SET description = EXCLUDED.description, updated_at = CURRENT_TIMESTAMP`,
+      [plan.name, plan.description]
+    );
+  }
+
+  const features = [
+    { key: 'today', name: 'Home', description: 'Painel da rotina diaria e atalhos.' },
+    { key: 'workouts_today', name: 'Treinos de Hoje', description: 'Conteudo de treino recomendado para o dia.' },
+    { key: 'workouts', name: 'Treinos', description: 'Biblioteca geral de treinos.' },
+    { key: 'home_workouts', name: 'Treinos em casa', description: 'Treinos com foco em praticidade para casa.' },
+    { key: 'tracker', name: 'Tracker', description: 'Registro de atividades e acompanhamento de progresso.' },
+    { key: 'training_ai', name: 'Treino Guiado por IA', description: 'Recursos de IA para guiar o treino.' },
+    { key: 'suggested_training', name: 'Treino Sugerido', description: 'Sugestoes personalizadas de treino.' },
+    { key: 'messages', name: 'Mensagens', description: 'Canal de mensagens com suporte/profissionais.' },
+    { key: 'workout_history', name: 'Historico', description: 'Historico de treinos e atividades realizadas.' },
+    { key: 'profile', name: 'Perfil do Usuario', description: 'Dados do perfil e preferencias do usuario.' },
+    { key: 'settings', name: 'Configuracoes', description: 'Configuracoes da conta e preferencias gerais.' },
+    { key: 'reports', name: 'Relatorios', description: 'Relatorios e insights de desempenho.' },
+    { key: 'diet', name: 'Dieta', description: 'Recursos de alimentacao e planejamento nutricional.' },
+  ];
+
+  for (const feature of features) {
+    await pool.query(
+      `INSERT INTO features (name, description, key)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (key) DO UPDATE SET
+         name = EXCLUDED.name,
+         description = EXCLUDED.description,
+         updated_at = CURRENT_TIMESTAMP`,
+      [feature.name, feature.description, feature.key]
+    );
+  }
+
+  const matrix: Record<string, string[]> = {
+    Free: ['today', 'workouts_today', 'home_workouts', 'workouts', 'profile', 'settings'],
+    Pro: [
+      'today',
+      'workouts_today',
+      'home_workouts',
+      'workouts',
+      'tracker',
+      'messages',
+      'workout_history',
+      'profile',
+      'settings',
+      'suggested_training',
+    ],
+    Premium: features.map((feature) => feature.key),
+  };
+
+  for (const planName of Object.keys(matrix)) {
+    const planResult = await pool.query(`SELECT id FROM plans WHERE name = $1`, [planName]);
+    if (planResult.rows.length === 0) continue;
+    const planId = planResult.rows[0].id;
+
+    for (const feature of features) {
+      const enabled = matrix[planName].includes(feature.key);
+      await pool.query(
+        `INSERT INTO plan_features (plan_id, feature_id, enabled)
+         SELECT $1, f.id, $2
+         FROM features f
+         WHERE f.key = $3
+         ON CONFLICT (plan_id, feature_id) DO UPDATE SET
+           enabled = EXCLUDED.enabled,
+           updated_at = CURRENT_TIMESTAMP`,
+        [planId, enabled, feature.key]
+      );
+    }
   }
 }
 

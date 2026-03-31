@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import * as authService from '../services/authService';
 import * as oauthService from '../services/oauthService';
+import { verifyRegistrationCaptcha } from '../services/captchaService';
 
 const router = Router();
 
@@ -14,19 +15,41 @@ router.post('/register', async (req: Request, res: Response) => {
     const cpf = String(req.body.cpf || '').trim();
     const phone = String(req.body.phone || '').trim();
     const role = req.body.role;
-    const healthFlags = {
-      semHistoricoHipertensao: req.body.healthFlags?.sem_historico_hipertensao,
-      semHistoricoCardiaco: req.body.healthFlags?.sem_historico_cardiaco,
-      semRestricaoMedicaExercicio: req.body.healthFlags?.sem_restricao_medica_exercicio,
-      aptoParaAtividadeFisica: req.body.healthFlags?.apto_para_atividade_fisica,
-      aceitaResponsabilidadeInformacoes: req.body.healthFlags?.aceita_responsabilidade_informacoes,
-    };
+    const h = req.body.healthFlags;
+    let healthFlags: authService.HealthFlags | undefined;
+    if (h && typeof h === 'object') {
+      const candidate = {
+        semHistoricoHipertensao: h.sem_historico_hipertensao,
+        semHistoricoCardiaco: h.sem_historico_cardiaco,
+        semRestricaoMedicaExercicio: h.sem_restricao_medica_exercicio,
+        aptoParaAtividadeFisica: h.apto_para_atividade_fisica,
+        aceitaResponsabilidadeInformacoes: h.aceita_responsabilidade_informacoes,
+      };
+      if (Object.values(candidate).every((v) => typeof v === 'boolean')) {
+        healthFlags = candidate as authService.HealthFlags;
+      }
+    }
 
     if (!email || !password || !name || !cpf || !phone) {
       return res.status(400).json({
         success: false,
         error: 'Nome, CPF, telefone, email e senha sao obrigatorios.',
       });
+    }
+
+    const captchaToken =
+      typeof req.body.captchaToken === 'string'
+        ? req.body.captchaToken
+        : typeof req.body.turnstileToken === 'string'
+          ? req.body.turnstileToken
+          : undefined;
+
+    try {
+      await verifyRegistrationCaptcha(captchaToken, req.ip);
+    } catch (captchaErr: any) {
+      const msg = String(captchaErr?.message || 'Falha na verificacao do CAPTCHA.');
+      const status = msg.includes('nao configurado') ? 503 : 400;
+      return res.status(status).json({ success: false, error: msg });
     }
 
     const { user, accessToken, refreshToken } = await authService.registerUser({
@@ -165,6 +188,31 @@ router.post('/oauth/apple/callback', async (req: Request, res: Response) => {
   }
 });
 
+// POST /auth/refresh - New access + refresh tokens from a valid refresh token
+router.post('/refresh', async (req: Request, res: Response) => {
+  try {
+    const refreshToken = String(req.body?.refreshToken || '').trim();
+    if (!refreshToken) {
+      return res.status(400).json({ success: false, error: 'Refresh token obrigatorio.' });
+    }
+
+    const { user, accessToken, refreshToken: newRefreshToken } =
+      await authService.refreshWithRefreshToken(refreshToken);
+
+    res.json({
+      success: true,
+      data: {
+        user,
+        accessToken,
+        refreshToken: newRefreshToken,
+      },
+    });
+  } catch (error: any) {
+    const message = String(error?.message || 'Nao foi possivel renovar a sessao.');
+    res.status(401).json({ success: false, error: message });
+  }
+});
+
 // GET /auth/me - Get current user
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   try {
@@ -207,6 +255,55 @@ router.patch('/complete-profile', authMiddleware, async (req: Request, res: Resp
     });
   } catch (error: any) {
     res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /auth/student-compliance — triagem de saude + onboarding de treino + PAR-Q assinado
+router.patch('/student-compliance', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (req.user!.role !== 'user') {
+      return res.status(403).json({ success: false, error: 'Disponivel apenas para alunos.' });
+    }
+
+    const { healthFlags, onboardingAnswers, parqAnswers, parqSignatureDataUrl, parqFormVersion } = req.body;
+
+    if (!healthFlags || typeof healthFlags !== 'object') {
+      return res.status(400).json({ success: false, error: 'healthFlags obrigatorio.' });
+    }
+
+    const hf = {
+      semHistoricoHipertensao: healthFlags.sem_historico_hipertensao,
+      semHistoricoCardiaco: healthFlags.sem_historico_cardiaco,
+      semRestricaoMedicaExercicio: healthFlags.sem_restricao_medica_exercicio,
+      aptoParaAtividadeFisica: healthFlags.apto_para_atividade_fisica,
+      aceitaResponsabilidadeInformacoes: healthFlags.aceita_responsabilidade_informacoes,
+    };
+
+    if (!Object.values(hf).every((v) => typeof v === 'boolean')) {
+      return res.status(400).json({ success: false, error: 'healthFlags invalido.' });
+    }
+
+    if (onboardingAnswers === undefined || parqAnswers === undefined || parqSignatureDataUrl === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: 'onboardingAnswers, parqAnswers e parqSignatureDataUrl sao obrigatorios.',
+      });
+    }
+
+    const user = await authService.saveStudentCompliance(req.user!.id, {
+      healthFlags: hf as authService.HealthFlags,
+      onboardingAnswers,
+      parqAnswers,
+      parqSignatureDataUrl: String(parqSignatureDataUrl),
+      parqFormVersion,
+    });
+
+    res.json({
+      success: true,
+      data: { user },
+    });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: String(error?.message || 'Falha ao salvar compliance.') });
   }
 });
 

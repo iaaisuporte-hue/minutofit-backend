@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requireFeatureOrRoles } from '../middleware/featureGate';
 
 const router = Router();
 
@@ -13,7 +14,7 @@ function parseBooleanFlag(value: unknown): boolean | null {
 }
 
 // GET /videos/search - Search videos with optional tags/accessibility filters
-router.get('/search', authMiddleware, async (req: Request, res: Response) => {
+router.get('/search', authMiddleware, requireFeatureOrRoles('workouts', ['personal', 'admin']), async (req: Request, res: Response) => {
   try {
     const tags =
       typeof req.query.tags === 'string'

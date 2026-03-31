@@ -9,8 +9,22 @@ import adminRoutes from './routes/admin';
 import gamificationRoutes from './routes/gamification';
 import personalRoutes from './routes/personal';
 import videoRoutes from './routes/videos';
+import { ensureComplianceSchema } from './db/ensureComplianceSchema';
+import { ensurePlanFeaturesSchema } from './db/ensurePlanFeaturesSchema';
+import { ensurePersonalWorkoutPlansSchema } from './db/ensurePersonalWorkoutPlansSchema';
+import planRoutes from './routes/plans';
 
 dotenv.config();
+
+void ensureComplianceSchema().catch((err) => {
+  console.error('[db] ensureComplianceSchema:', err);
+});
+void ensurePlanFeaturesSchema().catch((err) => {
+  console.error('[db] ensurePlanFeaturesSchema:', err);
+});
+void ensurePersonalWorkoutPlansSchema().catch((err) => {
+  console.error('[db] ensurePersonalWorkoutPlansSchema:', err);
+});
 
 const app = express();
 
@@ -70,6 +84,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/personal', personalRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api', planRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

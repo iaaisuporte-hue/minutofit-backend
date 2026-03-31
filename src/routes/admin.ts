@@ -79,7 +79,7 @@ router.get('/users', authMiddleware, adminMiddleware, async (req: Request, res: 
     }
 
     if (search) {
-      query += ` AND (u.email ILIKE $${params.length + 1} OR u.name ILIKE $${params.length + 1})`;
+      query += ` AND (u.email ILIKE $${params.length + 1} OR u.name ILIKE $${params.length + 2})`;
       params.push(`%${search}%`);
       params.push(`%${search}%`);
     }
@@ -100,7 +100,7 @@ router.get('/users', authMiddleware, adminMiddleware, async (req: Request, res: 
     }
 
     if (search) {
-      countQuery += ` AND (email ILIKE $${countParams.length + 1} OR name ILIKE $${countParams.length + 1})`;
+      countQuery += ` AND (email ILIKE $${countParams.length + 1} OR name ILIKE $${countParams.length + 2})`;
       countParams.push(`%${search}%`);
       countParams.push(`%${search}%`);
     }
@@ -159,6 +159,32 @@ router.get('/subscriptions/report', authMiddleware, adminMiddleware, async (req:
         recentSubscriptions: recentSubs.rows,
         churnLastMonth: churnRes.rows[0].churned_count
       }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /admin/users/:id - Single user with subscription tier
+router.get('/users/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      `SELECT u.id, u.email, u.name, u.role, u.profile_completed, u.created_at, st.name as subscription_tier
+       FROM users u
+       LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.status = 'active'
+       LEFT JOIN subscription_tiers st ON us.tier_id = st.id
+       WHERE u.id = $1`,
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+
+    res.json({
+      success: true,
+      data: { user: result.rows[0] }
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });

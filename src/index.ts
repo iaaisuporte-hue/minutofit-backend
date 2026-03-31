@@ -12,10 +12,14 @@ import videoRoutes from './routes/videos';
 import { ensureComplianceSchema } from './db/ensureComplianceSchema';
 import { ensurePlanFeaturesSchema } from './db/ensurePlanFeaturesSchema';
 import { ensurePersonalWorkoutPlansSchema } from './db/ensurePersonalWorkoutPlansSchema';
+import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
 import planRoutes from './routes/plans';
 
 dotenv.config();
 
+void ensureUsersCoreColumns().catch((err) => {
+  console.error('[db] ensureUsersCoreColumns:', err);
+});
 void ensureComplianceSchema().catch((err) => {
   console.error('[db] ensureComplianceSchema:', err);
 });

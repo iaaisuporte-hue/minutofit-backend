@@ -32,15 +32,38 @@ void ensurePersonalWorkoutPlansSchema().catch((err) => {
 
 const app = express();
 
+/**
+ * Fronts conhecidos em produção. O header `Origin` do browser é só scheme + host (sem path);
+ * ex.: página em https://minutofit-app.vercel.app/login envia Origin: https://minutofit-app.vercel.app
+ */
+const BUNDLED_PRODUCTION_ORIGINS = [
+  'https://minutofit.com.br',
+  'https://www.minutofit.com.br',
+  'https://minutofit-app.vercel.app',
+];
+
+/** Aceita env com path acidental (ex. ...vercel.app/login) e normaliza para scheme://host */
+function normalizeCorsOrigin(raw: string): string {
+  const t = raw.trim().replace(/\/$/, '');
+  if (!/^https?:\/\//i.test(t)) return t;
+  try {
+    const u = new URL(t);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return t;
+  }
+}
+
 function parseAllowedOrigins() {
   const envOrigins = [process.env.FRONTEND_URL, process.env.FRONTEND_URLS]
     .filter(Boolean)
     .flatMap((value) => String(value).split(','))
-    .map((origin) => origin.trim())
+    .map((origin) => normalizeCorsOrigin(origin))
     .filter(Boolean);
 
   return Array.from(
     new Set([
+      ...BUNDLED_PRODUCTION_ORIGINS,
       ...envOrigins,
       'http://localhost:5173',
       'http://localhost:3000',

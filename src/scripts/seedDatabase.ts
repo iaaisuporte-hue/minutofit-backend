@@ -405,7 +405,7 @@ async function seedPlansAndFeatures() {
   }
 
   const matrix: Record<string, string[]> = {
-    Free: ['today', 'workouts_today', 'home_workouts', 'workouts', 'profile', 'settings'],
+    Free: ['today', 'workouts_today', 'home_workouts', 'profile', 'settings'],
     Pro: [
       'today',
       'workouts_today',

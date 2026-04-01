@@ -16,14 +16,29 @@ const featureCatalog = [
   ['diet', 'Dieta', 'Recursos de alimentacao e planejamento nutricional.'],
 ] as const;
 
-const FREE_PRODUCT_FEATURES = ['today', 'workouts_today', 'home_workouts', 'workouts', 'profile', 'settings'];
+/** Plano Free: sem catálogo geral de treinos / ficha — só Hoje, sugestão do dia, treinos em casa, perfil e config. */
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings'];
+
+const PRO_PRODUCT_FEATURES: string[] = [
+  'today',
+  'workouts_today',
+  'home_workouts',
+  'workouts',
+  'tracker',
+  'messages',
+  'workout_history',
+  'profile',
+  'settings',
+  'suggested_training',
+  'training_ai',
+];
+
+const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog.map((row) => row[0]);
 
 const defaultsByPlan: Record<string, string[]> = {
-  // Product phase: Free is the single active offer.
   Free: FREE_PRODUCT_FEATURES,
-  // Keep these records for compatibility/admin screens, mirroring Free capabilities.
-  Pro: FREE_PRODUCT_FEATURES,
-  Premium: FREE_PRODUCT_FEATURES,
+  Pro: PRO_PRODUCT_FEATURES,
+  Premium: PREMIUM_PRODUCT_FEATURES,
 };
 
 export async function ensurePlanFeaturesSchema() {

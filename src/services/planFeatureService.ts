@@ -128,15 +128,34 @@ export async function getFeatureMapByPlanId(planId: number): Promise<Record<stri
   return map;
 }
 
-export async function getFeatureMapForUser(_userId: number) {
-  // Free-only phase: all authenticated users resolve to Free features.
+/** Perfil `clientes_sb`: só Hoje, Treinos em casa e Configurações (sem catálogo, perfil social, tracker, etc.). */
+const CLIENTES_SB_FEATURE_KEYS = new Set(['today', 'home_workouts', 'settings']);
+
+export async function getFeatureMapForUser(userId: number) {
+  const userRow = await pool.query<{ access_profile: string | null }>(
+    `SELECT access_profile FROM users WHERE id = $1 LIMIT 1`,
+    [userId],
+  );
+  const accessProfile = userRow.rows[0]?.access_profile ?? null;
+
   const plan = await pool
     .query(`SELECT id, name, description FROM plans WHERE LOWER(name) = 'free' LIMIT 1`)
     .then((r) => (r.rows[0] ? (r.rows[0] as PlanRecord) : null));
+
   if (!plan) {
     return { plan: null, features: {} as Record<string, boolean> };
   }
-  const features = await getFeatureMapByPlanId(plan.id);
-  return { plan, features };
+
+  const baseFeatures = await getFeatureMapByPlanId(plan.id);
+
+  if (accessProfile === 'clientes_sb') {
+    const features: Record<string, boolean> = {};
+    for (const key of Object.keys(baseFeatures)) {
+      features[key] = CLIENTES_SB_FEATURE_KEYS.has(key);
+    }
+    return { plan, features };
+  }
+
+  return { plan, features: baseFeatures };
 }
 

@@ -1,22 +1,60 @@
-import { computeMetabolism, generateMockHistory } from './metabolic.engine';
-import { MetabolicHistory, MetabolicInput, MetabolicOutput } from './metabolic.types';
+import { computeMetabolism } from './metabolic.engine';
+import { buildRecommendations } from './metabolic.recommendations';
+import {
+  invalidateTodaySnapshot,
+  loadActivityMetrics,
+  loadSnapshots,
+  loadStreakInfo,
+  loadTodaySnapshot,
+  loadUserProfile,
+  upsertSnapshot,
+} from './metabolic.repository';
+import type { MetabolicHistory, MetabolicInput, MetabolicOutput } from './metabolic.types';
 
-export async function getMetabolismForUser(userId: string): Promise<MetabolicOutput> {
-  // MVP: using mocked input. Signature is async to allow a non-breaking swap to real DB queries.
-  // TODO: replace with real data — query users table for date_of_birth (derive age),
-  //       activity_level, and workouts/week from gamification/user_workout_logs by userId.
-  void userId;
+const SNAPSHOT_CACHE_SECONDS = 6 * 60 * 60; // 6h
+
+export async function getMetabolismForUser(userId: number): Promise<MetabolicOutput> {
+  const cached = await loadTodaySnapshot(userId);
+  if (cached) {
+    const ageSeconds = (Date.now() - new Date(cached.created_at).getTime()) / 1000;
+    if (ageSeconds < SNAPSHOT_CACHE_SECONDS) {
+      return {
+        score: cached.score,
+        status: cached.status,
+        trend: cached.trend,
+        factors: cached.factors ?? [],
+        recommendations: buildRecommendations(cached.inputs ?? {}, { score: cached.score, status: cached.status }, cached.factors ?? []),
+      };
+    }
+  }
+
+  const [profile, metrics, streak, previousSnapshots] = await Promise.all([
+    loadUserProfile(userId),
+    loadActivityMetrics(userId),
+    loadStreakInfo(userId),
+    loadSnapshots(userId, 14),
+  ]);
 
   const input: MetabolicInput = {
-    age: 30,
-    workoutsPerWeek: 3,
-    activityLevel: 'medium',
+    ageYears: profile.ageYears,
+    fitnessGoal: profile.fitnessGoal,
+    experienceLevel: profile.experienceLevel,
+    ...metrics,
+    ...streak,
   };
 
-  return computeMetabolism(input);
+  const result = computeMetabolism(input, previousSnapshots);
+  const recommendations = buildRecommendations(input, result, result.factors);
+
+  await upsertSnapshot(userId, result.score, result.status, result.trend, result.factors, input);
+
+  return { ...result, recommendations };
 }
 
-export async function getMetabolismHistoryForUser(userId: string): Promise<MetabolicHistory> {
-  const current = await getMetabolismForUser(userId);
-  return generateMockHistory(current.score, 14);
+export async function getMetabolismHistoryForUser(userId: number): Promise<MetabolicHistory> {
+  return loadSnapshots(userId, 14);
+}
+
+export async function invalidateMetabolismSnapshot(userId: number): Promise<void> {
+  await invalidateTodaySnapshot(userId);
 }

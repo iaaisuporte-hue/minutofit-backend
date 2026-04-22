@@ -10,13 +10,12 @@ router.get('/me/metabolism', authMiddleware, async (req: Request, res: Response)
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const userId = String(req.user.id);
-    const data = await getMetabolismForUser(userId);
+    const data = await getMetabolismForUser(req.user.id);
 
     return res.json(data);
   } catch (error) {
     console.error('[metabolism] error computing score:', error);
-    return res.status(500).json({ error: 'Failed to compute metabolism' });
+    return res.status(500).json({ error: 'Falha ao calcular metabolismo' });
   }
 });
 
@@ -26,13 +25,12 @@ router.get('/me/metabolism/history', authMiddleware, async (req: Request, res: R
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const userId = String(req.user.id);
-    const data = await getMetabolismHistoryForUser(userId);
+    const data = await getMetabolismHistoryForUser(req.user.id);
 
     return res.json(data);
   } catch (error) {
     console.error('[metabolism] error fetching history:', error);
-    return res.status(500).json({ error: 'Failed to fetch metabolism history' });
+    return res.status(500).json({ error: 'Falha ao buscar histórico metabólico' });
   }
 });
 

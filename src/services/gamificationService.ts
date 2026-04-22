@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import { invalidateMetabolismSnapshot } from '../modules/metabolism/metabolic.service';
 
 type CheckinSource = 'workout' | 'activity';
 type MuscleGroup =
@@ -113,6 +114,12 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
     }
 
     await client.query('COMMIT');
+
+    // Invalida snapshot do dia para que o próximo GET recalcule com os dados atualizados
+    void invalidateMetabolismSnapshot(input.userId).catch((err) =>
+      console.error('[metabolism] invalidate snapshot error:', err),
+    );
+
     return await getGamificationSummary(input.userId, alreadyCheckedIn);
   } catch (error) {
     await client.query('ROLLBACK');

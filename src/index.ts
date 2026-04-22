@@ -14,6 +14,8 @@ import { ensureComplianceSchema } from './db/ensureComplianceSchema';
 import { ensurePlanFeaturesSchema } from './db/ensurePlanFeaturesSchema';
 import { ensurePersonalWorkoutPlansSchema } from './db/ensurePersonalWorkoutPlansSchema';
 import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
+import { ensureUsersMetabolismColumns } from './db/ensureUsersMetabolismColumns';
+import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
 import planRoutes from './routes/plans';
 import metabolismRoutes from './modules/metabolism/metabolic.controller';
 
@@ -28,6 +30,12 @@ void ensurePlanFeaturesSchema().catch((err) => {
 });
 void ensurePersonalWorkoutPlansSchema().catch((err) => {
   console.error('[db] ensurePersonalWorkoutPlansSchema:', err);
+});
+void ensureUsersMetabolismColumns().catch((err) => {
+  console.error('[db] ensureUsersMetabolismColumns:', err);
+});
+void ensureMetabolismSchema().catch((err) => {
+  console.error('[db] ensureMetabolismSchema:', err);
 });
 
 const app = express();

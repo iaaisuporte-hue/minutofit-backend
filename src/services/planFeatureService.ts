@@ -128,34 +128,24 @@ export async function getFeatureMapByPlanId(planId: number): Promise<Record<stri
   return map;
 }
 
-/** Perfil `clientes_sb`: só Hoje, Treinos em casa e Configurações (sem catálogo, perfil social, tracker, etc.). */
-const CLIENTES_SB_FEATURE_KEYS = new Set(['today', 'home_workouts', 'settings']);
-
+/**
+ * Mapa de features do usuário conforme o **plano ativo** na assinatura.
+ * Se não houver assinatura resolvida, cai no plano Free.
+ * (Antes: usava sempre Free e, para `clientes_sb`, cortava ainda mais recursos.)
+ */
 export async function getFeatureMapForUser(userId: number) {
-  const userRow = await pool.query<{ access_profile: string | null }>(
-    `SELECT access_profile FROM users WHERE id = $1 LIMIT 1`,
-    [userId],
-  );
-  const accessProfile = userRow.rows[0]?.access_profile ?? null;
-
-  const plan = await pool
-    .query(`SELECT id, name, description FROM plans WHERE LOWER(name) = 'free' LIMIT 1`)
-    .then((r) => (r.rows[0] ? (r.rows[0] as PlanRecord) : null));
+  const resolved = await resolveCurrentPlanForUser(userId);
+  const plan =
+    resolved ??
+    (await pool
+      .query(`SELECT id, name, description FROM plans WHERE LOWER(name) = 'free' LIMIT 1`)
+      .then((r) => (r.rows[0] ? (r.rows[0] as PlanRecord) : null)));
 
   if (!plan) {
     return { plan: null, features: {} as Record<string, boolean> };
   }
 
-  const baseFeatures = await getFeatureMapByPlanId(plan.id);
-
-  if (accessProfile === 'clientes_sb') {
-    const features: Record<string, boolean> = {};
-    for (const key of Object.keys(baseFeatures)) {
-      features[key] = CLIENTES_SB_FEATURE_KEYS.has(key);
-    }
-    return { plan, features };
-  }
-
-  return { plan, features: baseFeatures };
+  const features = await getFeatureMapByPlanId(plan.id);
+  return { plan, features };
 }
 

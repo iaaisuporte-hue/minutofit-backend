@@ -1,6 +1,7 @@
+import 'dotenv/config';
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 
 import authRoutes from './routes/auth';
 import subscriptionRoutes from './routes/subscriptions';
@@ -14,8 +15,7 @@ import { ensurePlanFeaturesSchema } from './db/ensurePlanFeaturesSchema';
 import { ensurePersonalWorkoutPlansSchema } from './db/ensurePersonalWorkoutPlansSchema';
 import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
 import planRoutes from './routes/plans';
-
-dotenv.config();
+import metabolismRoutes from './modules/metabolism/metabolic.controller';
 
 void ensureUsersCoreColumns().catch((err) => {
   console.error('[db] ensureUsersCoreColumns:', err);
@@ -112,6 +112,7 @@ app.use('/api/gamification', gamificationRoutes);
 app.use('/api/personal', personalRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api', planRoutes);
+app.use('/api', metabolismRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

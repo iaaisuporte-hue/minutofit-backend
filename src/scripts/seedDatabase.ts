@@ -495,10 +495,9 @@ async function seedUsers() {
       password: '123456',
       name: 'Aluno Demo',
       role: 'user',
-      accessProfile: 'clientes_sb',
       cpf: '12345678909',
       phone: '85999990003',
-      tierName: 'Free',
+      tierName: 'Premium',
     },
     {
       email: 'gerencia@minutofit.com.br',
@@ -652,7 +651,17 @@ async function seedUsers() {
   await pool.query(`UPDATE users SET phone = '85999990002' WHERE email = 'personal@treinai.com' AND (phone IS NULL OR phone = '')`);
   await pool.query(`UPDATE users SET phone = '85999990003' WHERE email = 'teste1@treinai.com' AND (phone IS NULL OR phone = '')`);
   await pool.query(`UPDATE users SET phone = '85999990009' WHERE email = 'gerencia@minutofit.com.br' AND (phone IS NULL OR phone = '')`);
-  await pool.query(`UPDATE users SET access_profile = 'clientes_sb' WHERE email = 'teste1@treinai.com'`);
+  // Conta demo: sem perfil restrito + assinatura Premium para liberar todas as features nas telas de aluno (QA)
+  await pool.query(`UPDATE users SET access_profile = NULL WHERE email = 'teste1@treinai.com'`);
+  await pool.query(
+    `UPDATE user_subscriptions us
+     SET tier_id = st.id, updated_at = COALESCE(us.updated_at, CURRENT_TIMESTAMP)
+     FROM users u, subscription_tiers st
+     WHERE u.id = us.user_id
+       AND u.email = 'teste1@treinai.com'
+       AND us.status = 'active'
+       AND st.name = 'Premium'`,
+  );
   await pool.query(`UPDATE users SET role = 'admin', access_profile = 'admin_owner' WHERE email = 'gerencia@minutofit.com.br'`);
   await pool.query(`UPDATE users SET sem_historico_hipertensao = TRUE WHERE sem_historico_hipertensao IS NULL`);
   await pool.query(`UPDATE users SET sem_historico_cardiaco = TRUE WHERE sem_historico_cardiaco IS NULL`);

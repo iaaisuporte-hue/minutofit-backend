@@ -8,9 +8,11 @@ import subscriptionRoutes from './routes/subscriptions';
 import webhookRoutes from './routes/webhooks';
 import adminRoutes from './routes/admin';
 import gamificationRoutes from './routes/gamification';
+import messagesRoutes from './routes/messages';
 import personalRoutes from './routes/personal';
 import videoRoutes from './routes/videos';
 import { ensureComplianceSchema } from './db/ensureComplianceSchema';
+import { ensureMessagesSchema } from './db/ensureMessagesSchema';
 import { ensurePlanFeaturesSchema } from './db/ensurePlanFeaturesSchema';
 import { ensurePersonalWorkoutPlansSchema } from './db/ensurePersonalWorkoutPlansSchema';
 import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
@@ -27,6 +29,9 @@ void ensureComplianceSchema().catch((err) => {
 });
 void ensurePlanFeaturesSchema().catch((err) => {
   console.error('[db] ensurePlanFeaturesSchema:', err);
+});
+void ensureMessagesSchema().catch((err) => {
+  console.error('[db] ensureMessagesSchema:', err);
 });
 void ensurePersonalWorkoutPlansSchema().catch((err) => {
   console.error('[db] ensurePersonalWorkoutPlansSchema:', err);
@@ -117,6 +122,7 @@ app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/gamification', gamificationRoutes);
+app.use('/api/messages', messagesRoutes);
 app.use('/api/personal', personalRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api', planRoutes);

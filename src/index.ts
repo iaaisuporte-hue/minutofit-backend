@@ -19,6 +19,10 @@ import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
 import { ensureUsersMetabolismColumns } from './db/ensureUsersMetabolismColumns';
 import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
 import { ensureRevokedTokensSchema } from './db/ensureRevokedTokensSchema';
+import { ensureActivitySessionsSchema } from './db/ensureActivitySessionsSchema';
+import { ensureMovementSessionsSchema } from './db/ensureMovementSessionsSchema';
+import activitiesRoutes from './routes/activities';
+import movementRoutes from './routes/movement';
 import planRoutes from './routes/plans';
 import metabolismRoutes from './modules/metabolism/metabolic.controller';
 
@@ -45,6 +49,12 @@ void ensureMetabolismSchema().catch((err) => {
 });
 void ensureRevokedTokensSchema().catch((err) => {
   console.error('[db] ensureRevokedTokensSchema:', err);
+});
+void ensureActivitySessionsSchema().catch((err) => {
+  console.error('[db] ensureActivitySessionsSchema:', err);
+});
+void ensureMovementSessionsSchema().catch((err) => {
+  console.error('[db] ensureMovementSessionsSchema:', err);
 });
 
 const app = express();
@@ -131,6 +141,8 @@ app.use('/api/personal', personalRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api', planRoutes);
 app.use('/api', metabolismRoutes);
+app.use('/api/activities', activitiesRoutes);
+app.use('/api/movement', movementRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

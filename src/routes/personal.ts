@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
-import { getPersonalConsulting, getPersonalDashboard } from '../services/personalDashboardService';
+import { getPersonalConsulting, getPersonalDashboard, getPersonalStudentSnapshot } from '../services/personalDashboardService';
 import {
   createPersonalWorkoutPlan,
   listPersonalWorkoutPlans,
@@ -26,6 +26,28 @@ router.get('/consulting/students', authMiddleware, roleCheckMiddleware('personal
     res.status(500).json({ success: false, error: error.message || 'Failed to load personal consulting students' });
   }
 });
+
+router.get(
+  '/students/:studentId/snapshot',
+  authMiddleware,
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+
+      const data = await getPersonalStudentSnapshot(req.user!.id, studentId);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Failed to load student snapshot' });
+    }
+  }
+);
 
 router.get(
   '/students/:studentId/workout-plans',

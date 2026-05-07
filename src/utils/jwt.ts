@@ -1,4 +1,5 @@
 import jwt, { SignOptions } from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
 
 export interface JWTPayload {
   id: number;
@@ -9,6 +10,7 @@ export interface JWTPayload {
 }
 
 export interface RefreshTokenPayload {
+  jti: string;
   id: number;
   email: string;
 }
@@ -26,7 +28,8 @@ export function generateAccessToken(payload: JWTPayload): string {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY as string } as SignOptions);
 }
 
-export function generateRefreshToken(payload: RefreshTokenPayload): string {
+export function generateRefreshToken(base: Omit<RefreshTokenPayload, 'jti'>): string {
+  const payload: RefreshTokenPayload = { ...base, jti: uuidv4() };
   return jwt.sign(payload, JWT_REFRESH_SECRET, { expiresIn: JWT_REFRESH_EXPIRY as string } as SignOptions);
 }
 
@@ -34,6 +37,6 @@ export function verifyAccessToken(token: string): JWTPayload {
   return jwt.verify(token, JWT_SECRET) as JWTPayload;
 }
 
-export function verifyRefreshToken(token: string): RefreshTokenPayload {
-  return jwt.verify(token, JWT_REFRESH_SECRET) as RefreshTokenPayload;
+export function verifyRefreshToken(token: string): RefreshTokenPayload & { exp: number } {
+  return jwt.verify(token, JWT_REFRESH_SECRET) as RefreshTokenPayload & { exp: number };
 }

@@ -18,6 +18,7 @@ import { ensurePersonalWorkoutPlansSchema } from './db/ensurePersonalWorkoutPlan
 import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
 import { ensureUsersMetabolismColumns } from './db/ensureUsersMetabolismColumns';
 import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
+import { ensureRevokedTokensSchema } from './db/ensureRevokedTokensSchema';
 import planRoutes from './routes/plans';
 import metabolismRoutes from './modules/metabolism/metabolic.controller';
 
@@ -41,6 +42,9 @@ void ensureUsersMetabolismColumns().catch((err) => {
 });
 void ensureMetabolismSchema().catch((err) => {
   console.error('[db] ensureMetabolismSchema:', err);
+});
+void ensureRevokedTokensSchema().catch((err) => {
+  console.error('[db] ensureRevokedTokensSchema:', err);
 });
 
 const app = express();

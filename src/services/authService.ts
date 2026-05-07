@@ -169,7 +169,6 @@ export async function registerUser(
     name: string;
     cpf: string;
     phone: string;
-    role?: 'user' | 'personal' | 'nutri' | 'admin';
     /** Se omitido, triagem fica pendente (NULL no banco) ate /auth/student-compliance. */
     healthFlags?: HealthFlags;
   }
@@ -178,7 +177,7 @@ export async function registerUser(
   const name = data.name.trim();
   const cpf = normalizeCpf(data.cpf);
   const phone = normalizePhone(data.phone);
-  const role = data.role || 'user';
+  const role = 'user';
 
   if (!isValidCpf(cpf)) {
     throw new Error('CPF invalido.');
@@ -533,20 +532,41 @@ export async function getUserById(userId: number): Promise<User> {
   return user;
 }
 
+export async function revokeRefreshToken(jti: string, userId: number, expiresAt: Date): Promise<void> {
+  await pool.query(
+    `INSERT INTO revoked_refresh_tokens (jti, user_id, expires_at)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (jti) DO NOTHING`,
+    [jti, userId, expiresAt]
+  );
+}
+
 export async function refreshWithRefreshToken(
   refreshToken: string
 ): Promise<{ user: User; accessToken: string; refreshToken: string }> {
-  let payload: { id: number; email: string };
+  let payload: { jti: string; id: number; email: string; exp: number };
   try {
     payload = verifyRefreshToken(refreshToken);
   } catch {
     throw new Error('Invalid or expired refresh token');
   }
 
+  // Check denylist
+  const revoked = await pool.query(
+    'SELECT 1 FROM revoked_refresh_tokens WHERE jti = $1',
+    [payload.jti]
+  );
+  if (revoked.rows.length > 0) {
+    throw new Error('Refresh token has been revoked');
+  }
+
   const user = await getUserById(payload.id);
   if (user.email.toLowerCase() !== payload.email.toLowerCase()) {
     throw new Error('Invalid refresh token');
   }
+
+  // Rotate: revoke the used token before issuing a new one
+  await revokeRefreshToken(payload.jti, user.id, new Date(payload.exp * 1000));
 
   const accessToken = generateAccessToken({
     id: user.id,

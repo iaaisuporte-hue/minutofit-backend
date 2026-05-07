@@ -1,8 +1,28 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { authMiddleware } from '../middleware/auth';
 import * as authService from '../services/authService';
 import * as oauthService from '../services/oauthService';
 import { verifyRegistrationCaptcha } from '../services/captchaService';
+import { verifyRefreshToken } from '../utils/jwt';
+
+const loginRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Muitas tentativas. Aguarde um minuto e tente novamente.' },
+  skipSuccessfulRequests: false,
+});
+
+const refreshRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Muitas tentativas. Aguarde um minuto e tente novamente.' },
+  skipSuccessfulRequests: true,
+});
 
 const router = Router();
 
@@ -14,7 +34,6 @@ router.post('/register', async (req: Request, res: Response) => {
     const name = String(req.body.name || '').trim();
     const cpf = String(req.body.cpf || '').trim();
     const phone = String(req.body.phone || '').trim();
-    const role = req.body.role;
     const h = req.body.healthFlags;
     let healthFlags: authService.HealthFlags | undefined;
     if (h && typeof h === 'object') {
@@ -58,7 +77,6 @@ router.post('/register', async (req: Request, res: Response) => {
       name,
       cpf,
       phone,
-      role: role || 'user',
       healthFlags,
     });
 
@@ -81,7 +99,7 @@ router.post('/register', async (req: Request, res: Response) => {
 });
 
 // POST /auth/login - Login with email and password
-router.post('/login', async (req: Request, res: Response) => {
+router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '');
@@ -189,7 +207,7 @@ router.post('/oauth/apple/callback', async (req: Request, res: Response) => {
 });
 
 // POST /auth/refresh - New access + refresh tokens from a valid refresh token
-router.post('/refresh', async (req: Request, res: Response) => {
+router.post('/refresh', refreshRateLimit, async (req: Request, res: Response) => {
   try {
     const refreshToken = String(req.body?.refreshToken || '').trim();
     if (!refreshToken) {
@@ -307,12 +325,22 @@ router.patch('/student-compliance', authMiddleware, async (req: Request, res: Re
   }
 });
 
-// POST /auth/logout - Logout (optional - mainly for frontend to clear)
-router.post('/logout', authMiddleware, (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    message: 'Logged out successfully'
-  });
+// POST /auth/logout - Revoke the refresh token and clear the session
+router.post('/logout', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const rawRefreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : null;
+    if (rawRefreshToken) {
+      try {
+        const payload = verifyRefreshToken(rawRefreshToken);
+        await authService.revokeRefreshToken(payload.jti, payload.id, new Date(payload.exp * 1000));
+      } catch {
+        // Token already expired or invalid — nothing to revoke; logout still succeeds
+      }
+    }
+    res.json({ success: true, message: 'Logged out successfully' });
+  } catch {
+    res.json({ success: true, message: 'Logged out' });
+  }
 });
 
 export default router;

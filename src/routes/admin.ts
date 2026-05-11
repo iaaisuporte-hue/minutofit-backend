@@ -486,4 +486,83 @@ router.post('/professionals', authMiddleware, adminMiddleware, async (req: Reque
   }
 });
 
+// ─── Academias (MetaCore Admin) ──────────────────────────────────────────────
+
+// GET /admin/academies — lista todas as academias
+router.get('/academies', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT
+         a.id, a.slug, a.legal_name, a.display_name, a.status, a.created_at,
+         COUNT(DISTINCT au.user_id) FILTER (WHERE au.is_active = TRUE) AS member_count,
+         ab.logo_url,
+         ab.primary_color
+       FROM academies a
+       LEFT JOIN academy_users  au ON au.academy_id = a.id
+       LEFT JOIN academy_branding ab ON ab.academy_id = a.id
+       GROUP BY a.id, ab.logo_url, ab.primary_color
+       ORDER BY a.created_at DESC`
+    );
+    res.json({ success: true, data: { academies: result.rows } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/academies — cria nova academia
+router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { slug, legalName, displayName } = req.body;
+
+    if (!slug || !legalName || !displayName) {
+      return res.status(400).json({ success: false, error: 'slug, legalName e displayName são obrigatórios.' });
+    }
+
+    const slugNorm = String(slug).trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+    const result = await pool.query(
+      `INSERT INTO academies (slug, legal_name, display_name, status)
+       VALUES ($1, $2, $3, 'active')
+       RETURNING id, slug, legal_name, display_name, status, created_at`,
+      [slugNorm, String(legalName).trim(), String(displayName).trim()]
+    );
+
+    res.status(201).json({ success: true, data: { academy: result.rows[0] } });
+  } catch (error: any) {
+    const msg = String(error?.message || '');
+    if (msg.includes('unique') || error?.code === '23505') {
+      return res.status(409).json({ success: false, error: 'Slug já utilizado por outra academia.' });
+    }
+    res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// PATCH /admin/academies/:id/status — ativa / suspende / cancela academia
+router.patch('/academies/:id/status', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.id);
+    const { status } = req.body;
+    const allowed = ['active', 'suspended', 'cancelled', 'trial'];
+
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, error: `Status inválido. Permitidos: ${allowed.join(', ')}.` });
+    }
+
+    const result = await pool.query(
+      `UPDATE academies SET status = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, slug, display_name, status`,
+      [status, academyId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Academia não encontrada.' });
+    }
+
+    res.json({ success: true, data: { academy: result.rows[0] } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;

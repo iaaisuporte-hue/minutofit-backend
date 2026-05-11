@@ -14,6 +14,7 @@ const STATEMENTS = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS apto_para_atividade_fisica BOOLEAN DEFAULT TRUE`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS aceita_responsabilidade_informacoes BOOLEAN DEFAULT TRUE`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider VARCHAR(50)`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_metacore_admin BOOLEAN NOT NULL DEFAULT FALSE`,
 ];
 
 export async function ensureUsersCoreColumns(): Promise<void> {

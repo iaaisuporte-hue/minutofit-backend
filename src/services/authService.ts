@@ -298,12 +298,15 @@ export async function loginUser(
     user.subscriptionTier = subResult.rows[0].name;
   }
 
+  const activeAcademyId = await resolveActiveAcademyId(user.id);
+
   const accessToken = generateAccessToken({
     id: user.id,
     email: user.email,
     role: user.role,
     profileCompleted: user.profileCompleted,
     accessProfile: user.accessProfile,
+    activeAcademyId,
   });
 
   const refreshToken = generateRefreshToken({
@@ -370,12 +373,15 @@ export async function loginOrCreateOAuthUser(
       user.subscriptionTier = subResult.rows[0].name;
     }
 
+    const activeAcademyId = await resolveActiveAcademyId(user.id);
+
     const accessToken = generateAccessToken({
       id: user.id,
       email: user.email,
       role: user.role,
       profileCompleted: user.profileCompleted,
       accessProfile: user.accessProfile,
+      activeAcademyId,
     });
 
     const refreshToken = generateRefreshToken({
@@ -568,12 +574,15 @@ export async function refreshWithRefreshToken(
   // Rotate: revoke the used token before issuing a new one
   await revokeRefreshToken(payload.jti, user.id, new Date(payload.exp * 1000));
 
+  const activeAcademyId = await resolveActiveAcademyId(user.id);
+
   const accessToken = generateAccessToken({
     id: user.id,
     email: user.email,
     role: user.role,
     profileCompleted: user.profileCompleted,
     accessProfile: user.accessProfile,
+    activeAcademyId,
   });
 
   const newRefreshToken = generateRefreshToken({
@@ -582,6 +591,70 @@ export async function refreshWithRefreshToken(
   });
 
   return { user, accessToken, refreshToken: newRefreshToken };
+}
+
+/**
+ * Retorna o activeAcademyId para incluir no JWT.
+ * - Se o usuário tem exatamente 1 academia ativa → retorna o ID dela.
+ * - Se tem 0 ou >1 → retorna undefined (seletor no frontend ou Admin MetaCore global).
+ */
+export async function resolveActiveAcademyId(userId: number): Promise<number | undefined> {
+  try {
+    const res = await pool.query(
+      `SELECT academy_id FROM academy_users
+       WHERE user_id = $1 AND is_active = TRUE AND status = 'active'`,
+      [userId]
+    );
+    if (res.rows.length === 1) {
+      return res.rows[0].academy_id as number;
+    }
+    return undefined;
+  } catch {
+    // academies schema may not exist yet during first boot — fail gracefully
+    return undefined;
+  }
+}
+
+export interface AcademyForUser {
+  id: number;
+  slug: string;
+  displayName: string;
+  logoUrl?: string;
+  roleSlug: string;
+  roleLabel: string;
+  status: string;
+}
+
+export async function getAcademiesForUser(userId: number): Promise<AcademyForUser[]> {
+  const res = await pool.query(
+    `SELECT
+       a.id,
+       a.slug,
+       a.display_name,
+       a.status,
+       ab.logo_url,
+       ar.slug   AS role_slug,
+       ar.label  AS role_label
+     FROM academy_users au
+     JOIN academies        a  ON a.id  = au.academy_id
+     JOIN academy_roles    ar ON ar.id = au.role_id
+     LEFT JOIN academy_branding ab ON ab.academy_id = a.id
+     WHERE au.user_id  = $1
+       AND au.is_active = TRUE
+       AND au.status    = 'active'
+       AND a.status     = 'active'
+     ORDER BY a.display_name`,
+    [userId]
+  );
+  return res.rows.map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    displayName: r.display_name,
+    logoUrl: r.logo_url ?? undefined,
+    roleSlug: r.role_slug,
+    roleLabel: r.role_label,
+    status: r.status,
+  }));
 }
 
 async function assignFreeSubscription(userId: number): Promise<void> {

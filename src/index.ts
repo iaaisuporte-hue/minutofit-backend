@@ -19,6 +19,8 @@ import { ensureWorkoutReviewsSchema } from './db/ensureWorkoutReviewsSchema';
 import { ensurePersonalDashboardIndexes } from './db/ensurePersonalDashboardIndexes';
 import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
 import { ensureUsersMetabolismColumns } from './db/ensureUsersMetabolismColumns';
+import { ensureAcademiesSchema } from './db/ensureAcademiesSchema';
+import { seedDefaultAcademy } from './db/seedDefaultAcademy';
 import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
 import { ensureRevokedTokensSchema } from './db/ensureRevokedTokensSchema';
 import { ensureActivitySessionsSchema } from './db/ensureActivitySessionsSchema';
@@ -64,6 +66,11 @@ void ensureActivitySessionsSchema().catch((err) => {
 void ensureMovementSessionsSchema().catch((err) => {
   console.error('[db] ensureMovementSessionsSchema:', err);
 });
+void ensureAcademiesSchema()
+  .then(() => seedDefaultAcademy())
+  .catch((err) => {
+    console.error('[db] ensureAcademiesSchema / seedDefaultAcademy:', err);
+  });
 
 const app = express();
 

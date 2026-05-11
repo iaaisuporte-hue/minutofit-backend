@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyAccessToken, JWTPayload } from '../utils/jwt';
+import pool from '../config/database';
 
 declare global {
   namespace Express {
@@ -46,13 +47,26 @@ export function roleCheckMiddleware(...allowedRoles: string[]) {
   };
 }
 
-export function adminMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function adminMiddleware(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
     return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
   if (req.user.role !== 'admin') {
     return res.status(403).json({ success: false, error: 'Admin access required' });
+  }
+
+  // Verify is_metacore_admin flag for stronger validation
+  try {
+    const result = await pool.query(
+      'SELECT is_metacore_admin FROM users WHERE id = $1',
+      [req.user.id]
+    );
+    if (result.rows.length === 0 || !result.rows[0].is_metacore_admin) {
+      return res.status(403).json({ success: false, error: 'MetaCore admin access required' });
+    }
+  } catch {
+    // Column may not exist yet on first deploy — fall back to role check only
   }
 
   next();

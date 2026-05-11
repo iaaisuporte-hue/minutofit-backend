@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { authMiddleware } from '../middleware/auth';
 import * as authService from '../services/authService';
 import * as oauthService from '../services/oauthService';
+import { generateAccessToken } from '../utils/jwt';
 import { verifyRegistrationCaptcha } from '../services/captchaService';
 import { verifyRefreshToken } from '../utils/jwt';
 import pool from '../config/database';
@@ -341,6 +342,53 @@ router.post('/logout', authMiddleware, async (req: Request, res: Response) => {
     res.json({ success: true, message: 'Logged out successfully' });
   } catch {
     res.json({ success: true, message: 'Logged out' });
+  }
+});
+
+// GET /auth/academies — lista academias ativas do usuário logado
+router.get('/academies', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academies = await authService.getAcademiesForUser(req.user!.id);
+    res.json({ success: true, data: { academies } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: String(error?.message || 'Erro ao buscar academias.') });
+  }
+});
+
+// POST /auth/switch-academy — troca a academia ativa e rotaciona o access token
+router.post('/switch-academy', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.body?.academyId);
+    if (!academyId || isNaN(academyId)) {
+      return res.status(400).json({ success: false, error: 'academyId obrigatório.' });
+    }
+
+    // Verificar que o usuário tem vínculo ativo com a academia solicitada
+    const academies = await authService.getAcademiesForUser(req.user!.id);
+    const target = academies.find((a) => a.id === academyId);
+    if (!target) {
+      return res.status(403).json({ success: false, error: 'Acesso à academia não autorizado.' });
+    }
+
+    const user = req.user!;
+    const newAccessToken = generateAccessToken({
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      profileCompleted: user.profileCompleted,
+      accessProfile: user.accessProfile,
+      activeAcademyId: academyId,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        accessToken: newAccessToken,
+        activeAcademy: target,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: String(error?.message || 'Erro ao trocar academia.') });
   }
 });
 

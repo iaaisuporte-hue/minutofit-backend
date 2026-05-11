@@ -7,6 +7,8 @@ export interface JWTPayload {
   role: 'user' | 'personal' | 'nutri' | 'admin';
   profileCompleted: boolean;
   accessProfile?: string;
+  /** ID da academia ativa no contexto do token. Ausente = Admin MetaCore global. */
+  activeAcademyId?: number;
 }
 
 export interface RefreshTokenPayload {

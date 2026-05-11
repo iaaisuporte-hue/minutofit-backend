@@ -389,7 +389,20 @@ router.get('/dashboard/platform-health', authMiddleware, adminMiddleware, async 
       HAVING AVG(score) < 45
     `);
 
+    // Average metabolic score from the most recent snapshot per user (last 30 days)
+    const avgScoreRes = await pool.query(`
+      SELECT ROUND(AVG(score)::numeric, 1) AS avg_score
+      FROM (
+        SELECT DISTINCT ON (user_id) score
+        FROM user_metabolism_snapshots
+        WHERE created_at >= NOW() - INTERVAL '30 days'
+        ORDER BY user_id, created_at DESC
+      ) t
+      WHERE score IS NOT NULL
+    `);
+
     const dist = metabolismRes.rows[0] || { low: 0, moderate: 0, high: 0, unknown: 0 };
+    const rawAvg = avgScoreRes.rows[0]?.avg_score;
 
     res.json({
       success: true,
@@ -400,6 +413,7 @@ router.get('/dashboard/platform-health', authMiddleware, adminMiddleware, async 
           high: Number(dist.high),
           unknown: Number(dist.unknown),
         },
+        averageScore: rawAvg !== null && rawAvg !== undefined ? Number(rawAvg) : null,
         adherenceAvg7d: adherenceRes.rows[0]?.adherence_pct
           ? Math.round(Number(adherenceRes.rows[0].adherence_pct))
           : null,

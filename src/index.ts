@@ -15,6 +15,8 @@ import { ensureComplianceSchema } from './db/ensureComplianceSchema';
 import { ensureMessagesSchema } from './db/ensureMessagesSchema';
 import { ensurePlanFeaturesSchema } from './db/ensurePlanFeaturesSchema';
 import { ensurePersonalWorkoutPlansSchema } from './db/ensurePersonalWorkoutPlansSchema';
+import { ensureWorkoutReviewsSchema } from './db/ensureWorkoutReviewsSchema';
+import { ensurePersonalDashboardIndexes } from './db/ensurePersonalDashboardIndexes';
 import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
 import { ensureUsersMetabolismColumns } from './db/ensureUsersMetabolismColumns';
 import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
@@ -40,6 +42,12 @@ void ensureMessagesSchema().catch((err) => {
 });
 void ensurePersonalWorkoutPlansSchema().catch((err) => {
   console.error('[db] ensurePersonalWorkoutPlansSchema:', err);
+});
+void ensureWorkoutReviewsSchema().catch((err) => {
+  console.error('[db] ensureWorkoutReviewsSchema:', err);
+});
+void ensurePersonalDashboardIndexes().catch((err) => {
+  console.error('[db] ensurePersonalDashboardIndexes:', err);
 });
 void ensureUsersMetabolismColumns().catch((err) => {
   console.error('[db] ensureUsersMetabolismColumns:', err);

@@ -3,6 +3,7 @@ import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
 import {
   ensureChatConversation,
   listChatConversations,
+  listEligibleStudentsForPersonal,
   listMessagesForConversation,
   markConversationRead,
   sendMessageToConversation,
@@ -113,6 +114,22 @@ router.post(
         return res.status(404).json({ success: false, error: error.message });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to send chat message' });
+    }
+  }
+);
+
+router.get(
+  '/eligible-students',
+  authMiddleware,
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const data = await listEligibleStudentsForPersonal(req.user!.id);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      res
+        .status(500)
+        .json({ success: false, error: error.message || 'Failed to list eligible students' });
     }
   }
 );

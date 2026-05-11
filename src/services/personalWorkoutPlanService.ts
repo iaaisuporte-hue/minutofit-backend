@@ -6,7 +6,45 @@ export type WorkoutPlanItemPayload = {
   sets: string;
   reps: string;
   rest: string;
+  rpe?: string;
+  cadence?: string;
+  restPause?: boolean;
+  notes?: string;
 };
+
+function sanitizeString(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') return '';
+  return value.slice(0, maxLength);
+}
+
+function sanitizeItem(raw: unknown): WorkoutPlanItemPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const exerciseId = sanitizeString(r.exerciseId, 64);
+  const name = sanitizeString(r.name, 200);
+  if (!exerciseId || !name) return null;
+
+  const item: WorkoutPlanItemPayload = {
+    exerciseId,
+    name,
+    sets: sanitizeString(r.sets, 32),
+    reps: sanitizeString(r.reps, 32),
+    rest: sanitizeString(r.rest, 32),
+  };
+
+  const rpe = sanitizeString(r.rpe, 16);
+  if (rpe) item.rpe = rpe;
+
+  const cadence = sanitizeString(r.cadence, 16);
+  if (cadence) item.cadence = cadence;
+
+  if (r.restPause === true) item.restPause = true;
+
+  const notes = sanitizeString(r.notes, 500);
+  if (notes) item.notes = notes;
+
+  return item;
+}
 
 export async function assertStudentAssignedToPersonal(personalId: number, studentId: number): Promise<boolean> {
   const result = await pool.query(
@@ -41,7 +79,10 @@ export async function createPersonalWorkoutPlan(
   const title = String(input.title || '').trim() || 'Treino';
   const weekPreset = String(input.weekPreset || '5').slice(0, 32);
   const selectedGroup = input.selectedGroup ? String(input.selectedGroup).slice(0, 64) : null;
-  const items = Array.isArray(input.items) ? input.items : [];
+  const rawItems = Array.isArray(input.items) ? input.items : [];
+  const items: WorkoutPlanItemPayload[] = rawItems
+    .map((entry) => sanitizeItem(entry))
+    .filter((entry): entry is WorkoutPlanItemPayload => entry !== null);
 
   const insert = await pool.query(
     `INSERT INTO personal_workout_plans (

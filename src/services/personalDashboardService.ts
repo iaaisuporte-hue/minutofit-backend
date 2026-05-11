@@ -6,7 +6,15 @@ type DashboardRisk = 'ok' | 'alerta' | 'critico';
 type DashboardPlan = 'basic' | 'silver' | 'gold' | 'black';
 type DashboardGoal = 'emagrecimento' | 'hipertrofia' | 'condicionamento';
 type DashboardEngagementStatus = 'evolving' | 'on_track' | 'attention' | 'fading' | 'at_risk';
-type DashboardAlertType = 'attention_load' | 'full_adherence' | 'silent_disappear' | 'overtraining';
+type DashboardAlertType =
+  | 'attention_load'
+  | 'full_adherence'
+  | 'silent_disappear'
+  | 'overtraining'
+  | 'metabolic_decline'
+  | 'recovery_gap';
+type MetabolicBand = 'low' | 'moderate' | 'high' | 'unknown';
+type MetabolicTrend = 'up' | 'down' | 'stable' | 'unknown';
 
 type DashboardStudent = {
   id: string;
@@ -23,6 +31,10 @@ type DashboardStudent = {
   engagementStatus: DashboardEngagementStatus;
   lastCheckinISO: string | null;
   checkins7d: number;
+  metabolismScore: number | null;
+  metabolismBand: MetabolicBand;
+  metabolismTrend: MetabolicTrend;
+  metabolismDelta7d: number | null;
 };
 
 type DashboardAlert = {
@@ -138,6 +150,71 @@ function resolveEngagementStatus(input: {
   return 'on_track';
 }
 
+function bandFromScore(score: number | null): MetabolicBand {
+  if (score === null) return 'unknown';
+  if (score >= 70) return 'high';
+  if (score >= 45) return 'moderate';
+  return 'low';
+}
+
+function normalizeTrend(trend: unknown): MetabolicTrend {
+  if (trend === 'up' || trend === 'down' || trend === 'stable') return trend;
+  return 'unknown';
+}
+
+type MetabolismRow = {
+  user_id: number;
+  latest_score: number | null;
+  latest_trend: string | null;
+  baseline_score: number | null;
+};
+
+async function loadCarteiraMetabolism(studentIds: number[]): Promise<Map<number, MetabolismRow>> {
+  const map = new Map<number, MetabolismRow>();
+  if (studentIds.length === 0) return map;
+
+  const result = await pool.query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (user_id)
+         user_id,
+         score AS latest_score,
+         trend AS latest_trend,
+         snapshot_date AS latest_date
+       FROM user_metabolism_snapshots
+       WHERE user_id = ANY($1::int[])
+       ORDER BY user_id, snapshot_date DESC
+     ),
+     baseline AS (
+       SELECT DISTINCT ON (user_id)
+         user_id,
+         score AS baseline_score
+       FROM user_metabolism_snapshots
+       WHERE user_id = ANY($1::int[])
+         AND snapshot_date <= CURRENT_DATE - INTERVAL '7 days'
+       ORDER BY user_id, snapshot_date DESC
+     )
+     SELECT
+       l.user_id,
+       l.latest_score,
+       l.latest_trend,
+       b.baseline_score
+     FROM latest l
+     LEFT JOIN baseline b ON b.user_id = l.user_id`,
+    [studentIds]
+  );
+
+  for (const row of result.rows) {
+    map.set(Number(row.user_id), {
+      user_id: Number(row.user_id),
+      latest_score: row.latest_score !== null ? Number(row.latest_score) : null,
+      latest_trend: row.latest_trend ?? null,
+      baseline_score: row.baseline_score !== null ? Number(row.baseline_score) : null,
+    });
+  }
+
+  return map;
+}
+
 function buildIntelligentAlerts(students: DashboardStudent[]): DashboardAlert[] {
   const alerts: DashboardAlert[] = [];
 
@@ -200,7 +277,42 @@ function buildIntelligentAlerts(students: DashboardStudent[]): DashboardAlert[] 
     });
   }
 
-  return alerts.slice(0, 4);
+  const metabolicDecline = [...students]
+    .filter(
+      (student) =>
+        student.metabolismScore !== null &&
+        student.metabolismDelta7d !== null &&
+        student.metabolismDelta7d <= -15
+    )
+    .sort((a, b) => (a.metabolismDelta7d ?? 0) - (b.metabolismDelta7d ?? 0))[0];
+  if (metabolicDecline && metabolicDecline.metabolismDelta7d !== null) {
+    const dropAbs = Math.abs(metabolicDecline.metabolismDelta7d);
+    alerts.push({
+      type: 'metabolic_decline',
+      title: `${metabolicDecline.name} com score em queda`,
+      description: `Score metabólico caiu ${dropAbs} ponto(s) nos últimos 7 dias. Investigar fadiga, sono ou volume.`,
+      studentId: metabolicDecline.id,
+      studentName: metabolicDecline.name,
+    });
+  }
+
+  const recoveryGap = [...students]
+    .filter(
+      (student) =>
+        student.workouts7d >= 5 && student.metabolismScore !== null && student.metabolismScore < 55
+    )
+    .sort((a, b) => (a.metabolismScore ?? 0) - (b.metabolismScore ?? 0))[0];
+  if (recoveryGap && recoveryGap.metabolismScore !== null) {
+    alerts.push({
+      type: 'recovery_gap',
+      title: `${recoveryGap.name} com volume alto e recuperação baixa`,
+      description: `${recoveryGap.workouts7d} treinos em 7 dias com score metabólico em ${recoveryGap.metabolismScore}. Sugerir descarga ou ajuste de carga.`,
+      studentId: recoveryGap.id,
+      studentName: recoveryGap.name,
+    });
+  }
+
+  return alerts.slice(0, 6);
 }
 
 export async function getPersonalDashboard(personalId: number) {
@@ -267,7 +379,7 @@ export async function getPersonalDashboard(personalId: number) {
     [personalId]
   );
 
-  const students: DashboardStudent[] = result.rows.map((row) => {
+  const baseStudents = result.rows.map((row) => {
     const plan = mapPlan(row.subscription_tier);
     const workouts30d = Number(row.workouts_30d || 0);
     const target30d = targetWorkoutsPerMonth(plan);
@@ -282,6 +394,7 @@ export async function getPersonalDashboard(personalId: number) {
 
     return {
       id: String(row.id),
+      numericId: Number(row.id),
       name: row.name || `Aluno ${row.id}`,
       plan,
       workouts7d: Number(row.workouts_7d || 0),
@@ -302,6 +415,25 @@ export async function getPersonalDashboard(personalId: number) {
       }),
       lastCheckinISO,
       checkins7d: Number(row.checkins_7d || 0),
+    };
+  });
+
+  const metabolismMap = await loadCarteiraMetabolism(baseStudents.map((s) => s.numericId));
+
+  const students: DashboardStudent[] = baseStudents.map((s) => {
+    const m = metabolismMap.get(s.numericId);
+    const latestScore = m?.latest_score ?? null;
+    const baselineScore = m?.baseline_score ?? null;
+    const delta =
+      latestScore !== null && baselineScore !== null ? latestScore - baselineScore : null;
+    const { numericId: _omit, ...rest } = s;
+    void _omit;
+    return {
+      ...rest,
+      metabolismScore: latestScore,
+      metabolismBand: bandFromScore(latestScore),
+      metabolismTrend: normalizeTrend(m?.latest_trend),
+      metabolismDelta7d: delta,
     };
   });
 
@@ -329,6 +461,14 @@ export async function getPersonalDashboard(personalId: number) {
     })
     .slice(0, 4);
 
+  const metabolismDistribution = students.reduce(
+    (acc, student) => {
+      acc[student.metabolismBand] += 1;
+      return acc;
+    },
+    { low: 0, moderate: 0, high: 0, unknown: 0 }
+  );
+
   return {
     summary: {
       totalStudents,
@@ -343,6 +483,7 @@ export async function getPersonalDashboard(personalId: number) {
       least,
       needsFollowUp,
       intelligentAlerts: buildIntelligentAlerts(students),
+      metabolismDistribution,
     },
     students,
     generatedAt: new Date().toISOString(),
@@ -357,7 +498,20 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
     throw err;
   }
 
-  const [dashboard, studentRow, latestActivity, latestWorkout, latestMovement, weekRows, activityTypeRows, xpRow, latestMessageRow, metabolism, metabolismHistory] =
+  const [
+    dashboard,
+    studentRow,
+    latestActivity,
+    latestWorkout,
+    latestMovement,
+    weekRows,
+    activityTypeRows,
+    xpRow,
+    latestMessageRow,
+    metabolism,
+    metabolismHistory,
+    muscleGroupRows,
+  ] =
     await Promise.all([
       getPersonalDashboard(personalId),
       pool.query(
@@ -486,6 +640,19 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
       ),
       getMetabolismForUser(studentId),
       getMetabolismHistoryForUser(studentId),
+      pool.query(
+        `SELECT muscle_group, COUNT(*)::int AS count
+         FROM (
+           SELECT UNNEST(muscle_groups) AS muscle_group
+           FROM user_workout_logs
+           WHERE user_id = $1
+             AND completed_at >= NOW() - INTERVAL '30 days'
+         ) expanded
+         WHERE muscle_group IS NOT NULL AND muscle_group <> ''
+         GROUP BY muscle_group
+         ORDER BY count DESC, muscle_group ASC`,
+        [studentId]
+      ),
     ]);
 
   const student = dashboard.students.find((item) => item.id === String(studentId));
@@ -563,6 +730,10 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
       formScoreSeries: Array.isArray(movementRow?.recent_scores) ? movementRow.recent_scores : [],
       activityTypeCounts: activityTypeRows.rows.map((item) => ({
         type: item.type,
+        count: Number(item.count || 0),
+      })),
+      muscleGroupCounts: muscleGroupRows.rows.map((item) => ({
+        group: String(item.muscle_group),
         count: Number(item.count || 0),
       })),
       xp: Number(xpRow.rows[0]?.xp || row.xp || 0),

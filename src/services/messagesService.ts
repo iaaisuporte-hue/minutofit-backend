@@ -417,3 +417,42 @@ export async function sendMessageToConversation(
 
   return mapMessage(insert.rows[0]);
 }
+
+export async function listEligibleStudentsForPersonal(personalId: number) {
+  const result = await pool.query<{
+    id: number;
+    name: string | null;
+    email: string;
+    has_conversation: boolean;
+    has_messages: boolean;
+  }>(
+    `SELECT
+       u.id,
+       u.name,
+       u.email,
+       EXISTS (
+         SELECT 1 FROM chat_conversations cc
+         WHERE cc.personal_id = $1 AND cc.student_id = u.id
+       ) AS has_conversation,
+       EXISTS (
+         SELECT 1 FROM chat_conversations cc
+         JOIN chat_messages cm ON cm.conversation_id = cc.id
+         WHERE cc.personal_id = $1 AND cc.student_id = u.id
+       ) AS has_messages
+     FROM personal_student_assignments psa
+     JOIN users u ON u.id = psa.student_id
+     WHERE psa.personal_id = $1
+       AND psa.status = 'active'
+       AND u.role = 'user'
+     ORDER BY u.name ASC`,
+    [personalId]
+  );
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    name: row.name || row.email || `Aluno ${row.id}`,
+    email: row.email,
+    hasConversation: Boolean(row.has_conversation),
+    hasMessages: Boolean(row.has_messages),
+  }));
+}

@@ -7,6 +7,7 @@ import { generateAccessToken } from '../utils/jwt';
 import { verifyRegistrationCaptcha } from '../services/captchaService';
 import { verifyRefreshToken } from '../utils/jwt';
 import pool from '../config/database';
+import { validateInvitationToken, acceptInvitation } from '../services/academyTeamService';
 
 const loginRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -100,6 +101,67 @@ router.post('/register', async (req: Request, res: Response) => {
   }
 });
 
+// GET /auth/branding — public, no auth required.
+// Returns branding for the academy that owns the request subdomain (via req.tenantHost).
+// Returns 204 when accessed from app.minutofit.com.br (no tenant context).
+// Returns 404 when slug exists but subdomain is inactive / academy not found.
+router.get('/branding', async (req: Request, res: Response) => {
+  try {
+    if (!req.tenantHost) {
+      // No subdomain context — generic login (app.minutofit.com.br)
+      return res.status(204).end();
+    }
+
+    const { academyId, subdomainStatus } = req.tenantHost;
+
+    if (subdomainStatus !== 'active') {
+      return res.status(503).json({ success: false, error: 'Academia temporariamente indisponível.' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+         a.display_name   AS academy_display_name,
+         ab.logo_url,
+         ab.banner_url,
+         ab.display_name,
+         ab.primary_color,
+         ab.primary_hover,
+         ab.primary_soft,
+         ab.secondary_color,
+         ab.accent_color,
+         ab.cta_text_color,
+         ab.welcome_message
+       FROM academies a
+       LEFT JOIN academy_branding ab ON ab.academy_id = a.id
+       WHERE a.id = $1`,
+      [academyId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Academia não encontrada.' });
+    }
+
+    const row = result.rows[0];
+    const branding = {
+      displayName:    row.display_name    ?? row.academy_display_name ?? null,
+      logoUrl:        row.logo_url        ?? null,
+      bannerUrl:      row.banner_url      ?? null,
+      primaryColor:   row.primary_color   ?? null,
+      primaryHover:   row.primary_hover   ?? null,
+      primarySoft:    row.primary_soft    ?? null,
+      secondaryColor: row.secondary_color ?? null,
+      accentColor:    row.accent_color    ?? null,
+      ctaTextColor:   row.cta_text_color  ?? null,
+      welcomeMessage: row.welcome_message ?? null,
+    };
+
+    return res.json({ success: true, data: { branding } });
+  } catch (err: any) {
+    console.error('[auth/branding]', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // POST /auth/login - Login with email and password
 router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
   try {
@@ -110,7 +172,14 @@ router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Email and password are required' });
     }
 
-    const { user, accessToken, refreshToken } = await authService.loginUser(email, password);
+    // BE-1.7.4: if accessing via a tenant subdomain, restrict login to users of that academy
+    const academyIdFromHost = req.tenantHost?.academyId;
+
+    const { user, accessToken, refreshToken } = await authService.loginUser(
+      email,
+      password,
+      academyIdFromHost
+    );
 
     res.json({
       success: true,
@@ -122,7 +191,9 @@ router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Login error:', error);
-    res.status(401).json({ success: false, error: String(error?.message || 'Nao foi possivel entrar.') });
+    const msg = String(error?.message || 'Nao foi possivel entrar.');
+    const status = msg.includes('Sem acesso') ? 403 : 401;
+    res.status(status).json({ success: false, error: msg });
   }
 });
 
@@ -237,10 +308,13 @@ router.post('/refresh', refreshRateLimit, async (req: Request, res: Response) =>
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   try {
     const user = await authService.getUserById(req.user!.id);
+    // Resolve academy role to use as effectiveProfile (overrides users.access_profile for academy staff)
+    const { academyRoleSlug } = await authService.resolveAcademyContext(req.user!.id);
+    const effectiveProfile = (academyRoleSlug as any) ?? user.accessProfile;
 
     res.json({
       success: true,
-      data: { user }
+      data: { user: { ...user, accessProfile: effectiveProfile } }
     });
   } catch (error: any) {
     res.status(404).json({ success: false, error: error.message });
@@ -371,12 +445,14 @@ router.post('/switch-academy', authMiddleware, async (req: Request, res: Respons
     }
 
     const user = req.user!;
+    // Use the role in the selected academy as accessProfile
+    const effectiveProfile = (target.roleSlug as any) ?? user.accessProfile;
     const newAccessToken = generateAccessToken({
       id: user.id,
       email: user.email,
       role: user.role,
       profileCompleted: user.profileCompleted,
-      accessProfile: user.accessProfile,
+      accessProfile: effectiveProfile,
       activeAcademyId: academyId,
     });
 
@@ -434,6 +510,31 @@ router.patch('/profile', authMiddleware, async (req: Request, res: Response) => 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Erro interno.';
     res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// ─── Invitation public endpoints ────────────────────────────────────────────
+
+// GET /auth/invitations/:token — validate token without auth
+router.get('/invitations/:token', async (req: Request, res: Response) => {
+  try {
+    const data = await validateInvitationToken(req.params.token);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// POST /auth/accept-invitation
+router.post('/accept-invitation', async (req: Request, res: Response) => {
+  try {
+    const { token, password, name, cpf, phone } = req.body;
+    if (!token) return res.status(400).json({ success: false, error: 'token obrigatório.' });
+
+    const result = await acceptInvitation(token, { password, name, cpf, phone });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 

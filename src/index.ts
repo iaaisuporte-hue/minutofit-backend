@@ -21,6 +21,7 @@ import { ensureUsersCoreColumns } from './db/ensureUsersCoreColumns';
 import { ensureUsersMetabolismColumns } from './db/ensureUsersMetabolismColumns';
 import { ensureAcademiesSchema } from './db/ensureAcademiesSchema';
 import { seedDefaultAcademy } from './db/seedDefaultAcademy';
+import { ensureStudentsSchema } from './db/ensureStudentsSchema';
 import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
 import { ensureRevokedTokensSchema } from './db/ensureRevokedTokensSchema';
 import { ensureActivitySessionsSchema } from './db/ensureActivitySessionsSchema';
@@ -29,6 +30,8 @@ import activitiesRoutes from './routes/activities';
 import movementRoutes from './routes/movement';
 import planRoutes from './routes/plans';
 import metabolismRoutes from './modules/metabolism/metabolic.controller';
+import academyRoutes from './routes/academy';
+import { tenantResolverMiddleware } from './middleware/tenantResolver';
 
 void ensureUsersCoreColumns().catch((err) => {
   console.error('[db] ensureUsersCoreColumns:', err);
@@ -68,8 +71,9 @@ void ensureMovementSessionsSchema().catch((err) => {
 });
 void ensureAcademiesSchema()
   .then(() => seedDefaultAcademy())
+  .then(() => ensureStudentsSchema())
   .catch((err) => {
-    console.error('[db] ensureAcademiesSchema / seedDefaultAcademy:', err);
+    console.error('[db] ensureAcademiesSchema / seedDefaultAcademy / ensureStudentsSchema:', err);
   });
 
 const app = express();
@@ -116,6 +120,8 @@ function parseAllowedOrigins() {
 const allowedOrigins = parseAllowedOrigins();
 const vercelPreviewPattern = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 const localDevOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
+/** Wildcard for academy subdomains — anchored at both ends to prevent bypass via attacker.minutofit.com.br.evil.com */
+const minutoFitSubdomainPattern = /^https:\/\/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.minutofit\.com\.br$/i;
 
 // Middleware
 app.use(
@@ -131,11 +137,16 @@ app.use(
         return;
       }
 
-      if (allowedOrigins.includes(origin) || vercelPreviewPattern.test(origin)) {
+      if (
+        allowedOrigins.includes(origin) ||
+        vercelPreviewPattern.test(origin) ||
+        minutoFitSubdomainPattern.test(origin)
+      ) {
         callback(null, true);
         return;
       }
 
+      console.warn(`[CORS] blocked origin: ${origin}`);
       callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true,
@@ -144,6 +155,9 @@ app.use(
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Resolve academy context from Host header (populates req.tenantHost on subdomain requests)
+app.use(tenantResolverMiddleware);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -158,6 +172,7 @@ app.use('/api', planRoutes);
 app.use('/api', metabolismRoutes);
 app.use('/api/activities', activitiesRoutes);
 app.use('/api/movement', movementRoutes);
+app.use('/api/academy', academyRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

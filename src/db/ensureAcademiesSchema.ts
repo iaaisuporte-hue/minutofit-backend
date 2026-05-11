@@ -90,16 +90,30 @@ export async function ensureAcademiesSchema(): Promise<void> {
       id              SERIAL PRIMARY KEY,
       academy_id      INTEGER NOT NULL UNIQUE REFERENCES academies(id) ON DELETE CASCADE,
       logo_url        VARCHAR(500),
+      banner_url      VARCHAR(500),
       display_name    VARCHAR(255),
       primary_color   VARCHAR(7),
       primary_hover   VARCHAR(7),
+      primary_soft    VARCHAR(9),
+      secondary_color VARCHAR(7),
       accent_color    VARCHAR(7),
-      welcome_message TEXT,
+      cta_text_color  VARCHAR(7),
+      welcome_message VARCHAR(200),
       theme           VARCHAR(20) DEFAULT 'default'
                         CHECK (theme IN ('default', 'dark', 'light')),
       updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  // Idempotent additions for academies created before Fase 1.7
+  await pool.query(`ALTER TABLE academy_branding ADD COLUMN IF NOT EXISTS banner_url      VARCHAR(500)`);
+  await pool.query(`ALTER TABLE academy_branding ADD COLUMN IF NOT EXISTS primary_soft    VARCHAR(9)`);
+  await pool.query(`ALTER TABLE academy_branding ADD COLUMN IF NOT EXISTS secondary_color VARCHAR(7)`);
+  await pool.query(`ALTER TABLE academy_branding ADD COLUMN IF NOT EXISTS cta_text_color  VARCHAR(7)`);
+
+  // Subdomain control on academies
+  await pool.query(`ALTER TABLE academies ADD COLUMN IF NOT EXISTS subdomain_status VARCHAR(20) DEFAULT 'active' CHECK (subdomain_status IN ('active','suspended'))`);
+  await pool.query(`ALTER TABLE academies ADD COLUMN IF NOT EXISTS primary_domain   VARCHAR(255)`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS academy_invitations (

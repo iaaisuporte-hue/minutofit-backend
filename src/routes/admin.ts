@@ -2,6 +2,9 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware, adminMiddleware } from '../middleware/auth';
 import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
+import { ensureAcademyRoles } from '../db/academyRoles';
+import { assignOwner } from '../services/academyTeamService';
+import { auditLog } from '../utils/auditLog';
 
 const router = Router();
 
@@ -509,16 +512,21 @@ router.get('/academies', authMiddleware, adminMiddleware, async (req: Request, r
   }
 });
 
-// POST /admin/academies — cria nova academia
+// POST /admin/academies — cria nova academia (com roles e dono opcional)
 router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const { slug, legalName, displayName } = req.body;
+    const { slug, legalName, displayName, owner } = req.body;
 
     if (!slug || !legalName || !displayName) {
       return res.status(400).json({ success: false, error: 'slug, legalName e displayName são obrigatórios.' });
     }
 
     const slugNorm = String(slug).trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+    // BE-1.7.7: validate reserved slugs
+    const { validateReservedSlug } = await import('../middleware/tenantResolver');
+    const slugErr = validateReservedSlug(slugNorm);
+    if (slugErr) return res.status(400).json({ success: false, error: slugErr });
 
     const result = await pool.query(
       `INSERT INTO academies (slug, legal_name, display_name, status)
@@ -527,13 +535,171 @@ router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, 
       [slugNorm, String(legalName).trim(), String(displayName).trim()]
     );
 
-    res.status(201).json({ success: true, data: { academy: result.rows[0] } });
+    const academy = result.rows[0];
+    const academyId: number = academy.id;
+
+    // Always create system roles for the new academy
+    await ensureAcademyRoles(pool, academyId);
+
+    await auditLog(pool, {
+      academyId,
+      userId: req.user!.id,
+      action: 'academy.created',
+      entityType: 'academy',
+      entityId: academyId,
+    });
+
+    let ownerResult: { ownerId: number; ownerName: string; ownerEmail: string; tempPassword?: string } | null = null;
+
+    if (owner && owner.mode) {
+      ownerResult = await assignOwner(academyId, req.user!.id, owner);
+    }
+
+    res.status(201).json({
+      success: true,
+      data: {
+        academy,
+        owner: ownerResult
+          ? {
+              id: ownerResult.ownerId,
+              name: ownerResult.ownerName,
+              email: ownerResult.ownerEmail,
+              tempPassword: ownerResult.tempPassword,
+            }
+          : null,
+      },
+    });
   } catch (error: any) {
     const msg = String(error?.message || '');
-    if (msg.includes('unique') || error?.code === '23505') {
+    if (msg.includes('unique') || (error as any)?.code === '23505') {
       return res.status(409).json({ success: false, error: 'Slug já utilizado por outra academia.' });
     }
     res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// POST /admin/academies/:id/assign-owner — atribui/troca dono de academia já criada
+router.post('/academies/:id/assign-owner', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.id);
+    if (!academyId) return res.status(400).json({ success: false, error: 'academyId inválido.' });
+
+    const ownerResult = await assignOwner(academyId, req.user!.id, req.body);
+    res.json({
+      success: true,
+      data: {
+        id: ownerResult.ownerId,
+        name: ownerResult.ownerName,
+        email: ownerResult.ownerEmail,
+        tempPassword: ownerResult.tempPassword,
+      },
+    });
+  } catch (error: any) {
+    res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+// GET /admin/users/search — busca usuários por email/CPF/nome (para seletor de dono)
+router.get('/users/search', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json({ success: true, data: { users: [] } });
+
+    const pattern = `%${q}%`;
+    const result = await pool.query(
+      `SELECT id, name, email, role FROM users
+       WHERE email ILIKE $1 OR name ILIKE $1 OR cpf LIKE $1
+       LIMIT 10`,
+      [pattern]
+    );
+    res.json({ success: true, data: { users: result.rows } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /admin/academies/:id — detalhes de uma academia (owner + equipe)
+router.get('/academies/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.id);
+    if (!academyId) return res.status(400).json({ success: false, error: 'academyId inválido.' });
+
+    const [acResult, teamResult, brandingResult] = await Promise.all([
+      pool.query(
+        `SELECT
+           a.id, a.slug, a.legal_name, a.display_name, a.status, a.created_at, a.owner_user_id,
+           u.name  AS owner_name,
+           u.email AS owner_email,
+           u.phone AS owner_phone
+         FROM academies a
+         LEFT JOIN users u ON u.id = a.owner_user_id
+         WHERE a.id = $1`,
+        [academyId]
+      ),
+      pool.query(
+        `SELECT
+           u.id AS user_id, u.name, u.email, u.phone,
+           ar.slug AS role_slug, ar.label AS role_label,
+           au.is_active, au.status, au.joined_at
+         FROM academy_users au
+         JOIN users         u  ON u.id  = au.user_id
+         JOIN academy_roles ar ON ar.id = au.role_id
+         WHERE au.academy_id = $1
+         ORDER BY ar.slug, u.name`,
+        [academyId]
+      ),
+      pool.query(
+        `SELECT logo_url, display_name, primary_color, accent_color FROM academy_branding WHERE academy_id = $1`,
+        [academyId]
+      ),
+    ]);
+
+    if (acResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Academia não encontrada.' });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        academy: acResult.rows[0],
+        team: teamResult.rows,
+        branding: brandingResult.rows[0] ?? null,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/users/:id/reset-password — gera nova senha temporária para qualquer usuário
+router.post('/users/:id/reset-password', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.id);
+    if (!userId) return res.status(400).json({ success: false, error: 'userId inválido.' });
+
+    const userCheck = await pool.query('SELECT id, name, email FROM users WHERE id = $1', [userId]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+    }
+
+    const crypto = await import('crypto');
+    const bcrypt = await import('bcryptjs');
+    const tempPassword = crypto.randomBytes(6).toString('hex');
+    const hash = await bcrypt.hash(tempPassword, 12);
+
+    await pool.query('UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2', [hash, userId]);
+
+    res.json({
+      success: true,
+      data: {
+        userId,
+        name:  userCheck.rows[0].name,
+        email: userCheck.rows[0].email,
+        tempPassword,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

@@ -23,11 +23,13 @@ declare global {
  * Valida o activeAcademyId do JWT contra academy_users em tempo real
  * (defesa contra token roubado pós-revogação de acesso).
  *
+ * BE-1.7.3: Se req.tenantHost está presente e differe do JWT → 403 (tenant mismatch).
+ *
  * Em caso de sucesso popula req.tenant = { academyId, roleSlug, permissions, unitId? }.
  *
  * Retorna:
  *  401 — usuário não autenticado
- *  403 — sem academia ativa no token, ou vínculo revogado, ou academia suspensa
+ *  403 — sem academia ativa no token, ou vínculo revogado, ou academia suspensa, ou tenant mismatch
  */
 export async function tenantContextMiddleware(req: Request, res: Response, next: NextFunction) {
   if (!req.user) {
@@ -39,6 +41,14 @@ export async function tenantContextMiddleware(req: Request, res: Response, next:
     return res.status(403).json({
       success: false,
       error: 'No active academy context. Use POST /auth/switch-academy.',
+    });
+  }
+
+  // BE-1.7.3: Host-vs-token mismatch — prevents using a token from academy A on academy B's subdomain
+  if (req.tenantHost && req.tenantHost.academyId !== academyId) {
+    return res.status(403).json({
+      success: false,
+      error: 'Tenant mismatch: token não pertence ao subdomínio acessado.',
     });
   }
 

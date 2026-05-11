@@ -260,7 +260,9 @@ export async function registerUser(
 
 export async function loginUser(
   email: string,
-  password: string
+  password: string,
+  /** When provided (login via tenant subdomain), restrict access to this academy only. */
+  academyIdFromHost?: number
 ): Promise<{ user: User; accessToken: string; refreshToken: string }> {
   const result = await pool.query(
     `SELECT ${USER_SELECT_FIELDS}, password
@@ -298,14 +300,32 @@ export async function loginUser(
     user.subscriptionTier = subResult.rows[0].name;
   }
 
-  const activeAcademyId = await resolveActiveAcademyId(user.id);
+  // BE-1.7.4: if request comes from a tenant subdomain, validate user has active link to that academy
+  if (academyIdFromHost) {
+    const linkResult = await pool.query(
+      `SELECT 1 FROM academy_users
+       WHERE user_id = $1 AND academy_id = $2 AND is_active = TRUE AND status = 'active'
+       LIMIT 1`,
+      [user.id, academyIdFromHost]
+    );
+    if (linkResult.rows.length === 0) {
+      throw new Error('Sem acesso a esta academia. Verifique suas credenciais ou contate o administrador.');
+    }
+  }
+
+  const { activeAcademyId, academyRoleSlug } = await resolveAcademyContext(
+    user.id,
+    academyIdFromHost
+  );
+  // Academy role slug takes precedence over users.access_profile for routing
+  const effectiveProfile = (academyRoleSlug as AccessProfile | undefined) ?? user.accessProfile;
 
   const accessToken = generateAccessToken({
     id: user.id,
     email: user.email,
     role: user.role,
     profileCompleted: user.profileCompleted,
-    accessProfile: user.accessProfile,
+    accessProfile: effectiveProfile,
     activeAcademyId,
   });
 
@@ -314,7 +334,7 @@ export async function loginUser(
     email: user.email
   });
 
-  return { user, accessToken, refreshToken };
+  return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken };
 }
 
 export async function loginOrCreateOAuthUser(
@@ -373,14 +393,15 @@ export async function loginOrCreateOAuthUser(
       user.subscriptionTier = subResult.rows[0].name;
     }
 
-    const activeAcademyId = await resolveActiveAcademyId(user.id);
+    const { activeAcademyId, academyRoleSlug } = await resolveAcademyContext(user.id);
+    const effectiveProfile = (academyRoleSlug as AccessProfile | undefined) ?? user.accessProfile;
 
     const accessToken = generateAccessToken({
       id: user.id,
       email: user.email,
       role: user.role,
       profileCompleted: user.profileCompleted,
-      accessProfile: user.accessProfile,
+      accessProfile: effectiveProfile,
       activeAcademyId,
     });
 
@@ -389,7 +410,7 @@ export async function loginOrCreateOAuthUser(
       email: user.email
     });
 
-    return { user, accessToken, refreshToken, isNewUser };
+    return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken, isNewUser };
   } catch (error: any) {
     console.error('OAuth login error:', error);
     throw new Error('Failed to login with OAuth provider');
@@ -574,14 +595,15 @@ export async function refreshWithRefreshToken(
   // Rotate: revoke the used token before issuing a new one
   await revokeRefreshToken(payload.jti, user.id, new Date(payload.exp * 1000));
 
-  const activeAcademyId = await resolveActiveAcademyId(user.id);
+  const { activeAcademyId, academyRoleSlug } = await resolveAcademyContext(user.id);
+  const effectiveProfile = (academyRoleSlug as AccessProfile | undefined) ?? user.accessProfile;
 
   const accessToken = generateAccessToken({
     id: user.id,
     email: user.email,
     role: user.role,
     profileCompleted: user.profileCompleted,
-    accessProfile: user.accessProfile,
+    accessProfile: effectiveProfile,
     activeAcademyId,
   });
 
@@ -590,28 +612,62 @@ export async function refreshWithRefreshToken(
     email: user.email,
   });
 
-  return { user, accessToken, refreshToken: newRefreshToken };
+  return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken: newRefreshToken };
 }
 
 /**
- * Retorna o activeAcademyId para incluir no JWT.
- * - Se o usuário tem exatamente 1 academia ativa → retorna o ID dela.
- * - Se tem 0 ou >1 → retorna undefined (seletor no frontend ou Admin MetaCore global).
+ * Retorna o contexto de academia ativa para incluir no JWT.
+ * - 1 academia ativa → retorna id + roleSlug do papel nessa academia.
+ * - 0 ou >1 → retorna undefined em ambos (seletor no frontend ou Admin MetaCore global).
  */
 export async function resolveActiveAcademyId(userId: number): Promise<number | undefined> {
+  const ctx = await resolveAcademyContext(userId);
+  return ctx.activeAcademyId;
+}
+
+export async function resolveAcademyContext(
+  userId: number,
+  preferredAcademyId?: number
+): Promise<{
+  activeAcademyId?: number;
+  academyRoleSlug?: string;
+}> {
   try {
+    // When a preferred academy is specified (tenant subdomain login), use it directly
+    if (preferredAcademyId) {
+      const res = await pool.query(
+        `SELECT au.academy_id, ar.slug AS role_slug
+         FROM academy_users au
+         JOIN academy_roles ar ON ar.id = au.role_id
+         WHERE au.user_id = $1 AND au.academy_id = $2 AND au.is_active = TRUE AND au.status = 'active'
+         LIMIT 1`,
+        [userId, preferredAcademyId]
+      );
+      if (res.rows.length === 1) {
+        return {
+          activeAcademyId: res.rows[0].academy_id as number,
+          academyRoleSlug: res.rows[0].role_slug as string,
+        };
+      }
+      return {};
+    }
+
     const res = await pool.query(
-      `SELECT academy_id FROM academy_users
-       WHERE user_id = $1 AND is_active = TRUE AND status = 'active'`,
+      `SELECT au.academy_id, ar.slug AS role_slug
+       FROM academy_users au
+       JOIN academy_roles ar ON ar.id = au.role_id
+       WHERE au.user_id = $1 AND au.is_active = TRUE AND au.status = 'active'`,
       [userId]
     );
     if (res.rows.length === 1) {
-      return res.rows[0].academy_id as number;
+      return {
+        activeAcademyId: res.rows[0].academy_id as number,
+        academyRoleSlug: res.rows[0].role_slug as string,
+      };
     }
-    return undefined;
+    return {};
   } catch {
-    // academies schema may not exist yet during first boot — fail gracefully
-    return undefined;
+    return {};
   }
 }
 

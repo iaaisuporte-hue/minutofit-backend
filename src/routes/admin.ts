@@ -319,4 +319,157 @@ router.get('/videos/analytics', authMiddleware, adminMiddleware, async (req: Req
   }
 });
 
+// GET /admin/dashboard/platform-health - Aggregated metabolic signals of the platform base
+router.get('/dashboard/platform-health', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    // Distribution of latest metabolic snapshots per user
+    const metabolismRes = await pool.query(`
+      WITH latest AS (
+        SELECT DISTINCT ON (user_id)
+          user_id,
+          score,
+          band
+        FROM user_metabolism_snapshots
+        ORDER BY user_id, created_at DESC
+      )
+      SELECT
+        COUNT(*) FILTER (WHERE band = 'low') AS low,
+        COUNT(*) FILTER (WHERE band = 'moderate') AS moderate,
+        COUNT(*) FILTER (WHERE band = 'high') AS high,
+        COUNT(*) FILTER (WHERE band IS NULL OR band NOT IN ('low','moderate','high')) AS unknown
+      FROM latest
+    `);
+
+    // Average adherence over last 7 days (checkins / active users)
+    const adherenceRes = await pool.query(`
+      SELECT
+        COUNT(DISTINCT user_id)::float /
+        NULLIF(
+          (SELECT COUNT(id) FROM users WHERE role = 'user'),
+          0
+        ) * 100 AS adherence_pct
+      FROM user_daily_checkins
+      WHERE checked_in_at >= NOW() - INTERVAL '7 days'
+    `);
+
+    // Active users in last 7d (had checkin OR workout log)
+    const activeRes = await pool.query(`
+      SELECT COUNT(DISTINCT user_id) AS count
+      FROM (
+        SELECT user_id FROM user_daily_checkins WHERE checked_in_at >= NOW() - INTERVAL '7 days'
+        UNION
+        SELECT user_id FROM user_workout_logs WHERE completed_at >= NOW() - INTERVAL '7 days'
+      ) t
+    `);
+
+    // Users with NO checkin in last 7 days (potential churn signal)
+    const noCheckinRes = await pool.query(`
+      SELECT COUNT(id) AS count
+      FROM users
+      WHERE role = 'user'
+        AND id NOT IN (
+          SELECT DISTINCT user_id FROM user_daily_checkins
+          WHERE checked_in_at >= NOW() - INTERVAL '7 days'
+        )
+    `);
+
+    // Personals whose assigned students have avg metabolism below 40 (fatigue cluster signal)
+    const fatigueClustersRes = await pool.query(`
+      WITH student_scores AS (
+        SELECT DISTINCT ON (s.user_id)
+          psa.personal_id,
+          s.score
+        FROM user_metabolism_snapshots s
+        JOIN personal_student_assignments psa ON s.user_id = psa.student_id AND psa.status = 'active'
+        ORDER BY s.user_id, s.created_at DESC
+      )
+      SELECT COUNT(DISTINCT personal_id) AS count
+      FROM student_scores
+      GROUP BY personal_id
+      HAVING AVG(score) < 45
+    `);
+
+    const dist = metabolismRes.rows[0] || { low: 0, moderate: 0, high: 0, unknown: 0 };
+
+    res.json({
+      success: true,
+      data: {
+        metabolismDistribution: {
+          low: Number(dist.low),
+          moderate: Number(dist.moderate),
+          high: Number(dist.high),
+          unknown: Number(dist.unknown),
+        },
+        adherenceAvg7d: adherenceRes.rows[0]?.adherence_pct
+          ? Math.round(Number(adherenceRes.rows[0].adherence_pct))
+          : null,
+        activeUsers7d: Number(activeRes.rows[0]?.count ?? 0),
+        usersWithoutCheckin7d: Number(noCheckinRes.rows[0]?.count ?? 0),
+        personalsWithFatigueClusters: Number(fatigueClustersRes.rows[0]?.count ?? 0),
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/professionals - Create a professional user (personal or nutri)
+router.post('/professionals', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { name, email, role, phone, cpf, registry, specialty, bio } = req.body;
+
+    if (!name || !email || !role) {
+      return res.status(400).json({ success: false, error: 'name, email e role sao obrigatorios.' });
+    }
+
+    if (!['personal', 'nutri'].includes(role)) {
+      return res.status(400).json({ success: false, error: 'role deve ser personal ou nutri.' });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Check duplicate email
+    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ success: false, error: 'E-mail já cadastrado na plataforma.' });
+    }
+
+    // Generate temporary password
+    const crypto = await import('crypto');
+    const tempPassword = crypto.randomBytes(6).toString('hex'); // 12-char hex
+
+    const bcrypt = await import('bcryptjs');
+    const passwordHash = await bcrypt.hash(tempPassword, 12);
+
+    const result = await pool.query(
+      `INSERT INTO users (name, email, password_hash, role, phone, cpf, profile_completed, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+       RETURNING id, name, email, role`,
+      [
+        String(name).trim(),
+        normalizedEmail,
+        passwordHash,
+        role,
+        phone ? String(phone).trim() : null,
+        cpf ? String(cpf).trim() : null,
+      ]
+    );
+
+    const user = result.rows[0];
+
+    res.status(201).json({
+      success: true,
+      data: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        tempPassword,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 export default router;

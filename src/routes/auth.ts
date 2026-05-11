@@ -5,6 +5,7 @@ import * as authService from '../services/authService';
 import * as oauthService from '../services/oauthService';
 import { verifyRegistrationCaptcha } from '../services/captchaService';
 import { verifyRefreshToken } from '../utils/jwt';
+import pool from '../config/database';
 
 const loginRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -340,6 +341,51 @@ router.post('/logout', authMiddleware, async (req: Request, res: Response) => {
     res.json({ success: true, message: 'Logged out successfully' });
   } catch {
     res.json({ success: true, message: 'Logged out' });
+  }
+});
+
+// PATCH /auth/profile — atualiza nome e/ou telefone do usuário logado
+router.patch('/profile', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { name, phone } = req.body;
+
+    if (!name && !phone) {
+      return res.status(400).json({ success: false, error: 'Informe name e/ou phone para atualizar.' });
+    }
+
+    const updates: string[] = [];
+    const params: unknown[] = [];
+
+    if (name && String(name).trim()) {
+      updates.push(`name = $${params.length + 1}`);
+      params.push(String(name).trim());
+    }
+
+    if (phone && String(phone).trim()) {
+      updates.push(`phone = $${params.length + 1}`);
+      params.push(String(phone).trim());
+    }
+
+    if (updates.length === 0) {
+      return res.status(400).json({ success: false, error: 'Nenhum campo valido para atualizar.' });
+    }
+
+    updates.push('updated_at = CURRENT_TIMESTAMP');
+    params.push(req.user!.id);
+
+    const result = await pool.query(
+      `UPDATE users SET ${updates.join(', ')} WHERE id = $${params.length} RETURNING id, name, email, phone`,
+      params
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+    }
+
+    res.json({ success: true, data: { user: result.rows[0] } });
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Erro interno.';
+    res.status(500).json({ success: false, error: msg });
   }
 });
 

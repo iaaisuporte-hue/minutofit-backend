@@ -2,10 +2,11 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requireAcademyContext } from '../middleware/tenantContext';
+import { requireProduct } from '../middleware/productGate';
 import { withTenant, TENANT_PLACEHOLDER } from '../db/tenantQuery';
 
 const router = Router();
-router.use(authMiddleware, requireAcademyContext);
+router.use(authMiddleware, requireProduct('app'), requireAcademyContext);
 
 // POST /api/activities — save a completed activity session
 router.post('/', async (req: Request, res: Response) => {

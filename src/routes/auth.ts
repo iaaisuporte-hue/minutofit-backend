@@ -9,6 +9,7 @@ import { verifyRefreshToken } from '../utils/jwt';
 import pool from '../config/database';
 import { validateInvitationToken, acceptInvitation } from '../services/academyTeamService';
 import { logAcademyAction } from '../services/auditService';
+import { getUserProducts, getUserProductsWithMeta } from '../db/ensureProductsSchema';
 import {
   calcPrimarySoftStrong,
   calcPrimaryGlow,
@@ -374,9 +375,11 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
     const { academyRoleSlug } = await authService.resolveAcademyContext(req.user!.id, preferredAcademyId);
     const effectiveProfile = (academyRoleSlug as any) ?? user.accessProfile;
 
+    const products = await getUserProductsWithMeta(req.user!.id);
+
     res.json({
       success: true,
-      data: { user: { ...user, accessProfile: effectiveProfile } }
+      data: { user: { ...user, accessProfile: effectiveProfile }, products }
     });
   } catch (error: any) {
     res.status(404).json({ success: false, error: error.message });
@@ -509,6 +512,7 @@ router.post('/switch-academy', authMiddleware, async (req: Request, res: Respons
     const user = req.user!;
     // Use the role in the selected academy as accessProfile
     const effectiveProfile = (target.roleSlug as any) ?? user.accessProfile;
+    const products = await getUserProducts(user.id);
     const newAccessToken = generateAccessToken({
       id: user.id,
       email: user.email,
@@ -516,6 +520,7 @@ router.post('/switch-academy', authMiddleware, async (req: Request, res: Respons
       profileCompleted: user.profileCompleted,
       accessProfile: effectiveProfile,
       activeAcademyId: academyId,
+      products,
     });
 
     // B2: audit switch-academy

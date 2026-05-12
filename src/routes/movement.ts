@@ -2,9 +2,10 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requireAcademyContext } from '../middleware/tenantContext';
+import { requireProduct } from '../middleware/productGate';
 
 const router = Router();
-router.use(authMiddleware, requireAcademyContext);
+router.use(authMiddleware, requireProduct('app'), requireAcademyContext);
 
 // POST /api/movement/sessions — save a completed movement lab session
 router.post('/sessions', async (req: Request, res: Response) => {

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
 import { requireAcademyContext } from '../middleware/tenantContext';
+import { requireProduct } from '../middleware/productGate';
 import { getPersonalConsulting, getPersonalDashboard, getPersonalStudentSnapshot } from '../services/personalDashboardService';
 import {
   createPersonalWorkoutPlan,
@@ -19,7 +20,7 @@ import {
 } from '../services/workoutReviewsService';
 
 const router = Router();
-router.use(authMiddleware, requireAcademyContext);
+router.use(authMiddleware, requireProduct('personal'), requireAcademyContext);
 
 router.get('/dashboard', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {

@@ -5,6 +5,14 @@ import * as subscriptionService from '../services/subscriptionService';
 import { ensureAcademyRoles } from '../db/academyRoles';
 import { assignOwner } from '../services/academyTeamService';
 import { auditLog } from '../utils/auditLog';
+import {
+  getUserProducts,
+  grantUserProduct,
+  revokeUserProduct,
+  PRODUCT_KEYS,
+  type ProductKey,
+} from '../db/ensureProductsSchema';
+import { logAcademyAction } from '../services/auditService';
 
 const router = Router();
 
@@ -787,6 +795,121 @@ router.patch('/academies/:id/status', authMiddleware, adminMiddleware, async (re
     res.json({ success: true, data: { academy: result.rows[0] } });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Product management (MetaCore admin only)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// GET /admin/users/:userId/products — list user's active products
+router.get('/users/:userId/products', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ success: false, error: 'Invalid userId' });
+
+    const activeKeys = await getUserProducts(userId);
+
+    const result = await pool.query(
+      `SELECT up.id, up.product_key, up.status, up.source, up.source_academy_id,
+              up.granted_by_user_id, up.granted_at, up.expires_at, up.revoked_at,
+              up.notes,
+              u.name AS granted_by_name,
+              a.display_name AS source_academy_name
+       FROM user_products up
+       LEFT JOIN users u ON u.id = up.granted_by_user_id
+       LEFT JOIN academies a ON a.id = up.source_academy_id
+       WHERE up.user_id = $1
+       ORDER BY up.granted_at DESC`,
+      [userId]
+    );
+
+    res.json({
+      success: true,
+      data: {
+        activeKeys,
+        allProducts: PRODUCT_KEYS.map((key) => ({
+          key,
+          active: activeKeys.includes(key),
+        })),
+        history: result.rows,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/users/:userId/products/grant — grant product to user
+router.post('/users/:userId/products/grant', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ success: false, error: 'Invalid userId' });
+
+    const { productKey, expiresAt, notes } = req.body;
+    if (!PRODUCT_KEYS.includes(productKey as ProductKey)) {
+      return res.status(400).json({ success: false, error: `Invalid productKey. Valid: ${PRODUCT_KEYS.join(', ')}` });
+    }
+
+    await grantUserProduct({
+      userId,
+      productKey: productKey as ProductKey,
+      source: 'metacore',
+      grantedByUserId: req.user!.id,
+      expiresAt: expiresAt ? new Date(expiresAt) : null,
+      notes: notes ?? null,
+    });
+
+    logAcademyAction({
+      academyId: null,
+      userId: req.user!.id,
+      action: 'product.grant',
+      entityType: 'user',
+      entityId: userId,
+      meta: { productKey, expiresAt: expiresAt ?? null },
+      ipAddress: req.ip,
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/users/:userId/products/revoke — revoke product from user
+router.post('/users/:userId/products/revoke', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ success: false, error: 'Invalid userId' });
+
+    const { productKey } = req.body;
+    if (!PRODUCT_KEYS.includes(productKey as ProductKey)) {
+      return res.status(400).json({ success: false, error: `Invalid productKey. Valid: ${PRODUCT_KEYS.join(', ')}` });
+    }
+
+    const revoked = await revokeUserProduct({
+      userId,
+      productKey: productKey as ProductKey,
+      revokedByUserId: req.user!.id,
+    });
+
+    if (!revoked) {
+      return res.status(404).json({ success: false, error: 'Produto não está ativo para este usuário.' });
+    }
+
+    logAcademyAction({
+      academyId: null,
+      userId: req.user!.id,
+      action: 'product.revoke',
+      entityType: 'user',
+      entityId: userId,
+      meta: { productKey },
+      ipAddress: req.ip,
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

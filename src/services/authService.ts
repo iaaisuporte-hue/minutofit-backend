@@ -2,6 +2,7 @@ import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { assertStrongPassword } from '../utils/passwordPolicy';
+import { getUserProducts } from '../db/ensureProductsSchema';
 import {
   PARQ_FORM_VERSION,
   assertParqSignature,
@@ -236,12 +237,14 @@ export async function registerUser(
     // Create free tier subscription
     await assignFreeSubscription(user.id);
 
+    const products = await getUserProducts(user.id);
     const accessToken = generateAccessToken({
       id: user.id,
       email: user.email,
       role: user.role,
       profileCompleted: user.profileCompleted,
       accessProfile: user.accessProfile,
+      products,
     });
 
     const refreshToken = generateRefreshToken({
@@ -320,6 +323,7 @@ export async function loginUser(
   // Academy role slug takes precedence over users.access_profile for routing
   const effectiveProfile = (academyRoleSlug as AccessProfile | undefined) ?? user.accessProfile;
 
+  const products = await getUserProducts(user.id);
   const accessToken = generateAccessToken({
     id: user.id,
     email: user.email,
@@ -327,6 +331,7 @@ export async function loginUser(
     profileCompleted: user.profileCompleted,
     accessProfile: effectiveProfile,
     activeAcademyId,
+    products,
   });
 
   const refreshToken = generateRefreshToken({
@@ -396,6 +401,7 @@ export async function loginOrCreateOAuthUser(
     const { activeAcademyId, academyRoleSlug } = await resolveAcademyContext(user.id);
     const effectiveProfile = (academyRoleSlug as AccessProfile | undefined) ?? user.accessProfile;
 
+    const products = await getUserProducts(user.id);
     const accessToken = generateAccessToken({
       id: user.id,
       email: user.email,
@@ -403,6 +409,7 @@ export async function loginOrCreateOAuthUser(
       profileCompleted: user.profileCompleted,
       accessProfile: effectiveProfile,
       activeAcademyId,
+      products,
     });
 
     const refreshToken = generateRefreshToken({
@@ -598,6 +605,7 @@ export async function refreshWithRefreshToken(
   const { activeAcademyId, academyRoleSlug } = await resolveAcademyContext(user.id);
   const effectiveProfile = (academyRoleSlug as AccessProfile | undefined) ?? user.accessProfile;
 
+  const products = await getUserProducts(user.id);
   const accessToken = generateAccessToken({
     id: user.id,
     email: user.email,
@@ -605,6 +613,7 @@ export async function refreshWithRefreshToken(
     profileCompleted: user.profileCompleted,
     accessProfile: effectiveProfile,
     activeAcademyId,
+    products,
   });
 
   const newRefreshToken = generateRefreshToken({

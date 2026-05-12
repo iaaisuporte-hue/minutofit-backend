@@ -30,12 +30,22 @@ export interface Recommendation {
   priority: number;
 }
 
+export type MetabolicTrendDirection = 'up' | 'down' | 'stable';
+
+export interface MetabolicTrendBlock {
+  /** Average score delta vs previous window (approx. points). */
+  delta: number;
+  direction: MetabolicTrendDirection;
+}
+
 export interface MetabolicOutput {
   score: number;
   status: MetabolicStatus;
   trend: MetabolicTrend;
   factors: MetabolicFactor[];
   recommendations: Recommendation[];
+  trend7d: MetabolicTrendBlock;
+  trend30d: MetabolicTrendBlock;
 }
 
 export interface MetabolicHistoryPoint {

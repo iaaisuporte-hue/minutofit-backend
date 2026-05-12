@@ -29,6 +29,9 @@ import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
 import { ensureRevokedTokensSchema } from './db/ensureRevokedTokensSchema';
 import { ensureActivitySessionsSchema } from './db/ensureActivitySessionsSchema';
 import { ensureMovementSessionsSchema } from './db/ensureMovementSessionsSchema';
+import { ensureProductsSchema } from './db/ensureProductsSchema';
+import { backfillUserProducts } from './db/backfillUserProducts';
+import { ensureDailyCheckinSignalsSchema } from './db/ensureDailyCheckinSignalsSchema';
 import activitiesRoutes from './routes/activities';
 import movementRoutes from './routes/movement';
 import planRoutes from './routes/plans';
@@ -63,6 +66,9 @@ void ensureUsersMetabolismColumns().catch((err) => {
 void ensureMetabolismSchema().catch((err) => {
   console.error('[db] ensureMetabolismSchema:', err);
 });
+void ensureDailyCheckinSignalsSchema().catch((err) => {
+  console.error('[db] ensureDailyCheckinSignalsSchema:', err);
+});
 void ensureRevokedTokensSchema().catch((err) => {
   console.error('[db] ensureRevokedTokensSchema:', err);
 });
@@ -78,8 +84,10 @@ void ensureAcademiesSchema()
   .then(() => ensureTenantColumnsPhase2())
   .then(() => backfillTenantColumns())
   .then(() => ensureTenantColumnsPhase2Lock())
+  .then(() => ensureProductsSchema())
+  .then(() => backfillUserProducts())
   .catch((err) => {
-    console.error('[db] academy schema / seed / tenant phase2:', err);
+    console.error('[db] academy schema / seed / tenant phase2 / products:', err);
   });
 
 const app = express();

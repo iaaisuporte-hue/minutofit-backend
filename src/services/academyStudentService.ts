@@ -2,6 +2,7 @@ import pool from '../config/database';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { auditLog } from '../utils/auditLog';
+import { grantUserProduct } from '../db/ensureProductsSchema';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,8 @@ export interface Student {
   acceptedTermsAt?: string | null;
   acceptedLgpdAt?: string | null;
   activePlan: { id: number; name: string; monthlyPrice: number; startDate: string } | null;
+  hasUsedLab?: boolean;
+  hasUsedTracker?: boolean;
 }
 
 export interface Enrollment {
@@ -96,6 +99,8 @@ function mapStudent(row: any): Student {
           startDate:    row.enrollment_start ? new Date(row.enrollment_start).toISOString().slice(0, 10) : '',
         }
       : null,
+    hasUsedLab:     Boolean(row.has_used_lab),
+    hasUsedTracker: Boolean(row.has_used_tracker),
   };
 }
 
@@ -161,7 +166,17 @@ export async function listStudents(
          au.payment_method, au.main_goal, au.medical_restrictions,
          au.emergency_contact_name, au.emergency_contact_phone,
          au.accepted_terms_at, au.accepted_lgpd_at,
-         e.plan_id, e.plan_name, e.monthly_price, e.enrollment_start
+         e.plan_id, e.plan_name, e.monthly_price, e.enrollment_start,
+         EXISTS (
+           SELECT 1 FROM movement_sessions ms
+           WHERE ms.user_id = u.id
+             AND (ms.academy_id IS NULL OR ms.academy_id = au.academy_id)
+         ) AS has_used_lab,
+         EXISTS (
+           SELECT 1 FROM activity_sessions acs
+           WHERE acs.user_id = u.id
+             AND (acs.academy_id IS NULL OR acs.academy_id = au.academy_id)
+         ) AS has_used_tracker
        ${BASE_QUERY}
        ORDER BY u.name
        LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}`,
@@ -589,6 +604,18 @@ export async function enrollStudent(
     });
 
     await client.query('COMMIT');
+
+    // Bootstrap: matrícula concede produto 'academia' automaticamente (não bloqueia)
+    void grantUserProduct({
+      userId,
+      productKey: 'academia',
+      source: 'academy_bootstrap',
+      sourceAcademyId: academyId,
+      grantedByUserId: actorUserId,
+      notes: `Concedido automaticamente na matrícula (academyId=${academyId})`,
+    }).catch((err) => {
+      console.error('[products] bootstrap academia grant failed:', err?.message ?? err);
+    });
 
     const r = ins.rows[0];
     return {

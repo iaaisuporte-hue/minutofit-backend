@@ -113,12 +113,12 @@ function resolveTrend(previousSnapshots: MetabolicHistory): MetabolicTrend {
 export function computeMetabolism(
   input: MetabolicInput,
   previousSnapshots: MetabolicHistory = [],
-): MetabolicOutput {
+): Pick<MetabolicOutput, 'score' | 'status' | 'trend' | 'factors'> {
   const factors = computeFactors(input);
   const totalDelta = factors.reduce((sum, f) => sum + f.delta, 0);
   const score = clamp(BASE_SCORE + totalDelta, 0, 100);
   const status = resolveStatus(score);
   const trend = resolveTrend(previousSnapshots);
 
-  return { score, status, trend, factors, recommendations: [] };
+  return { score, status, trend, factors };
 }

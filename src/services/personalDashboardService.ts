@@ -8,6 +8,7 @@ type DashboardGoal = 'emagrecimento' | 'hipertrofia' | 'condicionamento';
 type DashboardEngagementStatus = 'evolving' | 'on_track' | 'attention' | 'fading' | 'at_risk';
 type DashboardAlertType =
   | 'attention_load'
+  | 'cluster_low_sleep'
   | 'full_adherence'
   | 'silent_disappear'
   | 'overtraining'
@@ -35,6 +36,7 @@ type DashboardStudent = {
   metabolismBand: MetabolicBand;
   metabolismTrend: MetabolicTrend;
   metabolismDelta7d: number | null;
+  latestSleptWell: boolean | null;
 };
 
 type DashboardAlert = {
@@ -231,6 +233,18 @@ function buildIntelligentAlerts(students: DashboardStudent[]): DashboardAlert[] 
     });
   }
 
+  const clusterLowSleep = students.filter((student) => student.latestSleptWell === false);
+  if (clusterLowSleep.length >= 3) {
+    alerts.push({
+      type: 'cluster_low_sleep',
+      title: `${clusterLowSleep.length} alunos relataram sono ruim`,
+      description:
+        'Vários alunos indicaram sono ruim no check-in recente — revisar carga semanal, volume e janelas de recuperação pode evitar fadiga coletiva.',
+      studentId: null,
+      studentName: null,
+    });
+  }
+
   const fullAdherence = [...students]
     .filter((student) => student.adherencePct >= 100)
     .sort((a, b) => b.streakDays - a.streakDays)[0];
@@ -355,7 +369,14 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
           WHERE udcl.user_id = u.id
           ORDER BY udcl.date_key DESC
           LIMIT 1
-        ) AS last_checkin_date
+        ) AS last_checkin_date,
+        (
+          SELECT udc_last.slept_well
+          FROM user_daily_checkins udc_last
+          WHERE udc_last.user_id = u.id
+          ORDER BY udc_last.date_key DESC, udc_last.created_at DESC
+          LIMIT 1
+        ) AS latest_slept_well
       FROM personal_student_assignments psa
       JOIN users u
         ON u.id = psa.student_id
@@ -416,6 +437,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       }),
       lastCheckinISO,
       checkins7d: Number(row.checkins_7d || 0),
+      latestSleptWell: row.latest_slept_well === null || row.latest_slept_well === undefined ? null : Boolean(row.latest_slept_well),
     };
   });
 
@@ -435,6 +457,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       metabolismBand: bandFromScore(latestScore),
       metabolismTrend: normalizeTrend(m?.latest_trend),
       metabolismDelta7d: delta,
+      latestSleptWell: s.latestSleptWell,
     };
   });
 
@@ -512,6 +535,7 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
     metabolism,
     metabolismHistory,
     muscleGroupRows,
+    latestWellbeingRow,
   ] =
     await Promise.all([
       getPersonalDashboard(personalId),
@@ -654,6 +678,14 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
          ORDER BY count DESC, muscle_group ASC`,
         [studentId]
       ),
+      pool.query(
+        `SELECT feeling, slept_well, in_pain, stressed, notes, date_key::text AS date_key
+         FROM user_daily_checkins
+         WHERE user_id = $1
+         ORDER BY date_key DESC, created_at DESC
+         LIMIT 1`,
+        [studentId]
+      ),
     ]);
 
   const student = dashboard.students.find((item) => item.id === String(studentId));
@@ -675,6 +707,23 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
   const latestWorkoutRow = latestWorkout.rows[0];
   const latestMessage = latestMessageRow.rows[0];
   const movementRow = latestMovement.rows[0];
+  const wRow = latestWellbeingRow.rows[0];
+  const wellbeing =
+    wRow &&
+    (wRow.feeling != null ||
+      wRow.slept_well != null ||
+      wRow.in_pain != null ||
+      wRow.stressed != null ||
+      (wRow.notes != null && String(wRow.notes).trim().length > 0))
+      ? {
+          feeling: wRow.feeling as string | null,
+          sleptWell: wRow.slept_well === null ? null : Boolean(wRow.slept_well),
+          inPain: wRow.in_pain === null ? null : Boolean(wRow.in_pain),
+          stressed: wRow.stressed === null ? null : Boolean(wRow.stressed),
+          notes: wRow.notes ? String(wRow.notes) : null,
+          dateKey: wRow.date_key,
+        }
+      : null;
 
   return {
     id: String(row.id),
@@ -689,7 +738,8 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
     today: {
       checkedInToday: weeklyDays[weeklyDays.length - 1]?.checkedIn ?? false,
       lastCheckinISO: student.lastCheckinISO,
-      moodAvailable: false,
+      moodAvailable: Boolean(wellbeing),
+      wellbeing,
       metabolism: metabolism
         ? {
             score: metabolism.score,

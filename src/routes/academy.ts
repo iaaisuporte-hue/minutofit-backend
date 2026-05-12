@@ -27,7 +27,8 @@ import {
   archivePlan,
 } from '../services/academyPlanService';
 import { auditLog } from '../utils/auditLog';
-import { logAcademyAction } from '../services/auditService';
+import { logAcademyAction, listAcademyAudit } from '../services/auditService';
+import { listAcademyPayments, getAcademyFinanceKPIs } from '../services/academyFinanceService';
 import { validateBrandingColor, contrastRatio } from '../utils/contrastValidator';
 import { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } from '../utils/colorContrast';
 import { sanitizeBrandingText } from '../utils/htmlSanitize';
@@ -614,7 +615,8 @@ router.get('/dashboard', async (req: Request, res: Response) => {
   try {
     const { academyId } = req.tenant!;
 
-    const [membersRes, academyRes, brandingRes, retentionRes, atRiskRes, professionalRes] = await Promise.all([
+    const [membersRes, academyRes, brandingRes, retentionRes, atRiskRes, professionalRes,
+           metabolismRes, topPersonalsRes, adoptionRes] = await Promise.all([
       pool.query(
         `SELECT ar.slug, COUNT(*) AS count
          FROM academy_users au
@@ -716,6 +718,75 @@ router.get('/dashboard', async (req: Request, res: Response) => {
            AND ar.slug IN ('personal', 'academy_personal')`,
         [academyId]
       ),
+      // 3.4: Average metabolism score (30d, min 5 snapshots required)
+      pool.query(
+        `SELECT
+           ROUND(AVG(latest.score), 1)     AS avg_score,
+           COUNT(DISTINCT latest.user_id)  AS snapshot_count
+         FROM (
+           SELECT DISTINCT ON (ms.user_id)
+             ms.user_id,
+             ms.score
+           FROM user_metabolism_snapshots ms
+           JOIN academy_users au ON au.user_id = ms.user_id
+             AND au.academy_id = $1
+             AND au.is_active  = TRUE
+           WHERE ms.created_at > NOW() - INTERVAL '30 days'
+           ORDER BY ms.user_id, ms.created_at DESC
+         ) latest`,
+        [academyId]
+      ).catch(() => ({ rows: [{ avg_score: null, snapshot_count: 0 }] })),
+      // 3.5: Top 3 personals by student adherence (30d)
+      pool.query(
+        `SELECT
+           u.id          AS user_id,
+           u.name,
+           COUNT(DISTINCT psa.student_user_id)  AS students_count,
+           ROUND(
+             100.0 * COUNT(DISTINCT udc.user_id) FILTER (
+               WHERE udc.last_checkin >= NOW() - INTERVAL '7 days'
+             ) / NULLIF(COUNT(DISTINCT psa.student_user_id), 0)
+           , 1) AS adherence_rate
+         FROM personal_student_assignments psa
+         JOIN users u ON u.id = psa.personal_user_id
+         LEFT JOIN (
+           SELECT user_id, MAX(created_at) AS last_checkin
+           FROM user_daily_checkins
+           WHERE academy_id = $1
+           GROUP BY user_id
+         ) udc ON udc.user_id = psa.student_user_id
+         WHERE psa.academy_id = $1 AND psa.is_active = TRUE
+         GROUP BY u.id, u.name
+         ORDER BY adherence_rate DESC NULLS LAST, students_count DESC
+         LIMIT 3`,
+        [academyId]
+      ).catch(() => ({ rows: [] })),
+      // 3.6: Adoption indicators
+      pool.query(
+        `SELECT
+           COUNT(DISTINCT au.user_id)                                   AS total_students,
+           COUNT(DISTINCT ms.user_id) FILTER (
+             WHERE ms.created_at > NOW() - INTERVAL '30 days'
+           )                                                            AS lab_users,
+           COUNT(DISTINCT acs.user_id) FILTER (
+             WHERE acs.started_at > NOW() - INTERVAL '30 days'
+           )                                                            AS tracker_users,
+           COUNT(DISTINCT ae.user_id) FILTER (
+             WHERE ae.enrolled_at > NOW() - INTERVAL '30 days'
+           )                                                            AS new_enrollments,
+           COUNT(DISTINCT ae2.user_id) FILTER (
+             WHERE ae2.cancelled_at > NOW() - INTERVAL '30 days'
+           )                                                            AS cancellations
+         FROM academy_users au
+         LEFT JOIN movement_sessions ms       ON ms.user_id = au.user_id
+         LEFT JOIN activity_sessions acs      ON acs.user_id = au.user_id
+         LEFT JOIN academy_enrollments ae     ON ae.user_id = au.user_id AND ae.academy_id = $1
+         LEFT JOIN academy_enrollments ae2    ON ae2.user_id = au.user_id AND ae2.academy_id = $1
+         WHERE au.academy_id = $1
+           AND au.is_active   = TRUE
+           AND au.status      = 'active'`,
+        [academyId]
+      ).catch(() => ({ rows: [] })),
     ]);
 
     const membersByRole: Record<string, number> = {};
@@ -741,6 +812,29 @@ router.get('/dashboard', async (req: Request, res: Response) => {
       daysInactive: Number(row.days_inactive),
     }));
 
+    const metRow = metabolismRes.rows[0] ?? {};
+    const snapshotCount = Number(metRow.snapshot_count ?? 0);
+    const averageMetabolismScore = snapshotCount >= 5
+      ? (metRow.avg_score != null ? parseFloat(metRow.avg_score) : null)
+      : null;
+
+    const topPersonals = (topPersonalsRes.rows as any[]).map((r) => ({
+      userId:        Number(r.user_id),
+      name:          r.name || `Personal ${r.user_id}`,
+      studentsCount: Number(r.students_count),
+      adherenceRate: r.adherence_rate != null ? parseFloat(r.adherence_rate) : null,
+    }));
+
+    const adoptRow = adoptionRes.rows[0] ?? {};
+    const totalStudents2 = Number(adoptRow.total_students ?? 0);
+    const adoption = {
+      labAdoptionPct:     totalStudents2 > 0
+        ? Math.round((Number(adoptRow.lab_users     ?? 0) / totalStudents2) * 100) : null,
+      trackerAdoptionPct: totalStudents2 > 0
+        ? Math.round((Number(adoptRow.tracker_users ?? 0) / totalStudents2) * 100) : null,
+      netGrowth: Number(adoptRow.new_enrollments ?? 0) - Number(adoptRow.cancellations ?? 0),
+    };
+
     res.json({
       success: true,
       data: {
@@ -751,8 +845,47 @@ router.get('/dashboard', async (req: Request, res: Response) => {
         professionalsActive: Number(professionalRes.rows[0]?.count ?? 0),
         retention,
         atRiskStudents,
+        averageMetabolismScore,
+        topPersonals,
+        adoption,
       },
     });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Audit log ────────────────────────────────────────────────────────────────
+
+// GET /academy/audit-log?limit=50&offset=0&action=<filter>
+router.get('/audit-log', async (req: Request, res: Response) => {
+  try {
+    const { academyId } = req.tenant!;
+    const limit  = Math.min(Number(req.query.limit  ?? 50), 100);
+    const offset = Number(req.query.offset ?? 0);
+    const rows = await listAcademyAudit(academyId, limit, offset);
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Finance MVP ──────────────────────────────────────────────────────────────
+
+// GET /academy/payments?from=&to=&status=&limit=&offset=
+router.get('/payments', async (req: Request, res: Response) => {
+  try {
+    const { academyId } = req.tenant!;
+    const { from, to, status } = req.query as Record<string, string | undefined>;
+    const limit  = Math.min(Number(req.query.limit  ?? 50), 200);
+    const offset = Number(req.query.offset ?? 0);
+
+    const [{ rows, total }, kpis] = await Promise.all([
+      listAcademyPayments({ academyId, from, to, status, limit, offset }),
+      getAcademyFinanceKPIs(academyId),
+    ]);
+
+    res.json({ success: true, data: { rows, total, kpis } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

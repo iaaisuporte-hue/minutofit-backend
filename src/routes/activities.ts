@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { withTenant, TENANT_PLACEHOLDER } from '../db/tenantQuery';
 
 const router = Router();
 
@@ -8,6 +9,8 @@ const router = Router();
 router.post('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
+    // Tenant isolation: stamp academy_id from JWT if available (always present after Phase 2 backfill)
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
     const {
       activityType,
       durationSeconds,
@@ -28,12 +31,13 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 
     const result = await pool.query(
       `INSERT INTO activity_sessions
-         (user_id, activity_type, duration_seconds, distance_km, calories_estimated,
+         (user_id, academy_id, activity_type, duration_seconds, distance_km, calories_estimated,
           avg_pace, intensity, score, route_coordinates, validation_flag, started_at, ended_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING id, created_at`,
       [
         userId,
+        academyId,
         String(activityType),
         Number(durationSeconds) || 0,
         Number(distanceKm) || 0,
@@ -59,15 +63,31 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const result = await pool.query(
-      `SELECT id, activity_type, duration_seconds, distance_km, calories_estimated,
-              avg_pace, intensity, score, validation_flag, started_at, ended_at, created_at
-       FROM activity_sessions
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT 50`,
-      [userId]
-    );
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+
+    // When academy context is available, use withTenant() for dev-time guard.
+    // Falls back to user_id-only for MetaCore sessions without tenant context.
+    const result = academyId
+      ? await withTenant(
+          pool,
+          academyId,
+          `SELECT id, activity_type, duration_seconds, distance_km, calories_estimated,
+                  avg_pace, intensity, score, validation_flag, started_at, ended_at, created_at
+           FROM activity_sessions
+           WHERE user_id = $1 AND academy_id = $2
+           ORDER BY created_at DESC
+           LIMIT 50`,
+          [userId, TENANT_PLACEHOLDER]
+        )
+      : await pool.query(
+          `SELECT id, activity_type, duration_seconds, distance_km, calories_estimated,
+                  avg_pace, intensity, score, validation_flag, started_at, ended_at, created_at
+           FROM activity_sessions
+           WHERE user_id = $1
+           ORDER BY created_at DESC
+           LIMIT 50`,
+          [userId]
+        );
     return res.json({ success: true, data: result.rows });
   } catch (error: any) {
     console.error('GET /api/activities error:', error);

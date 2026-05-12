@@ -21,7 +21,8 @@ const router = Router();
 
 router.get('/dashboard', authMiddleware, roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
-    const data = await getPersonalDashboard(req.user!.id);
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    const data = await getPersonalDashboard(req.user!.id, academyId);
     res.json({ success: true, data });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to load personal dashboard' });
@@ -30,7 +31,8 @@ router.get('/dashboard', authMiddleware, roleCheckMiddleware('personal'), async 
 
 router.get('/consulting/students', authMiddleware, roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
-    const data = await getPersonalConsulting(req.user!.id);
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    const data = await getPersonalConsulting(req.user!.id, academyId);
     res.json({ success: true, data });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to load personal consulting students' });

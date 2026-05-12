@@ -17,7 +17,8 @@ router.get(
   roleCheckMiddleware('user', 'personal', 'admin'),
   async (req: Request, res: Response) => {
     try {
-      const data = await listChatConversations(req.user!.id, req.user!.role);
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const data = await listChatConversations(req.user!.id, req.user!.role, academyId);
       res.json({ success: true, data });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message || 'Failed to list chat conversations' });
@@ -37,9 +38,11 @@ router.post(
       const personalId =
         body.personalId === undefined || body.personalId === null ? null : Number(body.personalId);
 
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       const data = await ensureChatConversation(req.user!.id, req.user!.role, {
         studentId: Number.isFinite(studentId) ? studentId : null,
         personalId: Number.isFinite(personalId) ? personalId : null,
+        academyId,
       });
 
       res.status(201).json({ success: true, data });
@@ -67,11 +70,13 @@ router.get(
       }
 
       const limitRaw = Number(req.query.limit);
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       const data = await listMessagesForConversation(
         req.user!.id,
         req.user!.role,
         conversationId,
-        Number.isFinite(limitRaw) ? limitRaw : 200
+        Number.isFinite(limitRaw) ? limitRaw : 200,
+        academyId
       );
 
       res.json({ success: true, data });
@@ -95,11 +100,13 @@ router.post(
         return res.status(400).json({ success: false, error: 'Invalid conversation id' });
       }
 
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       const data = await sendMessageToConversation(
         req.user!.id,
         req.user!.role,
         conversationId,
-        typeof req.body?.text === 'string' ? req.body.text : ''
+        typeof req.body?.text === 'string' ? req.body.text : '',
+        academyId
       );
 
       res.status(201).json({ success: true, data });
@@ -145,7 +152,8 @@ router.post(
         return res.status(400).json({ success: false, error: 'Invalid conversation id' });
       }
 
-      await markConversationRead(req.user!.id, req.user!.role, conversationId);
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      await markConversationRead(req.user!.id, req.user!.role, conversationId, academyId);
       res.json({ success: true });
     } catch (error: any) {
       if (error?.code === 'NOT_FOUND') {

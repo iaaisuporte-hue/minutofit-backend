@@ -29,6 +29,7 @@ router.post('/checkins', authMiddleware, requireFeature('tracker'), async (req: 
 
     const data = await recordGamificationCheckin({
       userId: req.user!.id,
+      academyId: req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null,
       source,
       xp,
       workout: req.body.workout,

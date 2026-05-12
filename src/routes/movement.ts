@@ -8,6 +8,7 @@ const router = Router();
 router.post('/sessions', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
     const {
       exerciseId,
       exerciseLabel,
@@ -25,12 +26,13 @@ router.post('/sessions', authMiddleware, async (req: Request, res: Response) => 
 
     const result = await pool.query(
       `INSERT INTO movement_sessions
-         (user_id, exercise_id, exercise_label, rep_count, avg_form_score,
+         (user_id, academy_id, exercise_id, exercise_label, rep_count, avg_form_score,
           best_rep_score, worst_rep_score, avg_symmetry, insight)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        RETURNING id, created_at`,
       [
         userId,
+        academyId,
         String(exerciseId),
         String(exerciseLabel ?? exerciseId),
         Number(repCount) || 0,
@@ -53,15 +55,27 @@ router.post('/sessions', authMiddleware, async (req: Request, res: Response) => 
 router.get('/sessions', authMiddleware, async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const result = await pool.query(
-      `SELECT id, exercise_id, exercise_label, rep_count, avg_form_score,
-              best_rep_score, worst_rep_score, avg_symmetry, insight, created_at
-       FROM movement_sessions
-       WHERE user_id = $1
-       ORDER BY created_at DESC
-       LIMIT 30`,
-      [userId]
-    );
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+
+    const result = academyId
+      ? await pool.query(
+          `SELECT id, exercise_id, exercise_label, rep_count, avg_form_score,
+                  best_rep_score, worst_rep_score, avg_symmetry, insight, created_at
+           FROM movement_sessions
+           WHERE user_id = $1 AND academy_id = $2
+           ORDER BY created_at DESC
+           LIMIT 30`,
+          [userId, academyId]
+        )
+      : await pool.query(
+          `SELECT id, exercise_id, exercise_label, rep_count, avg_form_score,
+                  best_rep_score, worst_rep_score, avg_symmetry, insight, created_at
+           FROM movement_sessions
+           WHERE user_id = $1
+           ORDER BY created_at DESC
+           LIMIT 30`,
+          [userId]
+        );
     return res.json({ success: true, data: result.rows });
   } catch (error: any) {
     console.error('GET /api/movement/sessions error:', error);

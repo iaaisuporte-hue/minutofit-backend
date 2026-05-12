@@ -22,6 +22,9 @@ import { ensureUsersMetabolismColumns } from './db/ensureUsersMetabolismColumns'
 import { ensureAcademiesSchema } from './db/ensureAcademiesSchema';
 import { seedDefaultAcademy } from './db/seedDefaultAcademy';
 import { ensureStudentsSchema } from './db/ensureStudentsSchema';
+import { ensureTenantColumnsPhase2 } from './db/ensureTenantColumnsPhase2';
+import { backfillTenantColumns } from './db/backfillTenantColumns';
+import { ensureTenantColumnsPhase2Lock } from './db/ensureTenantColumnsPhase2Lock';
 import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
 import { ensureRevokedTokensSchema } from './db/ensureRevokedTokensSchema';
 import { ensureActivitySessionsSchema } from './db/ensureActivitySessionsSchema';
@@ -72,8 +75,11 @@ void ensureMovementSessionsSchema().catch((err) => {
 void ensureAcademiesSchema()
   .then(() => seedDefaultAcademy())
   .then(() => ensureStudentsSchema())
+  .then(() => ensureTenantColumnsPhase2())
+  .then(() => backfillTenantColumns())
+  .then(() => ensureTenantColumnsPhase2Lock())
   .catch((err) => {
-    console.error('[db] ensureAcademiesSchema / seedDefaultAcademy / ensureStudentsSchema:', err);
+    console.error('[db] academy schema / seed / tenant phase2:', err);
   });
 
 const app = express();

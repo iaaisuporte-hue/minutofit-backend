@@ -8,6 +8,7 @@ import { verifyRegistrationCaptcha } from '../services/captchaService';
 import { verifyRefreshToken } from '../utils/jwt';
 import pool from '../config/database';
 import { validateInvitationToken, acceptInvitation } from '../services/academyTeamService';
+import { logAcademyAction } from '../services/auditService';
 import {
   calcPrimarySoftStrong,
   calcPrimaryGlow,
@@ -215,6 +216,38 @@ router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * Validates that a user is a member of the tenant academy when the request
+ * originates from a subdomain (req.tenantHost is set).
+ * Returns 403 if the user is not linked to that academy.
+ */
+async function assertTenantMembership(
+  req: Request,
+  res: Response,
+  userId: number
+): Promise<boolean> {
+  const tenantAcademyId = req.tenantHost?.academyId;
+  if (!tenantAcademyId) return true; // Not a tenant subdomain — allow
+
+  const check = await pool.query(
+    `SELECT 1 FROM academy_users
+     WHERE user_id = $1 AND academy_id = $2 AND is_active = TRUE AND status = 'active'
+     LIMIT 1`,
+    [userId, tenantAcademyId]
+  );
+
+  if (check.rows.length === 0) {
+    res.status(403).json({
+      success: false,
+      error: 'Usuário não possui acesso a esta academia. Solicite um convite ao administrador.',
+      code: 'TENANT_ACCESS_DENIED',
+    });
+    return false;
+  }
+
+  return true;
+}
+
 // POST /auth/oauth/google/callback - Google OAuth callback
 router.post('/oauth/google/callback', async (req: Request, res: Response) => {
   try {
@@ -234,6 +267,10 @@ router.post('/oauth/google/callback', async (req: Request, res: Response) => {
       oauthData.name,
       oauthData.photoUrl
     );
+
+    // A5: Validate tenant membership when on a subdomain
+    const allowed = await assertTenantMembership(req, res, Number(user.id));
+    if (!allowed) return;
 
     res.json({
       success: true,
@@ -281,6 +318,10 @@ router.post('/oauth/apple/callback', async (req: Request, res: Response) => {
       oauthData.name,
       oauthData.photoUrl
     );
+
+    // A5: Validate tenant membership when on a subdomain
+    const allowed = await assertTenantMembership(req, res, Number(user.id));
+    if (!allowed) return;
 
     res.json({
       success: true,
@@ -475,6 +516,16 @@ router.post('/switch-academy', authMiddleware, async (req: Request, res: Respons
       profileCompleted: user.profileCompleted,
       accessProfile: effectiveProfile,
       activeAcademyId: academyId,
+    });
+
+    // B2: audit switch-academy
+    logAcademyAction({
+      academyId,
+      userId: user.id,
+      action: 'auth.switch_academy',
+      entityType: 'academy',
+      entityId: academyId,
+      ipAddress: req.ip,
     });
 
     res.json({

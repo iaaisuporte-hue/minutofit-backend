@@ -148,12 +148,13 @@ export async function recordPayment(
   subscriptionId: number | null,
   mercadoPagoPaymentId: string,
   amountBrl: number,
-  status: string
+  status: string,
+  academyId?: number | null
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO payments (user_id, subscription_id, mercado_pago_payment_id, amount_brl, status)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [userId, subscriptionId, mercadoPagoPaymentId, amountBrl, status]
+    `INSERT INTO payments (user_id, subscription_id, mercado_pago_payment_id, amount_brl, status, academy_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [userId, subscriptionId, mercadoPagoPaymentId, amountBrl, status, academyId ?? null]
   );
 }
 

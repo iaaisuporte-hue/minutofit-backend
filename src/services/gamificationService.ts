@@ -15,6 +15,7 @@ type MuscleGroup =
 
 type RecordCheckinInput = {
   userId: number;
+  academyId?: number | null;
   source: CheckinSource;
   xp: number;
   workout?: {
@@ -44,26 +45,28 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
   try {
     await client.query('BEGIN');
 
+    const academyId = input.academyId ?? null;
+
     await client.query(
-      `INSERT INTO user_gamification_stats (user_id, xp, current_streak)
-       VALUES ($1, 0, 0)
+      `INSERT INTO user_gamification_stats (user_id, academy_id, xp, current_streak)
+       VALUES ($1, $2, 0, 0)
        ON CONFLICT (user_id) DO NOTHING`,
-      [input.userId]
+      [input.userId, academyId]
     );
 
     if (input.workout) {
       await client.query(
-        `INSERT INTO user_workout_logs (user_id, workout_id, title, muscle_groups)
-         VALUES ($1, $2, $3, $4)`,
-        [input.userId, input.workout.workoutId, input.workout.title, input.workout.muscleGroups]
+        `INSERT INTO user_workout_logs (user_id, academy_id, workout_id, title, muscle_groups)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [input.userId, academyId, input.workout.workoutId, input.workout.title, input.workout.muscleGroups]
       );
     }
 
     if (input.activity) {
       await client.query(
-        `INSERT INTO user_activity_logs (user_id, activity_type, duration_seconds, distance_km, pace)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [input.userId, input.activity.type, input.activity.durationSeconds, input.activity.distanceKm, input.activity.pace]
+        `INSERT INTO user_activity_logs (user_id, academy_id, activity_type, duration_seconds, distance_km, pace)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [input.userId, academyId, input.activity.type, input.activity.durationSeconds, input.activity.distanceKm, input.activity.pace]
       );
     }
 
@@ -77,9 +80,9 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
 
     if (!alreadyCheckedIn) {
       await client.query(
-        `INSERT INTO user_daily_checkins (user_id, date_key, source, xp_awarded)
-         VALUES ($1, $2, $3, $4)`,
-        [input.userId, dateKey, input.source, input.xp]
+        `INSERT INTO user_daily_checkins (user_id, academy_id, date_key, source, xp_awarded)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [input.userId, academyId, dateKey, input.source, input.xp]
       );
 
       const statsResult = await client.query(

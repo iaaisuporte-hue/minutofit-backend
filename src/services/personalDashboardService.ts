@@ -315,7 +315,7 @@ function buildIntelligentAlerts(students: DashboardStudent[]): DashboardAlert[] 
   return alerts.slice(0, 6);
 }
 
-export async function getPersonalDashboard(personalId: number) {
+export async function getPersonalDashboard(personalId: number, academyId?: number | null) {
   const result = await pool.query(
     `SELECT
         u.id,
@@ -375,8 +375,9 @@ export async function getPersonalDashboard(personalId: number) {
       WHERE psa.personal_id = $1
         AND psa.status = 'active'
         AND u.role = 'user'
+        AND ($2::integer IS NULL OR psa.academy_id = $2)
       ORDER BY u.name ASC`,
-    [personalId]
+    [personalId, academyId ?? null]
   );
 
   const baseStudents = result.rows.map((row) => {
@@ -741,7 +742,7 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
   };
 }
 
-export async function getPersonalConsulting(personalId: number) {
+export async function getPersonalConsulting(personalId: number, academyId?: number | null) {
   const result = await pool.query(
     `SELECT
         u.id,
@@ -777,8 +778,9 @@ export async function getPersonalConsulting(personalId: number) {
       WHERE psa.personal_id = $1
         AND psa.status = 'active'
         AND u.role = 'user'
+        AND ($2::integer IS NULL OR psa.academy_id = $2)
       ORDER BY u.name ASC`,
-    [personalId]
+    [personalId, academyId ?? null]
   );
 
   const students: ConsultingStudent[] = result.rows.map((row) => {

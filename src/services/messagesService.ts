@@ -86,16 +86,27 @@ function mapConversation(
   };
 }
 
-async function resolveConversationForViewer(conversationId: number, viewerId: number, viewerRole: ViewerRole) {
+async function resolveConversationForViewer(
+  conversationId: number,
+  viewerId: number,
+  viewerRole: ViewerRole,
+  academyId?: number | null
+) {
   const params: Array<number | string> = [conversationId];
   let accessClause = '';
 
   if (viewerRole === 'personal') {
     params.push(viewerId);
-    accessClause = `AND cc.personal_id = $2`;
+    accessClause = `AND cc.personal_id = $${params.length}`;
   } else if (viewerRole === 'user') {
     params.push(viewerId);
-    accessClause = `AND cc.student_id = $2`;
+    accessClause = `AND cc.student_id = $${params.length}`;
+  }
+
+  let academyClause = '';
+  if (academyId) {
+    params.push(academyId);
+    academyClause = `AND cc.academy_id = $${params.length}`;
   }
 
   const result = await pool.query<ConversationRow>(
@@ -122,6 +133,7 @@ async function resolveConversationForViewer(conversationId: number, viewerId: nu
        AND psa.status = 'active'
       WHERE cc.id = $1
         ${accessClause}
+        ${academyClause}
       LIMIT 1`,
     params
   );
@@ -143,13 +155,17 @@ async function resolvePersonalForStudent(studentId: number): Promise<number | nu
   return result.rows[0]?.personal_id ?? null;
 }
 
-export async function listChatConversations(viewerId: number, viewerRoleRaw: string) {
+export async function listChatConversations(
+  viewerId: number,
+  viewerRoleRaw: string,
+  academyId?: number | null
+) {
   if (!isAllowedViewerRole(viewerRoleRaw)) {
     throw new Error('Unsupported role for chat');
   }
 
   const viewerRole = viewerRoleRaw;
-  const params: Array<number | string> = [viewerId];
+  const params: Array<number | string | null> = [viewerId];
   let viewerFilter = '';
 
   if (viewerRole === 'personal') {
@@ -158,6 +174,12 @@ export async function listChatConversations(viewerId: number, viewerRoleRaw: str
     viewerFilter = 'cc.student_id = $1';
   } else {
     viewerFilter = 'TRUE';
+  }
+
+  let academyFilter = '';
+  if (academyId) {
+    params.push(academyId);
+    academyFilter = `AND cc.academy_id = $${params.length}`;
   }
 
   const result = await pool.query<
@@ -220,6 +242,7 @@ export async function listChatConversations(viewerId: number, viewerRoleRaw: str
       ) last_message
         ON TRUE
       WHERE ${viewerFilter}
+        ${academyFilter}
       ORDER BY cc.updated_at DESC`,
     params
   );
@@ -230,7 +253,7 @@ export async function listChatConversations(viewerId: number, viewerRoleRaw: str
 export async function ensureChatConversation(
   viewerId: number,
   viewerRoleRaw: string,
-  input: { studentId?: number | null; personalId?: number | null }
+  input: { studentId?: number | null; personalId?: number | null; academyId?: number | null }
 ) {
   if (!isAllowedViewerRole(viewerRoleRaw)) {
     throw new Error('Unsupported role for chat');
@@ -268,32 +291,36 @@ export async function ensureChatConversation(
     throw err;
   }
 
+  const academyId = input.academyId ?? null;
+
   const upsert = await pool.query<{ id: number }>(
     `INSERT INTO chat_conversations (
        personal_id,
        student_id,
+       academy_id,
        last_read_at_by_personal,
        last_read_at_by_student
      )
      VALUES (
        $1,
        $2,
-       CASE WHEN $3 = 'personal' THEN NOW() ELSE NULL END,
-       CASE WHEN $3 = 'user' THEN NOW() ELSE NULL END
+       $3,
+       CASE WHEN $4 = 'personal' THEN NOW() ELSE NULL END,
+       CASE WHEN $4 = 'user' THEN NOW() ELSE NULL END
      )
      ON CONFLICT (personal_id, student_id)
      DO UPDATE SET updated_at = chat_conversations.updated_at
      RETURNING id`,
-    [personalId, studentId, viewerRole]
+    [personalId, studentId, academyId, viewerRole]
   );
 
   const conversationId = upsert.rows[0].id;
-  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole);
+  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole, academyId);
   if (!conversation) {
     throw new Error('Conversation could not be created');
   }
 
-  const list = await listChatConversations(viewerId, viewerRole);
+  const list = await listChatConversations(viewerId, viewerRole, academyId);
   return list.find((item) => item.id === String(conversationId)) || null;
 }
 
@@ -301,14 +328,15 @@ export async function listMessagesForConversation(
   viewerId: number,
   viewerRoleRaw: string,
   conversationId: number,
-  limit = 200
+  limit = 200,
+  academyId?: number | null
 ) {
   if (!isAllowedViewerRole(viewerRoleRaw)) {
     throw new Error('Unsupported role for chat');
   }
 
   const viewerRole = viewerRoleRaw;
-  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole);
+  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole, academyId);
   if (!conversation) {
     const err = new Error('Conversation not found');
     (err as Error & { code?: string }).code = 'NOT_FOUND';
@@ -328,13 +356,18 @@ export async function listMessagesForConversation(
   return result.rows.map(mapMessage);
 }
 
-export async function markConversationRead(viewerId: number, viewerRoleRaw: string, conversationId: number) {
+export async function markConversationRead(
+  viewerId: number,
+  viewerRoleRaw: string,
+  conversationId: number,
+  academyId?: number | null
+) {
   if (!isAllowedViewerRole(viewerRoleRaw)) {
     throw new Error('Unsupported role for chat');
   }
 
   const viewerRole = viewerRoleRaw;
-  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole);
+  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole, academyId);
   if (!conversation) {
     const err = new Error('Conversation not found');
     (err as Error & { code?: string }).code = 'NOT_FOUND';
@@ -362,7 +395,8 @@ export async function sendMessageToConversation(
   viewerId: number,
   viewerRoleRaw: string,
   conversationId: number,
-  textRaw: string
+  textRaw: string,
+  academyId?: number | null
 ) {
   if (!isAllowedViewerRole(viewerRoleRaw)) {
     throw new Error('Unsupported role for chat');
@@ -375,7 +409,7 @@ export async function sendMessageToConversation(
     throw err;
   }
 
-  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole);
+  const conversation = await resolveConversationForViewer(conversationId, viewerId, viewerRole, academyId);
   if (!conversation) {
     const err = new Error('Conversation not found');
     (err as Error & { code?: string }).code = 'NOT_FOUND';

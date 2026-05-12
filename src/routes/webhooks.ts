@@ -122,7 +122,7 @@ async function handlePaymentNotification(data: any) {
 
     if (preapprovalId) {
       const result = await pool.query(
-        `SELECT us.id, us.user_id, us.tier_id, st.name, st.price_brl
+        `SELECT us.id, us.user_id, us.tier_id, us.academy_id, st.name, st.price_brl
          FROM user_subscriptions us
          JOIN subscription_tiers st ON us.tier_id = st.id
          WHERE us.mercado_pago_subscription_id = $1`,
@@ -137,7 +137,8 @@ async function handlePaymentNotification(data: any) {
           subscription.id,
           paymentId,
           subscription.price_brl,
-          status
+          status,
+          subscription.academy_id ?? null  // A6: stamp academy_id derived from user_subscriptions
         );
 
         if (status === 'approved') {

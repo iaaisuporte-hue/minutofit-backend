@@ -123,7 +123,7 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
       console.error('[metabolism] invalidate snapshot error:', err),
     );
 
-    return await getGamificationSummary(input.userId, alreadyCheckedIn);
+    return await getGamificationSummary(input.userId, alreadyCheckedIn, academyId);
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -132,32 +132,56 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
   }
 }
 
-export async function getGamificationSummary(userId: number, alreadyCheckedIn = false) {
-  const statsResult = await pool.query(
-    `SELECT xp, current_streak, last_checkin_date
-     FROM user_gamification_stats
-     WHERE user_id = $1`,
-    [userId]
-  );
+export async function getGamificationSummary(userId: number, alreadyCheckedIn = false, academyId: number | null = null) {
+  const statsResult = academyId
+    ? await pool.query(
+        `SELECT xp, current_streak, last_checkin_date
+         FROM user_gamification_stats
+         WHERE user_id = $1 AND academy_id = $2`,
+        [userId, academyId]
+      )
+    : await pool.query(
+        `SELECT xp, current_streak, last_checkin_date
+         FROM user_gamification_stats
+         WHERE user_id = $1`,
+        [userId]
+      );
 
   const stats = statsResult.rows[0] || { xp: 0, current_streak: 0, last_checkin_date: null };
 
-  const checkinResult = await pool.query(
-    `SELECT date_key FROM user_daily_checkins
-     WHERE user_id = $1
-     ORDER BY date_key DESC
-     LIMIT 7`,
-    [userId]
-  );
+  const checkinResult = academyId
+    ? await pool.query(
+        `SELECT date_key FROM user_daily_checkins
+         WHERE user_id = $1 AND academy_id = $2
+         ORDER BY date_key DESC
+         LIMIT 7`,
+        [userId, academyId]
+      )
+    : await pool.query(
+        `SELECT date_key FROM user_daily_checkins
+         WHERE user_id = $1
+         ORDER BY date_key DESC
+         LIMIT 7`,
+        [userId]
+      );
 
-  const lastWorkoutResult = await pool.query(
-    `SELECT workout_id, title, muscle_groups, completed_at
-     FROM user_workout_logs
-     WHERE user_id = $1
-     ORDER BY completed_at DESC
-     LIMIT 1`,
-    [userId]
-  );
+  const lastWorkoutResult = academyId
+    ? await pool.query(
+        `SELECT workout_id, title, muscle_groups, completed_at
+         FROM user_workout_logs
+         WHERE user_id = $1 AND academy_id = $2
+         ORDER BY completed_at DESC
+         LIMIT 1`,
+        [userId, academyId]
+      )
+    : await pool.query(
+        `SELECT workout_id, title, muscle_groups, completed_at
+         FROM user_workout_logs
+         WHERE user_id = $1
+         ORDER BY completed_at DESC
+         LIMIT 1`,
+        [userId]
+      );
 
   return {
     xp: Number(stats.xp || 0),

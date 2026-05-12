@@ -1,5 +1,12 @@
 import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
+import { ensureAcademiesSchema } from '../db/ensureAcademiesSchema';
+import { seedDefaultAcademy } from '../db/seedDefaultAcademy';
+
+async function getDefaultAcademyId(): Promise<number | null> {
+  const res = await pool.query(`SELECT id FROM academies WHERE slug = 'minutofit-direto' LIMIT 1`);
+  return res.rows[0]?.id ?? null;
+}
 
 const schema = `
 -- Users table with OAuth and profile fields
@@ -231,6 +238,7 @@ async function runMigration() {
     await ensureGamificationTables();
     await ensurePersonalTables();
     await ensureVideoAccessibilityFields();
+    await ensureAcademiesSchema();
 
     console.log('✅ Database schema created successfully');
     
@@ -240,6 +248,9 @@ async function runMigration() {
     
     // Seed default tags
     await seedTags();
+
+    // Ensure default academy exists before seeding users (required for academy_id FK)
+    await seedDefaultAcademy();
 
     // Seed development users
     await seedUsers();
@@ -635,12 +646,22 @@ async function seedUsers() {
       }
     }
 
-    await pool.query(
-      `INSERT INTO user_gamification_stats (user_id, xp, current_streak)
-       VALUES ($1, 0, 0)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [userId]
-    );
+    const defaultAcademyId = await getDefaultAcademyId();
+    if (defaultAcademyId) {
+      await pool.query(
+        `INSERT INTO user_gamification_stats (user_id, academy_id, xp, current_streak)
+         VALUES ($1, $2, 0, 0)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId, defaultAcademyId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO user_gamification_stats (user_id, xp, current_streak)
+         VALUES ($1, 0, 0)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId]
+      );
+    }
   }
 
   await pool.query(`UPDATE users SET cpf = '52998224725' WHERE email = 'admin@treinai.com' AND (cpf IS NULL OR cpf = '')`);
@@ -758,6 +779,8 @@ async function seedPersonalDashboardActivity() {
     },
   ];
 
+  const defaultAcademyId = await getDefaultAcademyId();
+
   for (const student of students) {
     const userResult = await pool.query(`SELECT id FROM users WHERE email = $1 LIMIT 1`, [student.email]);
     if (userResult.rows.length === 0) continue;
@@ -772,39 +795,74 @@ async function seedPersonalDashboardActivity() {
       ? null
       : new Date(Date.now() - latestOffset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-    await pool.query(
-      `INSERT INTO user_gamification_stats (user_id, xp, current_streak, last_checkin_date, updated_at)
-       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-       ON CONFLICT (user_id) DO UPDATE SET
-         xp = EXCLUDED.xp,
-         current_streak = EXCLUDED.current_streak,
-         last_checkin_date = EXCLUDED.last_checkin_date,
-         updated_at = CURRENT_TIMESTAMP`,
-      [userId, student.xp, student.streak, lastCheckinDate]
-    );
+    if (defaultAcademyId) {
+      await pool.query(
+        `INSERT INTO user_gamification_stats (user_id, academy_id, xp, current_streak, last_checkin_date, updated_at)
+         VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)
+         ON CONFLICT (user_id) DO UPDATE SET
+           xp = EXCLUDED.xp,
+           current_streak = EXCLUDED.current_streak,
+           last_checkin_date = EXCLUDED.last_checkin_date,
+           updated_at = CURRENT_TIMESTAMP`,
+        [userId, defaultAcademyId, student.xp, student.streak, lastCheckinDate]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO user_gamification_stats (user_id, xp, current_streak, last_checkin_date, updated_at)
+         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+         ON CONFLICT (user_id) DO UPDATE SET
+           xp = EXCLUDED.xp,
+           current_streak = EXCLUDED.current_streak,
+           last_checkin_date = EXCLUDED.last_checkin_date,
+           updated_at = CURRENT_TIMESTAMP`,
+        [userId, student.xp, student.streak, lastCheckinDate]
+      );
+    }
 
     for (const [index, dayOffset] of student.dayOffsets.entries()) {
       const completedAt = new Date(Date.now() - dayOffset * 24 * 60 * 60 * 1000);
       const dateKey = completedAt.toISOString().slice(0, 10);
 
-      await pool.query(
-        `INSERT INTO user_daily_checkins (user_id, date_key, source, xp_awarded)
-         VALUES ($1, $2, 'workout', 20)
-         ON CONFLICT (user_id, date_key) DO UPDATE SET xp_awarded = EXCLUDED.xp_awarded`,
-        [userId, dateKey]
-      );
+      if (defaultAcademyId) {
+        await pool.query(
+          `INSERT INTO user_daily_checkins (user_id, academy_id, date_key, source, xp_awarded)
+           VALUES ($1, $2, $3, 'workout', 20)
+           ON CONFLICT (user_id, date_key) DO UPDATE SET xp_awarded = EXCLUDED.xp_awarded`,
+          [userId, defaultAcademyId, dateKey]
+        );
 
-      await pool.query(
-        `INSERT INTO user_workout_logs (user_id, workout_id, title, muscle_groups, completed_at)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [
-          userId,
-          `${student.email}-workout-${index + 1}`,
-          student.lastWorkoutTitle || 'Treino de acompanhamento',
-          student.muscleGroups,
-          completedAt.toISOString(),
-        ]
-      );
+        await pool.query(
+          `INSERT INTO user_workout_logs (user_id, academy_id, workout_id, title, muscle_groups, completed_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            userId,
+            defaultAcademyId,
+            `${student.email}-workout-${index + 1}`,
+            student.lastWorkoutTitle || 'Treino de acompanhamento',
+            student.muscleGroups,
+            completedAt.toISOString(),
+          ]
+        );
+      } else {
+        await pool.query(
+          `INSERT INTO user_daily_checkins (user_id, date_key, source, xp_awarded)
+           VALUES ($1, $2, 'workout', 20)
+           ON CONFLICT (user_id, date_key) DO UPDATE SET xp_awarded = EXCLUDED.xp_awarded`,
+          [userId, dateKey]
+        );
+
+        await pool.query(
+          `INSERT INTO user_workout_logs (user_id, workout_id, title, muscle_groups, completed_at)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            userId,
+            `${student.email}-workout-${index + 1}`,
+            student.lastWorkoutTitle || 'Treino de acompanhamento',
+            student.muscleGroups,
+            completedAt.toISOString(),
+          ]
+        );
+      }
     }
   }
 }

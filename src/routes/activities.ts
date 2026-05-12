@@ -1,12 +1,14 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requireAcademyContext } from '../middleware/tenantContext';
 import { withTenant, TENANT_PLACEHOLDER } from '../db/tenantQuery';
 
 const router = Router();
+router.use(authMiddleware, requireAcademyContext);
 
 // POST /api/activities — save a completed activity session
-router.post('/', authMiddleware, async (req: Request, res: Response) => {
+router.post('/', async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     // Tenant isolation: stamp academy_id from JWT if available (always present after Phase 2 backfill)
@@ -60,7 +62,7 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
 });
 
 // GET /api/activities — list authenticated user's sessions (last 50)
-router.get('/', authMiddleware, async (req: Request, res: Response) => {
+router.get('/', async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
+import { requireAcademyContext } from '../middleware/tenantContext';
 import { getPersonalConsulting, getPersonalDashboard, getPersonalStudentSnapshot } from '../services/personalDashboardService';
 import {
   createPersonalWorkoutPlan,
@@ -18,8 +19,9 @@ import {
 } from '../services/workoutReviewsService';
 
 const router = Router();
+router.use(authMiddleware, requireAcademyContext);
 
-router.get('/dashboard', authMiddleware, roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+router.get('/dashboard', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
     const data = await getPersonalDashboard(req.user!.id, academyId);
@@ -29,7 +31,7 @@ router.get('/dashboard', authMiddleware, roleCheckMiddleware('personal'), async 
   }
 });
 
-router.get('/consulting/students', authMiddleware, roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+router.get('/consulting/students', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
     const data = await getPersonalConsulting(req.user!.id, academyId);
@@ -41,7 +43,6 @@ router.get('/consulting/students', authMiddleware, roleCheckMiddleware('personal
 
 router.get(
   '/students/:studentId/snapshot',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {
@@ -63,7 +64,6 @@ router.get(
 
 router.get(
   '/students/:studentId/workout-plans',
-  authMiddleware,
   roleCheckMiddleware('personal', 'admin'),
   async (req: Request, res: Response) => {
     try {
@@ -85,7 +85,6 @@ router.get(
 
 router.post(
   '/students/:studentId/workout-plans',
-  authMiddleware,
   roleCheckMiddleware('personal', 'admin'),
   async (req: Request, res: Response) => {
     try {
@@ -103,7 +102,12 @@ router.post(
           : String(body.selectedGroup);
       const items = Array.isArray(body.items) ? body.items : [];
 
-      const row = await createPersonalWorkoutPlan(req.user!.id, studentId, {
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId;
+      if (!academyId) {
+        return res.status(400).json({ success: false, error: 'Academy context required to create a workout plan' });
+      }
+
+      const row = await createPersonalWorkoutPlan(req.user!.id, studentId, academyId, {
         title,
         weekPreset,
         selectedGroup,
@@ -122,7 +126,6 @@ router.post(
 
 router.get(
   '/my/workout-plans',
-  authMiddleware,
   roleCheckMiddleware('user', 'personal', 'nutri', 'admin'),
   async (req: Request, res: Response) => {
   try {
@@ -137,7 +140,6 @@ router.get(
 
 router.get(
   '/reviews',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {
@@ -151,7 +153,6 @@ router.get(
 
 router.post(
   '/reviews',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {
@@ -164,7 +165,12 @@ router.post(
         body.workoutPlanId === undefined || body.workoutPlanId === null
           ? null
           : Number(body.workoutPlanId);
-      const row = await createWorkoutReview(req.user!.id, {
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId;
+      if (!academyId) {
+        return res.status(400).json({ success: false, error: 'Academy context required to create a review' });
+      }
+
+      const row = await createWorkoutReview(req.user!.id, academyId, {
         studentId,
         title: String(body.title || ''),
         goal: typeof body.goal === 'string' ? body.goal : undefined,
@@ -185,7 +191,6 @@ router.post(
 
 router.patch(
   '/reviews/:reviewId',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {
@@ -210,7 +215,6 @@ router.patch(
 
 router.post(
   '/reviews/:reviewId/approve',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {
@@ -233,7 +237,6 @@ router.post(
 
 router.post(
   '/reviews/:reviewId/request-changes',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {
@@ -267,7 +270,6 @@ router.post(
 
 router.post(
   '/reviews/:reviewId/archive',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {

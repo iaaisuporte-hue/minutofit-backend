@@ -105,6 +105,40 @@ export async function tenantContextMiddleware(req: Request, res: Response, next:
 }
 
 /**
+ * Middleware leve para routers operacionais (/activities, /movement, /gamification,
+ * /messages, /personal).
+ *
+ * NÃO faz DB lookup — apenas garante que há contexto de academia no request.
+ * Admin (MetaCore) é bypassado automaticamente (acesso global).
+ *
+ * Use router.use(requireAcademyContext) antes dos handlers.
+ * Retorna 403 com code TENANT_REQUIRED quando nenhum contexto está presente.
+ */
+export function requireAcademyContext(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user) {
+    res.status(401).json({ success: false, error: 'Authentication required' });
+    return;
+  }
+
+  if (req.user.role === 'admin') {
+    next();
+    return;
+  }
+
+  const academyId = req.user.activeAcademyId ?? req.tenantHost?.academyId;
+  if (!academyId) {
+    res.status(403).json({
+      success: false,
+      error: 'Academy context required. Use POST /auth/switch-academy.',
+      code: 'TENANT_REQUIRED',
+    });
+    return;
+  }
+
+  next();
+}
+
+/**
  * Verifica se o tenant tem a permissão solicitada.
  * Retorna 403 se não tiver.
  */

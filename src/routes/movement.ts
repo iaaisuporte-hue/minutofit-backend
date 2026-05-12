@@ -1,11 +1,13 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
+import { requireAcademyContext } from '../middleware/tenantContext';
 
 const router = Router();
+router.use(authMiddleware, requireAcademyContext);
 
 // POST /api/movement/sessions — save a completed movement lab session
-router.post('/sessions', authMiddleware, async (req: Request, res: Response) => {
+router.post('/sessions', async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
@@ -52,7 +54,7 @@ router.post('/sessions', authMiddleware, async (req: Request, res: Response) => 
 });
 
 // GET /api/movement/sessions — list authenticated user's movement sessions (last 30)
-router.get('/sessions', authMiddleware, async (req: Request, res: Response) => {
+router.get('/sessions', async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;

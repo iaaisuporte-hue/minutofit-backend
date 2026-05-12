@@ -80,6 +80,7 @@ export async function listWorkoutReviews(personalId: number): Promise<WorkoutRev
 
 export async function createWorkoutReview(
   personalId: number,
+  academyId: number,
   input: {
     studentId: number;
     title: string;
@@ -106,13 +107,13 @@ export async function createWorkoutReview(
 
   const insert = await pool.query<Row>(
     `INSERT INTO workout_reviews (
-       personal_id, student_id, workout_plan_id, title, goal, risk, priority, internal_notes
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       personal_id, student_id, academy_id, workout_plan_id, title, goal, risk, priority, internal_notes
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING id, personal_id, student_id,
        (SELECT name FROM users WHERE id = $2) AS student_name,
        workout_plan_id, title, goal, status, risk, priority,
        internal_notes, student_feedback, created_at, updated_at, reviewed_at`,
-    [personalId, input.studentId, planId, title, goal, risk, priority, notes]
+    [personalId, input.studentId, academyId, planId, title, goal, risk, priority, notes]
   );
 
   return mapRow(insert.rows[0]);

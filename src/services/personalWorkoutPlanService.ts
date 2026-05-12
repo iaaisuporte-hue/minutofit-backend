@@ -62,6 +62,7 @@ export async function assertStudentAssignedToPersonal(personalId: number, studen
 export async function createPersonalWorkoutPlan(
   personalId: number,
   studentId: number,
+  academyId: number,
   input: {
     title: string;
     weekPreset: string;
@@ -86,11 +87,11 @@ export async function createPersonalWorkoutPlan(
 
   const insert = await pool.query(
     `INSERT INTO personal_workout_plans (
-       personal_id, student_id, title, week_preset, selected_group, payload_json, updated_at
+       personal_id, student_id, academy_id, title, week_preset, selected_group, payload_json, updated_at
      )
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, CURRENT_TIMESTAMP)
-     RETURNING id, personal_id, student_id, title, week_preset, selected_group, payload_json, created_at, updated_at`,
-    [personalId, studentId, title, weekPreset, selectedGroup, JSON.stringify(items)]
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, CURRENT_TIMESTAMP)
+     RETURNING id, personal_id, student_id, academy_id, title, week_preset, selected_group, payload_json, created_at, updated_at`,
+    [personalId, studentId, academyId, title, weekPreset, selectedGroup, JSON.stringify(items)]
   );
 
   return insert.rows[0];

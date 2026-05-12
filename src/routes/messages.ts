@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
+import { requireAcademyContext } from '../middleware/tenantContext';
 import {
   ensureChatConversation,
   listChatConversations,
@@ -10,10 +11,10 @@ import {
 } from '../services/messagesService';
 
 const router = Router();
+router.use(authMiddleware, requireAcademyContext);
 
 router.get(
   '/conversations',
-  authMiddleware,
   roleCheckMiddleware('user', 'personal', 'admin'),
   async (req: Request, res: Response) => {
     try {
@@ -28,7 +29,6 @@ router.get(
 
 router.post(
   '/conversations',
-  authMiddleware,
   roleCheckMiddleware('user', 'personal', 'admin'),
   async (req: Request, res: Response) => {
     try {
@@ -60,7 +60,6 @@ router.post(
 
 router.get(
   '/conversations/:conversationId/messages',
-  authMiddleware,
   roleCheckMiddleware('user', 'personal', 'admin'),
   async (req: Request, res: Response) => {
     try {
@@ -91,7 +90,6 @@ router.get(
 
 router.post(
   '/conversations/:conversationId/messages',
-  authMiddleware,
   roleCheckMiddleware('user', 'personal', 'admin'),
   async (req: Request, res: Response) => {
     try {
@@ -127,7 +125,6 @@ router.post(
 
 router.get(
   '/eligible-students',
-  authMiddleware,
   roleCheckMiddleware('personal'),
   async (req: Request, res: Response) => {
     try {
@@ -143,7 +140,6 @@ router.get(
 
 router.post(
   '/conversations/:conversationId/read',
-  authMiddleware,
   roleCheckMiddleware('user', 'personal', 'admin'),
   async (req: Request, res: Response) => {
     try {

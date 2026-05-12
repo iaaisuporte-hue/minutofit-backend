@@ -7,16 +7,19 @@ export type AuditAction =
   | 'student.pause'
   | 'student.cancel'
   | 'student.reactivate'
+  | 'student.password_reset'
   | 'team.role_update'
   | 'team.add_member'
   | 'team.remove_member'
   | 'invitation.create'
   | 'invitation.revoke'
   | 'invitation.accept'
-  | 'auth.switch_academy';
+  | 'auth.switch_academy'
+  | 'product.grant'
+  | 'product.revoke';
 
 export interface AuditEntry {
-  academyId: number;
+  academyId: number | null;
   userId?: number | null;
   action: AuditAction;
   entityType?: string | null;

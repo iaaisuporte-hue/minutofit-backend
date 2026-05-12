@@ -522,7 +522,7 @@ router.post(
       logAcademyAction({
         academyId: req.tenant!.academyId,
         userId:    req.user!.id,
-        action:    'student.password_reset' as any,
+        action:    'student.password_reset',
         entityType: 'user',
         entityId:  targetId,
         ipAddress: req.ip,

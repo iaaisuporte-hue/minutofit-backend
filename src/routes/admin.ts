@@ -515,7 +515,7 @@ router.get('/academies', authMiddleware, adminMiddleware, async (req: Request, r
 // POST /admin/academies — cria nova academia (com roles e dono opcional)
 router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const { slug, legalName, displayName, owner } = req.body;
+    const { slug, legalName, displayName, primaryColor, owner } = req.body;
 
     if (!slug || !legalName || !displayName) {
       return res.status(400).json({ success: false, error: 'slug, legalName e displayName são obrigatórios.' });
@@ -527,6 +527,13 @@ router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, 
     const { validateReservedSlug } = await import('../middleware/tenantResolver');
     const slugErr = validateReservedSlug(slugNorm);
     if (slugErr) return res.status(400).json({ success: false, error: slugErr });
+
+    // Validate primary color if provided
+    if (primaryColor) {
+      const { validateBrandingColor } = await import('../utils/contrastValidator');
+      const colorErr = validateBrandingColor(primaryColor, 'Cor primária', 4.5);
+      if (colorErr) return res.status(400).json({ success: false, error: colorErr });
+    }
 
     const result = await pool.query(
       `INSERT INTO academies (slug, legal_name, display_name, status)
@@ -540,6 +547,22 @@ router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, 
 
     // Always create system roles for the new academy
     await ensureAcademyRoles(pool, academyId);
+
+    // Create initial branding row with primary color (and derived tokens if provided)
+    if (primaryColor) {
+      const { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } = await import('../utils/colorContrast');
+      await pool.query(
+        `INSERT INTO academy_branding (academy_id, primary_color, primary_hover, primary_soft, cta_text_color)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (academy_id) DO UPDATE
+           SET primary_color   = EXCLUDED.primary_color,
+               primary_hover   = EXCLUDED.primary_hover,
+               primary_soft    = EXCLUDED.primary_soft,
+               cta_text_color  = EXCLUDED.cta_text_color,
+               updated_at      = NOW()`,
+        [academyId, primaryColor, calcPrimaryHover(primaryColor), calcPrimarySoft(primaryColor), calcCtaTextColor(primaryColor)]
+      );
+    }
 
     await auditLog(pool, {
       academyId,
@@ -575,6 +598,42 @@ router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, 
       return res.status(409).json({ success: false, error: 'Slug já utilizado por outra academia.' });
     }
     res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// PATCH /admin/academies/:id/branding — atualiza branding de qualquer academia (admin)
+router.patch('/academies/:id/branding', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.id);
+    if (!academyId) return res.status(400).json({ success: false, error: 'academyId inválido.' });
+
+    const { primaryColor } = req.body;
+    if (!primaryColor) return res.status(400).json({ success: false, error: 'primaryColor é obrigatório.' });
+
+    const { validateBrandingColor } = await import('../utils/contrastValidator');
+    const colorErr = validateBrandingColor(primaryColor, 'Cor primária', 4.5);
+    if (colorErr) return res.status(400).json({ success: false, error: colorErr });
+
+    const { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } = await import('../utils/colorContrast');
+    await pool.query(
+      `INSERT INTO academy_branding (academy_id, primary_color, primary_hover, primary_soft, cta_text_color)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (academy_id) DO UPDATE
+         SET primary_color  = EXCLUDED.primary_color,
+             primary_hover  = EXCLUDED.primary_hover,
+             primary_soft   = EXCLUDED.primary_soft,
+             cta_text_color = EXCLUDED.cta_text_color,
+             updated_at     = NOW()`,
+      [academyId, primaryColor, calcPrimaryHover(primaryColor), calcPrimarySoft(primaryColor), calcCtaTextColor(primaryColor)]
+    );
+
+    const { invalidateTenantCache } = await import('../middleware/tenantResolver');
+    const slugRes = await pool.query(`SELECT slug FROM academies WHERE id = $1 LIMIT 1`, [academyId]);
+    if (slugRes.rows.length > 0) invalidateTenantCache(slugRes.rows[0].slug);
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

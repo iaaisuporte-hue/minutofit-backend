@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import bcryptjs from 'bcryptjs';
 import { authMiddleware } from '../middleware/auth';
 import { tenantContextMiddleware, requireTenantPermission } from '../middleware/tenantContext';
 import {
@@ -487,6 +488,49 @@ router.post(
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// POST /academy/students/:userId/reset-password
+router.post(
+  '/students/:userId/reset-password',
+  requireTenantPermission('academy.students.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const targetId = Number(req.params.userId);
+
+      // Verify the student belongs to this academy
+      const memberCheck = await pool.query(
+        `SELECT 1 FROM academy_users
+         WHERE user_id = $1 AND academy_id = $2 AND is_active = TRUE LIMIT 1`,
+        [targetId, req.tenant!.academyId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Aluno não encontrado nesta academia.' });
+      }
+
+      // Generate a readable temporary password: word + 4-digit number
+      const words = ['Treino', 'Forca', 'Saude', 'Ativo', 'Fit', 'Move'];
+      const word  = words[Math.floor(Math.random() * words.length)];
+      const num   = String(Math.floor(1000 + Math.random() * 9000));
+      const tempPassword = `${word}${num}`;
+
+      const hashed = await bcryptjs.hash(tempPassword, 10);
+      await pool.query(`UPDATE users SET password = $1 WHERE id = $2`, [hashed, targetId]);
+
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId:    req.user!.id,
+        action:    'student.password_reset' as any,
+        entityType: 'user',
+        entityId:  targetId,
+        ipAddress: req.ip,
+      });
+
+      res.json({ success: true, tempPassword });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
     }
   }
 );

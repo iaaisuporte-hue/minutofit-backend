@@ -326,8 +326,11 @@ router.post('/refresh', refreshRateLimit, async (req: Request, res: Response) =>
 router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   try {
     const user = await authService.getUserById(req.user!.id);
-    // Resolve academy role to use as effectiveProfile (overrides users.access_profile for academy staff)
-    const { academyRoleSlug } = await authService.resolveAcademyContext(req.user!.id);
+    // Pass activeAcademyId from the JWT (or from the tenant host header) so users
+    // linked to multiple academies get the correct role back. Without this hint,
+    // resolveAcademyContext returns {} for any user in 2+ academies.
+    const preferredAcademyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId;
+    const { academyRoleSlug } = await authService.resolveAcademyContext(req.user!.id, preferredAcademyId);
     const effectiveProfile = (academyRoleSlug as any) ?? user.accessProfile;
 
     res.json({

@@ -48,3 +48,49 @@ export function calcCtaTextColor(primary: string): string {
   const vsWhite = contrastRatio(primary, '#FFFFFF');
   return vsWhite >= 4.5 ? '#FFFFFF' : '#000000';
 }
+
+/** primary at 14% opacity — stronger soft surface. */
+export function calcPrimarySoftStrong(primary: string): string {
+  const rgb = hexToRgb(primary);
+  if (!rgb) return primary;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.14)`;
+}
+
+/** primary at 12% opacity — glow/shadow usage. */
+export function calcPrimaryGlow(primary: string): string {
+  const rgb = hexToRgb(primary);
+  if (!rgb) return primary;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.12)`;
+}
+
+/** primary at 10% opacity — light tint. */
+export function calcPrimaryLight(primary: string): string {
+  const rgb = hexToRgb(primary);
+  if (!rgb) return primary;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.10)`;
+}
+
+/** primary darkened 40% — deep/shadow variant. */
+export function calcPrimaryDeep(primary: string): string {
+  return darken(primary, 40);
+}
+
+/** primary at 30% opacity — subtle border. */
+export function calcBorderPrimary(primary: string): string {
+  const rgb = hexToRgb(primary);
+  if (!rgb) return primary;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.30)`;
+}
+
+/** primary at 35% opacity — strong border. */
+export function calcBorderStrong(primary: string): string {
+  const rgb = hexToRgb(primary);
+  if (!rgb) return primary;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.35)`;
+}
+
+/** Gradient from primary to primary-deep (135deg). */
+export function calcGradientPrimary(primary: string): string {
+  const deep = calcPrimaryDeep(primary);
+  return `linear-gradient(135deg, ${primary}, ${deep})`;
+}

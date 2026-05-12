@@ -8,6 +8,15 @@ import { verifyRegistrationCaptcha } from '../services/captchaService';
 import { verifyRefreshToken } from '../utils/jwt';
 import pool from '../config/database';
 import { validateInvitationToken, acceptInvitation } from '../services/academyTeamService';
+import {
+  calcPrimarySoftStrong,
+  calcPrimaryGlow,
+  calcPrimaryLight,
+  calcPrimaryDeep,
+  calcBorderPrimary,
+  calcBorderStrong,
+  calcGradientPrimary,
+} from '../utils/colorContrast';
 
 const loginRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -142,17 +151,26 @@ router.get('/branding', async (req: Request, res: Response) => {
     }
 
     const row = result.rows[0];
+    const primary: string | null = row.primary_color ?? null;
     const branding = {
-      displayName:    row.display_name    ?? row.academy_display_name ?? null,
-      logoUrl:        row.logo_url        ?? null,
-      bannerUrl:      row.banner_url      ?? null,
-      primaryColor:   row.primary_color   ?? null,
-      primaryHover:   row.primary_hover   ?? null,
-      primarySoft:    row.primary_soft    ?? null,
-      secondaryColor: row.secondary_color ?? null,
-      accentColor:    row.accent_color    ?? null,
-      ctaTextColor:   row.cta_text_color  ?? null,
-      welcomeMessage: row.welcome_message ?? null,
+      displayName:      row.display_name    ?? row.academy_display_name ?? null,
+      logoUrl:          row.logo_url        ?? null,
+      bannerUrl:        row.banner_url      ?? null,
+      primaryColor:     primary,
+      primaryHover:     row.primary_hover   ?? null,
+      primarySoft:      row.primary_soft    ?? null,
+      secondaryColor:   row.secondary_color ?? null,
+      accentColor:      row.accent_color    ?? null,
+      ctaTextColor:     row.cta_text_color  ?? null,
+      welcomeMessage:   row.welcome_message ?? null,
+      // Derived tokens — computed on the fly from primaryColor, never stored
+      primarySoftStrong: primary ? calcPrimarySoftStrong(primary) : null,
+      primaryGlow:       primary ? calcPrimaryGlow(primary)       : null,
+      primaryLight:      primary ? calcPrimaryLight(primary)      : null,
+      primaryDeep:       primary ? calcPrimaryDeep(primary)       : null,
+      borderPrimary:     primary ? calcBorderPrimary(primary)     : null,
+      borderStrong:      primary ? calcBorderStrong(primary)      : null,
+      gradientPrimary:   primary ? calcGradientPrimary(primary)   : null,
     };
 
     return res.json({ success: true, data: { branding } });

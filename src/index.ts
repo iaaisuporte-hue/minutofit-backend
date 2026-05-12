@@ -126,6 +126,7 @@ const minutoFitSubdomainPattern = /^https:\/\/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.m
 // Middleware
 app.use(
   cors({
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Host'],
     origin(origin, callback) {
       if (!origin) {
         callback(null, true);

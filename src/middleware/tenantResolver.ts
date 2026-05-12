@@ -49,13 +49,19 @@ function setCache(slug: string, entry: Omit<CacheEntry, 'expiresAt'>): void {
 }
 
 /**
- * Extracts academy context from the Host header.
+ * Extracts academy context from the host.
+ * Priority: X-Tenant-Host (sent by SPA when calling the API from a subdomain) >
+ *           X-Forwarded-Host (set by reverse proxies) > Host.
  * Populates req.tenantHost when request comes from a known academy subdomain.
  * Does NOT authenticate — safe to use on public routes.
  */
 export async function tenantResolverMiddleware(req: Request, _res: Response, next: NextFunction) {
   try {
-    const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase();
+    const host = String(
+      req.headers['x-tenant-host'] ||
+      req.headers['x-forwarded-host'] ||
+      req.headers.host || ''
+    ).toLowerCase();
     const match = SLUG_REGEX.exec(host);
 
     if (!match) {

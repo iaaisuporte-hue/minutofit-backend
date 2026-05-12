@@ -26,6 +26,7 @@ import {
   archivePlan,
 } from '../services/academyPlanService';
 import { auditLog } from '../utils/auditLog';
+import { logAcademyAction } from '../services/auditService';
 import { validateBrandingColor, contrastRatio } from '../utils/contrastValidator';
 import { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } from '../utils/colorContrast';
 import { sanitizeBrandingText } from '../utils/htmlSanitize';
@@ -84,11 +85,27 @@ router.post(
       if (mode === 'direct') {
         if (!name) return res.status(400).json({ success: false, error: 'name obrigatório para cadastro direto.' });
         const result = await addMemberDirect(academyId, req.user!.id, { roleSlug, name, email, cpf, phone });
+        logAcademyAction({
+          academyId,
+          userId: req.user!.id,
+          action: 'team.add_member',
+          entityType: 'user',
+          meta: { email, roleSlug, mode },
+          ipAddress: req.ip,
+        });
         return res.status(201).json({ success: true, data: result });
       }
 
       if (mode === 'invite') {
         const result = await createInvitation(academyId, req.user!.id, { roleSlug, email }, frontendUrl);
+        logAcademyAction({
+          academyId,
+          userId: req.user!.id,
+          action: 'invitation.create',
+          entityType: 'invitation',
+          meta: { email, roleSlug },
+          ipAddress: req.ip,
+        });
         return res.status(201).json({ success: true, data: result });
       }
 
@@ -108,6 +125,15 @@ router.patch(
       const targetUserId = Number(req.params.userId);
       const { roleSlug, isActive } = req.body;
       await updateMember(req.tenant!.academyId, req.user!.id, targetUserId, { roleSlug, isActive });
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'team.role_update',
+        entityType: 'user',
+        entityId: targetUserId,
+        meta: { roleSlug, isActive },
+        ipAddress: req.ip,
+      });
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
@@ -137,7 +163,16 @@ router.delete(
   requireTenantPermission('academy.invitations.write'),
   async (req: Request, res: Response) => {
     try {
-      await revokeInvitation(req.tenant!.academyId, req.user!.id, Number(req.params.id));
+      const invitationId = Number(req.params.id);
+      await revokeInvitation(req.tenant!.academyId, req.user!.id, invitationId);
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'invitation.revoke',
+        entityType: 'invitation',
+        entityId: invitationId,
+        ipAddress: req.ip,
+      });
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
@@ -321,6 +356,14 @@ router.post(
         emergencyContactName, emergencyContactPhone,
         acceptedTerms: !!acceptedTerms, acceptedLgpd: !!acceptedLgpd,
       });
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'student.enroll',
+        entityType: 'user',
+        meta: { mode, email },
+        ipAddress: req.ip,
+      });
       res.status(201).json({ success: true, data: result });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
@@ -385,7 +428,16 @@ router.post(
   requireTenantPermission('academy.students.write'),
   async (req: Request, res: Response) => {
     try {
-      await pauseStudent(req.tenant!.academyId, req.user!.id, Number(req.params.userId));
+      const pausedId = Number(req.params.userId);
+      await pauseStudent(req.tenant!.academyId, req.user!.id, pausedId);
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'student.pause',
+        entityType: 'user',
+        entityId: pausedId,
+        ipAddress: req.ip,
+      });
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
@@ -399,7 +451,16 @@ router.post(
   requireTenantPermission('academy.students.write'),
   async (req: Request, res: Response) => {
     try {
-      await cancelStudent(req.tenant!.academyId, req.user!.id, Number(req.params.userId));
+      const canceledId = Number(req.params.userId);
+      await cancelStudent(req.tenant!.academyId, req.user!.id, canceledId);
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'student.cancel',
+        entityType: 'user',
+        entityId: canceledId,
+        ipAddress: req.ip,
+      });
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
@@ -413,7 +474,16 @@ router.post(
   requireTenantPermission('academy.students.write'),
   async (req: Request, res: Response) => {
     try {
-      await reactivateStudent(req.tenant!.academyId, req.user!.id, Number(req.params.userId));
+      const reactivatedId = Number(req.params.userId);
+      await reactivateStudent(req.tenant!.academyId, req.user!.id, reactivatedId);
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'student.reactivate',
+        entityType: 'user',
+        entityId: reactivatedId,
+        ipAddress: req.ip,
+      });
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
@@ -500,7 +570,7 @@ router.get('/dashboard', async (req: Request, res: Response) => {
   try {
     const { academyId } = req.tenant!;
 
-    const [membersRes, academyRes, brandingRes] = await Promise.all([
+    const [membersRes, academyRes, brandingRes, retentionRes, atRiskRes, professionalRes] = await Promise.all([
       pool.query(
         `SELECT ar.slug, COUNT(*) AS count
          FROM academy_users au
@@ -517,12 +587,115 @@ router.get('/dashboard', async (req: Request, res: Response) => {
         `SELECT logo_url, display_name, primary_color FROM academy_branding WHERE academy_id = $1`,
         [academyId]
       ),
+      // B3: Student retention signals
+      pool.query(
+        `SELECT
+           COUNT(*)                                                          AS total_students,
+           COUNT(*) FILTER (
+             WHERE udc.last_checkin >= NOW() - INTERVAL '7 days'
+           )                                                                 AS active_7d,
+           COUNT(*) FILTER (
+             WHERE udc.last_checkin IS NULL
+               OR  udc.last_checkin <  NOW() - INTERVAL '14 days'
+           )                                                                 AS no_checkin_14d,
+           COUNT(*) FILTER (
+             WHERE uwl.last_workout IS NULL
+               OR  uwl.last_workout <  NOW() - INTERVAL '14 days'
+           )                                                                 AS no_workout_14d,
+           ROUND(
+             100.0 * COUNT(*) FILTER (
+               WHERE udc.last_checkin >= NOW() - INTERVAL '7 days'
+             ) / NULLIF(COUNT(*), 0)
+           , 1)                                                              AS adherence_7d_pct
+         FROM academy_users au
+         JOIN users u ON u.id = au.user_id
+         LEFT JOIN (
+           SELECT user_id, MAX(created_at) AS last_checkin
+           FROM user_daily_checkins
+           GROUP BY user_id
+         ) udc ON udc.user_id = au.user_id
+         LEFT JOIN (
+           SELECT user_id, MAX(completed_at) AS last_workout
+           FROM user_workout_logs
+           GROUP BY user_id
+         ) uwl ON uwl.user_id = au.user_id
+         WHERE au.academy_id = $1
+           AND au.is_active   = TRUE
+           AND au.status      = 'active'
+           AND u.role         = 'user'`,
+        [academyId]
+      ),
+      // B3: Top 3 at-risk students (no activity in last 14 days)
+      pool.query(
+        `SELECT
+           u.id,
+           u.name,
+           u.email,
+           udc.last_checkin,
+           uwl.last_workout,
+           GREATEST(
+             COALESCE(EXTRACT(EPOCH FROM NOW() - udc.last_checkin) / 86400, 999),
+             COALESCE(EXTRACT(EPOCH FROM NOW() - uwl.last_workout) / 86400, 999)
+           )::integer AS days_inactive
+         FROM academy_users au
+         JOIN users u ON u.id = au.user_id
+         LEFT JOIN (
+           SELECT user_id, MAX(created_at) AS last_checkin
+           FROM user_daily_checkins
+           GROUP BY user_id
+         ) udc ON udc.user_id = au.user_id
+         LEFT JOIN (
+           SELECT user_id, MAX(completed_at) AS last_workout
+           FROM user_workout_logs
+           GROUP BY user_id
+         ) uwl ON uwl.user_id = au.user_id
+         WHERE au.academy_id = $1
+           AND au.is_active   = TRUE
+           AND au.status      = 'active'
+           AND u.role         = 'user'
+           AND (
+             udc.last_checkin IS NULL
+             OR udc.last_checkin < NOW() - INTERVAL '14 days'
+           )
+         ORDER BY days_inactive DESC
+         LIMIT 3`,
+        [academyId]
+      ),
+      // B3: Active professionals (personal trainers) in this academy
+      pool.query(
+        `SELECT COUNT(*) AS count
+         FROM academy_users au
+         JOIN academy_roles ar ON ar.id = au.role_id
+         WHERE au.academy_id = $1
+           AND au.is_active   = TRUE
+           AND au.status      = 'active'
+           AND ar.slug IN ('personal', 'academy_personal')`,
+        [academyId]
+      ),
     ]);
 
     const membersByRole: Record<string, number> = {};
     for (const row of membersRes.rows) {
       membersByRole[row.slug] = Number(row.count);
     }
+
+    const r = retentionRes.rows[0] ?? {};
+    const retention = {
+      totalStudents:   Number(r.total_students   ?? 0),
+      studentsActive:  Number(r.active_7d         ?? 0),
+      studentsAtRisk:  Number(r.no_checkin_14d    ?? 0),
+      noWorkout14d:    Number(r.no_workout_14d    ?? 0),
+      adherence7dPct:  r.adherence_7d_pct != null ? parseFloat(r.adherence_7d_pct) : null,
+    };
+
+    const atRiskStudents = atRiskRes.rows.map((row: any) => ({
+      id:           row.id,
+      name:         row.name || row.email || `Aluno ${row.id}`,
+      email:        row.email,
+      lastCheckin:  row.last_checkin  ? new Date(row.last_checkin).toISOString()  : null,
+      lastWorkout:  row.last_workout  ? new Date(row.last_workout).toISOString()  : null,
+      daysInactive: Number(row.days_inactive),
+    }));
 
     res.json({
       success: true,
@@ -531,6 +704,9 @@ router.get('/dashboard', async (req: Request, res: Response) => {
         branding: brandingRes.rows[0] ?? null,
         membersByRole,
         totalMembers: Object.values(membersByRole).reduce((a, b) => a + b, 0),
+        professionalsActive: Number(professionalRes.rows[0]?.count ?? 0),
+        retention,
+        atRiskStudents,
       },
     });
   } catch (err: any) {

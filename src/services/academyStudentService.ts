@@ -203,8 +203,15 @@ export async function listStudents(
 export async function getStudent(academyId: number, userId: number): Promise<Student & {
   enrollments: Enrollment[];
   auditHistory: AuditEntry[];
+  activity: {
+    lastWorkout: string | null;
+    lastCheckin: string | null;
+    workouts30d: number;
+    checkins30d: number;
+    adherence30dPct: number | null;
+  };
 }> {
-  const [studentRes, enrollRes, auditRes] = await Promise.all([
+  const [studentRes, enrollRes, auditRes, activityRes] = await Promise.all([
     pool.query(
       `SELECT
          u.id AS user_id, u.name, u.email, u.phone, u.cpf, u.birth_date, u.avatar_url,
@@ -246,6 +253,16 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
        ORDER BY created_at DESC LIMIT 20`,
       [academyId, userId]
     ),
+    pool.query(
+      `SELECT
+         (SELECT MAX(completed_at) FROM user_workout_logs WHERE user_id = $1) AS last_workout,
+         (SELECT MAX(created_at)   FROM user_daily_checkins WHERE user_id = $1) AS last_checkin,
+         (SELECT COUNT(*)          FROM user_workout_logs
+          WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '30 days') AS workouts_30d,
+         (SELECT COUNT(*)          FROM user_daily_checkins
+          WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '30 days') AS checkins_30d`,
+      [userId]
+    ),
   ]);
 
   if (studentRes.rows.length === 0) throw new Error('Aluno não encontrado.');
@@ -276,7 +293,19 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
     createdAt:  new Date(r.created_at).toISOString(),
   }));
 
-  return { ...student, enrollments, auditHistory };
+  const ar = activityRes.rows[0] ?? {};
+  const workouts30d = Number(ar.workouts_30d ?? 0);
+  const checkins30d = Number(ar.checkins_30d ?? 0);
+  const activity = {
+    lastWorkout:     ar.last_workout  ? new Date(ar.last_workout).toISOString()  : null,
+    lastCheckin:     ar.last_checkin  ? new Date(ar.last_checkin).toISOString()  : null,
+    workouts30d,
+    checkins30d,
+    // Target: ~3 workouts/week = 12/month; capped at 100%
+    adherence30dPct: workouts30d > 0 ? Math.min(Math.round((workouts30d / 12) * 100), 100) : null,
+  };
+
+  return { ...student, enrollments, auditHistory, activity };
 }
 
 // ─── Add student ──────────────────────────────────────────────────────────────

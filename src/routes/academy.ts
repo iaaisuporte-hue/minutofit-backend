@@ -793,10 +793,10 @@ router.get(
              WHERE acs.started_at > NOW() - INTERVAL '30 days'
            )                                                            AS tracker_users,
            COUNT(DISTINCT ae.user_id) FILTER (
-             WHERE ae.enrolled_at > NOW() - INTERVAL '30 days'
+             WHERE ae.created_at > NOW() - INTERVAL '30 days'
            )                                                            AS new_enrollments,
            COUNT(DISTINCT ae2.user_id) FILTER (
-             WHERE ae2.cancelled_at > NOW() - INTERVAL '30 days'
+             WHERE ae2.status = 'cancelled' AND ae2.updated_at > NOW() - INTERVAL '30 days'
            )                                                            AS cancellations
          FROM academy_users au
          LEFT JOIN movement_sessions ms

@@ -117,11 +117,15 @@ async function main() {
       const email = `phgym-demo-${n}@minutofit.invalid`;
       const name = NAMES[i] ?? `Aluno Demo ${n}`;
 
+      // CPF fictício único: 9 dígitos base + 2 dígitos índice (não passa validação matemática — só demo)
+      const cpf = String(10000000000 + i).slice(0, 11);
+      const phone = `859${String(90000000 + i).slice(0, 8)}`;
+
       const u = await client.query<{ id: number }>(
-        `INSERT INTO users (email, password, role, name, profile_completed, access_profile)
-         VALUES ($1, $2, 'user', $3, TRUE, 'user_default')
+        `INSERT INTO users (email, password, role, name, cpf, phone, profile_completed, access_profile)
+         VALUES ($1, $2, 'user', $3, $4, $5, TRUE, 'user_default')
          RETURNING id`,
-        [email, passwordHash, name]
+        [email, passwordHash, name, cpf, phone]
       );
       const userId = u.rows[0].id;
       userIds.push(userId);
@@ -170,14 +174,15 @@ async function main() {
         const amount = 89.9 + (paySeq % 5) * 10;
         const dayOffset = paySeq % 20;
         const mpId = `phgym-demo-mp-${academyId}-${uid}-${paySeq}-${r}`;
+        const paidAt = (st === 'approved' || st === 'paid')
+          ? new Date(new Date().getFullYear(), new Date().getMonth(), dayOffset + 1, 10)
+          : null;
+        const createdAt = new Date(new Date().getFullYear(), new Date().getMonth(), dayOffset + 1, 9);
+
         await client.query(
           `INSERT INTO payments (user_id, subscription_id, mercado_pago_payment_id, amount_brl, status, academy_id, created_at, updated_at)
-           VALUES ($1, NULL, $2, $3::numeric, $4, $5,
-             DATE_TRUNC('month', NOW()) + ($6::integer * INTERVAL '1 day') + INTERVAL '3 hours',
-             CASE WHEN $4::text IN ('approved', 'paid')
-               THEN DATE_TRUNC('month', NOW()) + ($6::integer * INTERVAL '1 day') + INTERVAL '4 hours'
-               ELSE NULL END)`,
-          [uid, mpId, amount, st, academyId, dayOffset]
+           VALUES ($1, NULL, $2, $3::numeric, $4::varchar, $5, $6, $7)`,
+          [uid, mpId, amount, st, academyId, createdAt, paidAt ?? createdAt]
         );
         paySeq += 1;
       }
@@ -242,10 +247,10 @@ async function main() {
         const daysBack = d * 4;
         const score = 55 + ((uid + d) % 35);
         await client.query(
-          `INSERT INTO user_metabolism_snapshots (user_id, snapshot_date, score, status, trend, factors, inputs, created_at)
-           VALUES ($1, (CURRENT_DATE - $2::int)::date, $3, 'stable', 'flat', $4::jsonb, $5::jsonb, NOW() - ($2::integer * INTERVAL '1 day'))
+          `INSERT INTO user_metabolism_snapshots (user_id, snapshot_date, score, status, trend, factors, inputs, academy_id, created_at)
+           VALUES ($1, (CURRENT_DATE - $2::int)::date, $3, 'stable', 'flat', $4::jsonb, $5::jsonb, $6, NOW() - ($2::integer * INTERVAL '1 day'))
            ON CONFLICT (user_id, snapshot_date) DO UPDATE SET score = EXCLUDED.score, created_at = EXCLUDED.created_at`,
-          [uid, daysBack, score, factors, inputs]
+          [uid, daysBack, score, factors, inputs, academyId]
         );
       }
     }

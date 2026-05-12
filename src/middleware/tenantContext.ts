@@ -36,7 +36,9 @@ export async function tenantContextMiddleware(req: Request, res: Response, next:
     return res.status(401).json({ success: false, error: 'Authentication required' });
   }
 
-  const academyId = req.user.activeAcademyId;
+  // Primary source: JWT. Fallback: X-Tenant-Host (sent by authFetch when on a subdomain).
+  // The DB check below always validates the user actually has access to the resolved academy.
+  const academyId = req.user.activeAcademyId ?? req.tenantHost?.academyId;
   if (!academyId) {
     return res.status(403).json({
       success: false,
@@ -44,8 +46,9 @@ export async function tenantContextMiddleware(req: Request, res: Response, next:
     });
   }
 
-  // BE-1.7.3: Host-vs-token mismatch — prevents using a token from academy A on academy B's subdomain
-  if (req.tenantHost && req.tenantHost.academyId !== academyId) {
+  // BE-1.7.3: Host-vs-token mismatch — prevents using a token from academy A on academy B's subdomain.
+  // Only applies when the JWT explicitly has a different academy than the host.
+  if (req.tenantHost && req.user.activeAcademyId && req.tenantHost.academyId !== req.user.activeAcademyId) {
     return res.status(403).json({
       success: false,
       error: 'Tenant mismatch: token não pertence ao subdomínio acessado.',

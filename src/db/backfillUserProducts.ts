@@ -7,7 +7,8 @@ import pool from '../config/database';
  *  - Usuário com role='user' ou role='personal' ou role='nutri' → concede produto 'app'
  *  - Usuário com role='personal' → concede também 'personal'
  *  - Usuário com role='nutri' → concede também 'nutri'
- *  - Usuário vinculado a academia_users como 'academy_student' com enrollment ativo → concede 'academia'
+ *  - Usuário vinculado a `academy_users` ativo → concede 'academia' (equipe ou aluno)
+ *  - Alunos com matrícula ativa em `academy_enrollments` → também 'academia' (redundante mas idempotente)
  *  - Todos os usuários existentes → concede 'metabolismo' (engine metabólica é feature universal nesta base)
  *
  * ON CONFLICT (user_id, product_key) DO NOTHING — idempotente.
@@ -76,6 +77,24 @@ export async function backfillUserProducts(): Promise<void> {
     WHERE u.role IN ('user', 'personal', 'nutri')
     ON CONFLICT (user_id, product_key) DO NOTHING
   `);
+
+  // Produto 'academia' para qualquer vínculo ativo em academy_users (equipe + aluno matriculado na base)
+  await pool.query(`
+    INSERT INTO user_products (user_id, product_key, status, source, source_academy_id, notes)
+    SELECT DISTINCT ON (au.user_id)
+      au.user_id,
+      'academia',
+      'active',
+      'academy_bootstrap',
+      au.academy_id,
+      'Backfill — academy_users ativo'
+    FROM academy_users au
+    WHERE au.is_active = TRUE AND au.status = 'active'
+    ORDER BY au.user_id, au.academy_id
+    ON CONFLICT (user_id, product_key) DO NOTHING
+  `).catch(() => {
+    // academy_users may not exist yet
+  });
 
   console.log('[db] backfillUserProducts: backfill concluído');
 }

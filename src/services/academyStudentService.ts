@@ -116,7 +116,15 @@ async function getOwnerRoleId(academyId: number): Promise<number | null> {
 
 export async function listStudents(
   academyId: number,
-  opts: { status?: string; q?: string; unitId?: number; page?: number; pageSize?: number }
+  opts: {
+    status?: string;
+    q?: string;
+    unitId?: number;
+    page?: number;
+    pageSize?: number;
+    /** Alunos ativos sem check-in nos últimos 14 dias (alinhado ao card do dashboard) */
+    atRisk?: boolean;
+  }
 ): Promise<{ students: Student[]; total: number; stats: StudentsStats }> {
   const page     = Math.max(1, opts.page ?? 1);
   const pageSize = Math.min(100, Math.max(1, opts.pageSize ?? 20));
@@ -128,9 +136,19 @@ export async function listStudents(
   ];
   const vals: unknown[] = [academyId];
 
-  if (opts.status) {
+  if (opts.status && !opts.atRisk) {
     vals.push(opts.status);
     conditions.push(`au.student_status = $${vals.length}`);
+  }
+  if (opts.atRisk) {
+    conditions.push(`au.student_status = 'active'`);
+    conditions.push(`
+      NOT EXISTS (
+        SELECT 1 FROM user_daily_checkins c
+        WHERE c.user_id = u.id AND c.academy_id = au.academy_id
+          AND c.created_at >= NOW() - INTERVAL '14 days'
+      )
+    `);
   }
   if (opts.unitId) {
     vals.push(opts.unitId);

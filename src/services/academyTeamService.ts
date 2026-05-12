@@ -2,6 +2,7 @@ import pool from '../config/database';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { ensureAcademyRoles } from '../db/academyRoles';
+import { getUserProducts, grantUserProduct } from '../db/ensureProductsSchema';
 import { auditLog } from '../utils/auditLog';
 import { resolveActiveAcademyId } from './authService';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt';
@@ -137,6 +138,19 @@ export async function addMemberDirect(
     });
 
     await client.query('COMMIT');
+
+    try {
+      await grantUserProduct({
+        userId: userRow.id,
+        productKey: 'academia',
+        source: 'academy_bootstrap',
+        sourceAcademyId: academyId,
+        grantedByUserId: actorUserId,
+        notes: 'Vínculo equipe da academia (cadastro direto)',
+      });
+    } catch (err: any) {
+      console.error('[products] grant academia (addMemberDirect):', err?.message ?? err);
+    }
 
     return {
       member: {
@@ -425,11 +439,33 @@ export async function acceptInvitation(
 
     await client.query('COMMIT');
 
+    try {
+      await grantUserProduct({
+        userId,
+        productKey: 'academia',
+        source: 'academy_bootstrap',
+        sourceAcademyId: row.academy_id,
+        grantedByUserId: null,
+        notes: 'Vínculo equipe da academia (convite aceito)',
+      });
+    } catch (err: any) {
+      console.error('[products] grant academia (acceptInvitation):', err?.message ?? err);
+    }
+
     const userRes = await pool.query(`SELECT id, email, role, name, profile_completed, access_profile FROM users WHERE id = $1`, [userId]);
     const u = userRes.rows[0];
 
     const activeAcademyId = await resolveActiveAcademyId(userId);
-    const accessToken  = generateAccessToken({ id: u.id, email: u.email, role: u.role, profileCompleted: u.profile_completed, accessProfile: u.access_profile, activeAcademyId });
+    const products = await getUserProducts(userId);
+    const accessToken = generateAccessToken({
+      id: u.id,
+      email: u.email,
+      role: u.role,
+      profileCompleted: u.profile_completed,
+      accessProfile: u.access_profile,
+      activeAcademyId,
+      products,
+    });
     const refreshToken = generateRefreshToken({ id: u.id, email: u.email });
 
     return { user: u, accessToken, refreshToken };
@@ -530,6 +566,20 @@ export async function assignOwner(
     });
 
     await client.query('COMMIT');
+
+    try {
+      await grantUserProduct({
+        userId: ownerId,
+        productKey: 'academia',
+        source: 'academy_bootstrap',
+        sourceAcademyId: academyId,
+        grantedByUserId: actorUserId,
+        notes: 'Dono da academia atribuído',
+      });
+    } catch (err: any) {
+      console.error('[products] grant academia (assignOwner):', err?.message ?? err);
+    }
+
     return { ownerId, ownerName, ownerEmail, tempPassword };
   } catch (err) {
     await client.query('ROLLBACK');

@@ -6,8 +6,10 @@ export interface AcademyPaymentRow {
   student_name: string | null;
   student_email: string;
   plan_name: string | null;
+  /** Valor em reais (BRL), alinhado a `payments.amount_brl` */
   amount: number;
   currency: string;
+  /** Normalizado para UI: `paid` inclui `approved` do Mercado Pago */
   status: string;
   paid_at: string | null;
   created_at: string;
@@ -22,9 +24,16 @@ export interface AcademyFinanceKPIs {
   countFailed: number;
 }
 
+/** Normaliza status do ledger (MP) para filtros e KPIs da UI */
+function normalizePaymentStatusForFilter(status: string | undefined): string | undefined {
+  if (!status) return undefined;
+  if (status === 'paid') return 'approved';
+  return status;
+}
+
 /**
  * Lista pagamentos da academia filtrando por academy_id.
- * Parâmetros opcionais: from/to (ISO date) e status.
+ * Parâmetros opcionais: from/to (ISO date) e status (UI: paid | pending | failed | refunded — `paid` inclui `approved`).
  */
 export async function listAcademyPayments(params: {
   academyId: number;
@@ -40,11 +49,28 @@ export async function listAcademyPayments(params: {
   const values: unknown[] = [academyId];
   let idx = 2;
 
-  if (from) { conditions.push(`p.created_at >= $${idx++}`); values.push(from); }
-  if (to)   { conditions.push(`p.created_at <= $${idx++}`); values.push(to); }
-  if (status) { conditions.push(`p.status = $${idx++}`); values.push(status); }
+  if (from) {
+    conditions.push(`p.created_at >= $${idx++}`);
+    values.push(from);
+  }
+  if (to) {
+    conditions.push(`p.created_at <= $${idx++}`);
+    values.push(to);
+  }
+  const rawStatus = normalizePaymentStatusForFilter(status);
+  if (rawStatus) {
+    if (rawStatus === 'approved') {
+      conditions.push(`(p.status = 'approved' OR p.status = 'paid')`);
+    } else {
+      conditions.push(`p.status = $${idx++}`);
+      values.push(rawStatus);
+    }
+  }
 
   const where = conditions.join(' AND ');
+  const limitPh = `$${idx++}`;
+  const offsetPh = `$${idx++}`;
+  values.push(limit, offset);
 
   const [rowsRes, countRes] = await Promise.all([
     pool.query<AcademyPaymentRow>(
@@ -54,10 +80,16 @@ export async function listAcademyPayments(params: {
          u.name  AS student_name,
          u.email AS student_email,
          st.name AS plan_name,
-         p.amount,
-         p.currency,
-         p.status,
-         p.paid_at,
+         p.amount_brl::float8 AS amount,
+         'BRL'::text          AS currency,
+         CASE
+           WHEN p.status IN ('approved', 'paid') THEN 'paid'
+           ELSE p.status
+         END AS status,
+         CASE
+           WHEN p.status IN ('approved', 'paid') THEN COALESCE(p.updated_at, p.created_at)
+           ELSE NULL
+         END AS paid_at,
          p.created_at
        FROM payments p
        JOIN users u ON u.id = p.user_id
@@ -65,12 +97,12 @@ export async function listAcademyPayments(params: {
        LEFT JOIN subscription_tiers st ON st.id = us.tier_id
        WHERE ${where}
        ORDER BY p.created_at DESC
-       LIMIT $${idx} OFFSET $${idx + 1}`,
-      [...values, limit, offset]
+       LIMIT ${limitPh} OFFSET ${offsetPh}`,
+      values
     ),
     pool.query<{ count: string }>(
       `SELECT COUNT(*) AS count FROM payments p WHERE ${where}`,
-      values
+      values.slice(0, values.length - 2)
     ),
   ]);
 
@@ -82,37 +114,37 @@ export async function listAcademyPayments(params: {
 
 /**
  * KPIs financeiros do mês corrente para a academia.
+ * Usa `amount_brl` e trata `approved` como receita confirmada (equivalente a "paid" na UI).
  */
 export async function getAcademyFinanceKPIs(academyId: number): Promise<AcademyFinanceKPIs> {
   const result = await pool.query<{
-    status: string;
-    total_amount: string;
-    count: string;
+    total_paid: string;
+    count_paid: string;
+    total_pending: string;
+    count_pending: string;
+    total_failed: string;
+    count_failed: string;
   }>(
     `SELECT
-       status,
-       COALESCE(SUM(amount), 0) AS total_amount,
-       COUNT(*)                 AS count
-     FROM payments
-     WHERE academy_id = $1
-       AND created_at >= DATE_TRUNC('month', NOW())
-     GROUP BY status`,
+       COALESCE(SUM(p.amount_brl) FILTER (WHERE p.status IN ('approved', 'paid')), 0)::text AS total_paid,
+       COUNT(*) FILTER (WHERE p.status IN ('approved', 'paid'))::text AS count_paid,
+       COALESCE(SUM(p.amount_brl) FILTER (WHERE p.status = 'pending'), 0)::text AS total_pending,
+       COUNT(*) FILTER (WHERE p.status = 'pending')::text AS count_pending,
+       COALESCE(SUM(p.amount_brl) FILTER (WHERE p.status IN ('failed', 'refunded')), 0)::text AS total_failed,
+       COUNT(*) FILTER (WHERE p.status IN ('failed', 'refunded'))::text AS count_failed
+     FROM payments p
+     WHERE p.academy_id = $1
+       AND p.created_at >= DATE_TRUNC('month', NOW())`,
     [academyId]
   );
 
-  const kpis: AcademyFinanceKPIs = {
-    totalPaid: 0, countPaid: 0,
-    totalPending: 0, countPending: 0,
-    totalFailed: 0, countFailed: 0,
+  const row = result.rows[0];
+  return {
+    totalPaid:    parseFloat(row?.total_paid    ?? '0'),
+    countPaid:    Number(row?.count_paid    ?? 0),
+    totalPending: parseFloat(row?.total_pending ?? '0'),
+    countPending: Number(row?.count_pending ?? 0),
+    totalFailed:  parseFloat(row?.total_failed  ?? '0'),
+    countFailed:  Number(row?.count_failed  ?? 0),
   };
-
-  for (const row of result.rows) {
-    const amt = parseFloat(row.total_amount);
-    const cnt = Number(row.count);
-    if (row.status === 'paid')    { kpis.totalPaid    = amt; kpis.countPaid    = cnt; }
-    if (row.status === 'pending') { kpis.totalPending = amt; kpis.countPending = cnt; }
-    if (row.status === 'failed')  { kpis.totalFailed  = amt; kpis.countFailed  = cnt; }
-  }
-
-  return kpis;
 }

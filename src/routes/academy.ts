@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import bcryptjs from 'bcryptjs';
 import { authMiddleware } from '../middleware/auth';
+import { requireProduct } from '../middleware/productGate';
 import { tenantContextMiddleware, requireTenantPermission } from '../middleware/tenantContext';
 import {
   getTeam,
@@ -50,8 +51,8 @@ function validateLogoUrl(url: string): string | null {
 
 const router = Router();
 
-// All routes require authentication + tenant context
-router.use(authMiddleware, tenantContextMiddleware);
+// Auth + produto Academia (claim no JWT) + tenant — alinhado ao ProductGate no frontend
+router.use(authMiddleware, requireProduct('academia'), tenantContextMiddleware);
 
 // ─── Team ─────────────────────────────────────────────────────────────────────
 
@@ -185,7 +186,10 @@ router.delete(
 // ─── Branding ─────────────────────────────────────────────────────────────────
 
 // GET /academy/branding
-router.get('/branding', async (req: Request, res: Response) => {
+router.get(
+  '/branding',
+  requireTenantPermission('academy.branding'),
+  async (req: Request, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT logo_url, display_name, primary_color, primary_hover, accent_color, welcome_message, theme
@@ -318,13 +322,18 @@ router.get(
   requireTenantPermission('academy.students.read'),
   async (req: Request, res: Response) => {
     try {
-      const { status, q, unitId, page, pageSize } = req.query as Record<string, string>;
+      const { status, q, unitId, page, pageSize, atRisk, filter } = req.query as Record<string, string>;
+      const atRiskFlag =
+        atRisk === '1' ||
+        atRisk === 'true' ||
+        String(filter).toLowerCase() === 'at_risk';
       const result = await listStudents(req.tenant!.academyId, {
         status:   status || undefined,
         q:        q || undefined,
         unitId:   unitId ? Number(unitId) : undefined,
         page:     page ? Number(page) : 1,
         pageSize: pageSize ? Number(pageSize) : 20,
+        atRisk:   atRiskFlag,
       });
       res.json({ success: true, data: result });
     } catch (err: any) {
@@ -501,10 +510,14 @@ router.post(
     try {
       const targetId = Number(req.params.userId);
 
-      // Verify the student belongs to this academy
+      // Apenas aluno (papel academy_student) — evita reset em staff/outros vínculos na mesma academia
       const memberCheck = await pool.query(
-        `SELECT 1 FROM academy_users
-         WHERE user_id = $1 AND academy_id = $2 AND is_active = TRUE LIMIT 1`,
+        `SELECT 1 FROM academy_users au
+         JOIN academy_roles ar ON ar.id = au.role_id
+         WHERE au.user_id = $1 AND au.academy_id = $2
+           AND au.is_active = TRUE AND au.status = 'active'
+           AND ar.slug = 'academy_student'
+         LIMIT 1`,
         [targetId, req.tenant!.academyId]
       );
       if (memberCheck.rows.length === 0) {
@@ -529,6 +542,7 @@ router.post(
         ipAddress: req.ip,
       });
 
+      res.setHeader('Cache-Control', 'no-store');
       res.json({ success: true, tempPassword });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -611,7 +625,10 @@ router.delete(
 // ─── Dashboard summary ────────────────────────────────────────────────────────
 
 // GET /academy/dashboard
-router.get('/dashboard', async (req: Request, res: Response) => {
+router.get(
+  '/dashboard',
+  requireTenantPermission('academy.dashboard'),
+  async (req: Request, res: Response) => {
   try {
     const { academyId } = req.tenant!;
 
@@ -658,11 +675,13 @@ router.get('/dashboard', async (req: Request, res: Response) => {
          LEFT JOIN (
            SELECT user_id, MAX(created_at) AS last_checkin
            FROM user_daily_checkins
+           WHERE academy_id = $1
            GROUP BY user_id
          ) udc ON udc.user_id = au.user_id
          LEFT JOIN (
            SELECT user_id, MAX(completed_at) AS last_workout
            FROM user_workout_logs
+           WHERE academy_id = $1
            GROUP BY user_id
          ) uwl ON uwl.user_id = au.user_id
          WHERE au.academy_id = $1
@@ -688,11 +707,13 @@ router.get('/dashboard', async (req: Request, res: Response) => {
          LEFT JOIN (
            SELECT user_id, MAX(created_at) AS last_checkin
            FROM user_daily_checkins
+           WHERE academy_id = $1
            GROUP BY user_id
          ) udc ON udc.user_id = au.user_id
          LEFT JOIN (
            SELECT user_id, MAX(completed_at) AS last_workout
            FROM user_workout_logs
+           WHERE academy_id = $1
            GROUP BY user_id
          ) uwl ON uwl.user_id = au.user_id
          WHERE au.academy_id = $1
@@ -741,26 +762,26 @@ router.get('/dashboard', async (req: Request, res: Response) => {
         `SELECT
            u.id          AS user_id,
            u.name,
-           COUNT(DISTINCT psa.student_user_id)  AS students_count,
+           COUNT(DISTINCT psa.student_id)  AS students_count,
            ROUND(
              100.0 * COUNT(DISTINCT udc.user_id) FILTER (
                WHERE udc.last_checkin >= NOW() - INTERVAL '7 days'
-             ) / NULLIF(COUNT(DISTINCT psa.student_user_id), 0)
+             ) / NULLIF(COUNT(DISTINCT psa.student_id), 0)
            , 1) AS adherence_rate
          FROM personal_student_assignments psa
-         JOIN users u ON u.id = psa.personal_user_id
+         JOIN users u ON u.id = psa.personal_id
          LEFT JOIN (
            SELECT user_id, MAX(created_at) AS last_checkin
            FROM user_daily_checkins
            WHERE academy_id = $1
            GROUP BY user_id
-         ) udc ON udc.user_id = psa.student_user_id
-         WHERE psa.academy_id = $1 AND psa.is_active = TRUE
+         ) udc ON udc.user_id = psa.student_id
+         WHERE psa.academy_id = $1 AND psa.status = 'active'
          GROUP BY u.id, u.name
          ORDER BY adherence_rate DESC NULLS LAST, students_count DESC
          LIMIT 3`,
         [academyId]
-      ).catch(() => ({ rows: [] })),
+      ),
       // 3.6: Adoption indicators
       pool.query(
         `SELECT
@@ -778,15 +799,17 @@ router.get('/dashboard', async (req: Request, res: Response) => {
              WHERE ae2.cancelled_at > NOW() - INTERVAL '30 days'
            )                                                            AS cancellations
          FROM academy_users au
-         LEFT JOIN movement_sessions ms       ON ms.user_id = au.user_id
-         LEFT JOIN activity_sessions acs      ON acs.user_id = au.user_id
+         LEFT JOIN movement_sessions ms
+           ON ms.user_id = au.user_id AND ms.academy_id = $1
+         LEFT JOIN activity_sessions acs
+           ON acs.user_id = au.user_id AND acs.academy_id = $1
          LEFT JOIN academy_enrollments ae     ON ae.user_id = au.user_id AND ae.academy_id = $1
          LEFT JOIN academy_enrollments ae2    ON ae2.user_id = au.user_id AND ae2.academy_id = $1
          WHERE au.academy_id = $1
            AND au.is_active   = TRUE
            AND au.status      = 'active'`,
         [academyId]
-      ).catch(() => ({ rows: [] })),
+      ),
     ]);
 
     const membersByRole: Record<string, number> = {};
@@ -858,7 +881,10 @@ router.get('/dashboard', async (req: Request, res: Response) => {
 // ─── Audit log ────────────────────────────────────────────────────────────────
 
 // GET /academy/audit-log?limit=50&offset=0&action=<filter>
-router.get('/audit-log', async (req: Request, res: Response) => {
+router.get(
+  '/audit-log',
+  requireTenantPermission('academy.audit.read'),
+  async (req: Request, res: Response) => {
   try {
     const { academyId } = req.tenant!;
     const limit  = Math.min(Number(req.query.limit  ?? 50), 100);
@@ -873,7 +899,10 @@ router.get('/audit-log', async (req: Request, res: Response) => {
 // ─── Finance MVP ──────────────────────────────────────────────────────────────
 
 // GET /academy/payments?from=&to=&status=&limit=&offset=
-router.get('/payments', async (req: Request, res: Response) => {
+router.get(
+  '/payments',
+  requireTenantPermission('academy.finance.read'),
+  async (req: Request, res: Response) => {
   try {
     const { academyId } = req.tenant!;
     const { from, to, status } = req.query as Record<string, string | undefined>;

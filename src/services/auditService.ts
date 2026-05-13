@@ -16,7 +16,11 @@ export type AuditAction =
   | 'invitation.accept'
   | 'auth.switch_academy'
   | 'product.grant'
-  | 'product.revoke';
+  | 'product.revoke'
+  | 'reception.checkin'
+  | 'reception.exception'
+  | 'reception.denied'
+  | 'reception.visitor_access';
 
 export interface AuditEntry {
   academyId: number | null;

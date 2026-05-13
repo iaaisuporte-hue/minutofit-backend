@@ -30,6 +30,12 @@ import {
 import { auditLog } from '../utils/auditLog';
 import { logAcademyAction, listAcademyAudit } from '../services/auditService';
 import { listAcademyPayments, getAcademyFinanceKPIs } from '../services/academyFinanceService';
+import {
+  createVisitorAccess,
+  getReceptionDashboard,
+  registerStudentAccess,
+  searchReceptionStudents,
+} from '../services/academyReceptionService';
 import { validateBrandingColor, contrastRatio } from '../utils/contrastValidator';
 import { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } from '../utils/colorContrast';
 import { sanitizeBrandingText } from '../utils/htmlSanitize';
@@ -315,6 +321,22 @@ router.put(
 );
 
 // ─── Students ─────────────────────────────────────────────────────────────────
+
+// GET /academy/students/search?q=
+router.get(
+  '/students/search',
+  requireTenantPermission('academy.students.read'),
+  async (req: Request, res: Response) => {
+    try {
+      const q = String(req.query.q ?? '');
+      const limit = req.query.limit ? Number(req.query.limit) : 8;
+      const students = await searchReceptionStudents(req.tenant!.academyId, q, limit);
+      res.json({ success: true, data: { students } });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
 
 // GET /academy/students
 router.get(
@@ -877,6 +899,130 @@ router.get(
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ─── Recepção MVP ─────────────────────────────────────────────────────────────
+
+// GET /academy/recepcao/dashboard
+router.get(
+  '/recepcao/dashboard',
+  requireTenantPermission('academy.recepcao.dashboard'),
+  async (req: Request, res: Response) => {
+    try {
+      const data = await getReceptionDashboard(req.tenant!.academyId);
+      res.json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// POST /academy/checkins
+router.post(
+  '/checkins',
+  requireTenantPermission('academy.checkin.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.body.userId);
+      if (!userId) {
+        return res.status(400).json({ success: false, error: 'userId é obrigatório.' });
+      }
+      const result = await registerStudentAccess({
+        academyId: req.tenant!.academyId,
+        actorUserId: req.user!.id,
+        userId,
+        eventType: 'checkin',
+        source: req.body.source === 'qr' ? 'qr' : 'manual',
+        ipAddress: req.ip,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// POST /academy/checkins/exception
+router.post(
+  '/checkins/exception',
+  requireTenantPermission('academy.checkin.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.body.userId);
+      const reason = String(req.body.reason ?? '').trim();
+      if (!userId) {
+        return res.status(400).json({ success: false, error: 'userId é obrigatório.' });
+      }
+      if (!reason) {
+        return res.status(400).json({ success: false, error: 'Motivo é obrigatório.' });
+      }
+      const result = await registerStudentAccess({
+        academyId: req.tenant!.academyId,
+        actorUserId: req.user!.id,
+        userId,
+        eventType: 'exception',
+        source: 'manual',
+        reason,
+        ipAddress: req.ip,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// POST /academy/checkins/deny
+router.post(
+  '/checkins/deny',
+  requireTenantPermission('academy.checkin.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.body.userId);
+      const reason = String(req.body.reason ?? '').trim();
+      if (!userId) {
+        return res.status(400).json({ success: false, error: 'userId é obrigatório.' });
+      }
+      if (!reason) {
+        return res.status(400).json({ success: false, error: 'Motivo é obrigatório.' });
+      }
+      const result = await registerStudentAccess({
+        academyId: req.tenant!.academyId,
+        actorUserId: req.user!.id,
+        userId,
+        eventType: 'denied',
+        source: 'manual',
+        reason,
+        ipAddress: req.ip,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// POST /academy/visitors
+router.post(
+  '/visitors',
+  requireTenantPermission('academy.checkin.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const result = await createVisitorAccess({
+        academyId: req.tenant!.academyId,
+        actorUserId: req.user!.id,
+        name: String(req.body.name ?? ''),
+        document: req.body.document ? String(req.body.document) : undefined,
+        visitorType: req.body.visitorType === 'external_personal' ? 'external_personal' : 'visitor',
+        validUntil: req.body.validUntil ? String(req.body.validUntil) : undefined,
+        reason: req.body.reason ? String(req.body.reason) : undefined,
+        ipAddress: req.ip,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
 
 // ─── Audit log ────────────────────────────────────────────────────────────────
 

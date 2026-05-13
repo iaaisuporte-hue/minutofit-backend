@@ -174,7 +174,7 @@ async function main() {
         const amount = 89.9 + (paySeq % 5) * 10;
         const dayOffset = paySeq % 20;
         const mpId = `phgym-demo-mp-${academyId}-${uid}-${paySeq}-${r}`;
-        const paidAt = (st === 'approved' || st === 'paid')
+        const paidAt = st === 'approved'
           ? new Date(new Date().getFullYear(), new Date().getMonth(), dayOffset + 1, 10)
           : null;
         const createdAt = new Date(new Date().getFullYear(), new Date().getMonth(), dayOffset + 1, 9);

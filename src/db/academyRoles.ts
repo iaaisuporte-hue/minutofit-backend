@@ -19,7 +19,8 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.plans.read', 'academy.plans.write',
       'academy.finance.read', 'academy.finance.write', 'academy.finance.dre',
       'academy.reports.read', 'academy.branding', 'academy.audit.read',
-      'academy.invitations.write',
+      'academy.invitations.write', 'academy.recepcao.dashboard',
+      'academy.checkin.write', 'academy.billing.operate',
     ],
   },
   {
@@ -31,7 +32,8 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.professionals.write', 'academy.plans.read', 'academy.plans.write',
       'academy.finance.read', 'academy.finance.write', 'academy.finance.dre',
       'academy.reports.read', 'academy.branding', 'academy.audit.read',
-      'academy.invitations.write',
+      'academy.invitations.write', 'academy.recepcao.dashboard',
+      'academy.checkin.write', 'academy.billing.operate',
     ],
   },
   {
@@ -41,6 +43,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.dashboard', 'academy.students.read', 'academy.students.write',
       'academy.professionals.read', 'academy.plans.read',
       'academy.finance.read', 'academy.reports.read', 'academy.invitations.write',
+      'academy.recepcao.dashboard', 'academy.checkin.write', 'academy.billing.operate',
     ],
   },
   {
@@ -56,8 +59,10 @@ export const SYSTEM_ROLES: SystemRole[] = [
     slug: 'academy_reception',
     label: 'Recepção',
     permissions: [
-      'academy.students.read', 'academy.plans.read',
-      'academy.invitations.write',
+      'academy.students.read', 'academy.students.write',
+      'academy.plans.read', 'academy.invitations.write',
+      'academy.recepcao.dashboard', 'academy.checkin.write',
+      'academy.billing.operate', 'academy.audit.read',
     ],
   },
   {

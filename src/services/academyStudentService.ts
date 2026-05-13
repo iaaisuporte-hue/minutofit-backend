@@ -155,8 +155,19 @@ export async function listStudents(
     conditions.push(`au.academy_unit_id = $${vals.length}`);
   }
   if (opts.q) {
-    vals.push(`%${opts.q}%`);
-    conditions.push(`(u.name ILIKE $${vals.length} OR u.email ILIKE $${vals.length})`);
+    const term = opts.q.trim();
+    const digits = term.replace(/\D/g, '');
+    vals.push(`%${term}%`);
+    const textParam = vals.length;
+    vals.push(digits ? `%${digits}%` : null);
+    const digitParam = vals.length;
+    conditions.push(`(
+      u.name ILIKE $${textParam}
+      OR u.email ILIKE $${textParam}
+      OR COALESCE(u.phone, '') ILIKE $${textParam}
+      OR ($${digitParam}::text IS NOT NULL AND regexp_replace(COALESCE(u.cpf, ''), '\\D', '', 'g') ILIKE $${digitParam})
+      OR ($${digitParam}::text IS NOT NULL AND regexp_replace(COALESCE(u.phone, ''), '\\D', '', 'g') ILIKE $${digitParam})
+    )`);
   }
 
   const where = conditions.join(' AND ');

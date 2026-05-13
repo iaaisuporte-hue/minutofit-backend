@@ -32,6 +32,7 @@ import { ensureMovementSessionsSchema } from './db/ensureMovementSessionsSchema'
 import { ensureProductsSchema } from './db/ensureProductsSchema';
 import { backfillUserProducts } from './db/backfillUserProducts';
 import { ensureDailyCheckinSignalsSchema } from './db/ensureDailyCheckinSignalsSchema';
+import { ensureReceptionSchema } from './db/ensureReceptionSchema';
 import activitiesRoutes from './routes/activities';
 import movementRoutes from './routes/movement';
 import planRoutes from './routes/plans';
@@ -81,6 +82,7 @@ void ensureMovementSessionsSchema().catch((err) => {
 void ensureAcademiesSchema()
   .then(() => seedDefaultAcademy())
   .then(() => ensureStudentsSchema())
+  .then(() => ensureReceptionSchema())
   .then(() => ensureTenantColumnsPhase2())
   .then(() => backfillTenantColumns())
   .then(() => ensureTenantColumnsPhase2Lock())

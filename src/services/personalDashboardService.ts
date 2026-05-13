@@ -343,17 +343,20 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
           FROM user_workout_logs uwl7
           WHERE uwl7.user_id = u.id
             AND uwl7.completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+            AND ($2::integer IS NULL OR uwl7.academy_id = $2)
         ) AS workouts_7d,
         (
           SELECT COUNT(*)
           FROM user_workout_logs uwl30
           WHERE uwl30.user_id = u.id
             AND uwl30.completed_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+            AND ($2::integer IS NULL OR uwl30.academy_id = $2)
         ) AS workouts_30d,
         (
           SELECT uwll.completed_at
           FROM user_workout_logs uwll
           WHERE uwll.user_id = u.id
+            AND ($2::integer IS NULL OR uwll.academy_id = $2)
           ORDER BY uwll.completed_at DESC
           LIMIT 1
         ) AS last_workout_at,
@@ -362,11 +365,13 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
           FROM user_daily_checkins udc7
           WHERE udc7.user_id = u.id
             AND udc7.date_key >= CURRENT_DATE - INTERVAL '6 days'
+            AND ($2::integer IS NULL OR udc7.academy_id = $2)
         ) AS checkins_7d,
         (
           SELECT udcl.date_key
           FROM user_daily_checkins udcl
           WHERE udcl.user_id = u.id
+            AND ($2::integer IS NULL OR udcl.academy_id = $2)
           ORDER BY udcl.date_key DESC
           LIMIT 1
         ) AS last_checkin_date,
@@ -374,6 +379,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
           SELECT udc_last.slept_well
           FROM user_daily_checkins udc_last
           WHERE udc_last.user_id = u.id
+            AND ($2::integer IS NULL OR udc_last.academy_id = $2)
           ORDER BY udc_last.date_key DESC, udc_last.created_at DESC
           LIMIT 1
         ) AS latest_slept_well
@@ -514,7 +520,11 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
   };
 }
 
-export async function getPersonalStudentSnapshot(personalId: number, studentId: number) {
+export async function getPersonalStudentSnapshot(
+  personalId: number,
+  studentId: number,
+  academyId?: number | null
+) {
   const assigned = await assertStudentAssignedToPersonal(personalId, studentId);
   if (!assigned) {
     const err = new Error('Student is not assigned to this personal trainer');
@@ -536,9 +546,10 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
     metabolismHistory,
     muscleGroupRows,
     latestWellbeingRow,
+    wellbeingHistoryRows,
   ] =
     await Promise.all([
-      getPersonalDashboard(personalId),
+      getPersonalDashboard(personalId, academyId ?? null),
       pool.query(
         `SELECT
             u.id,
@@ -567,24 +578,27 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
          LEFT JOIN subscription_tiers st
            ON st.id = active_subscription.tier_id
          WHERE u.id = $2
+           AND ($3::integer IS NULL OR psa.academy_id = $3)
          LIMIT 1`,
-        [personalId, studentId]
+        [personalId, studentId, academyId ?? null]
       ),
       pool.query(
-        `SELECT activity_type, distance_km, duration_seconds, intensity, created_at
+        `SELECT activity_type, distance_km, duration_seconds, intensity, score, calories_estimated, validation_flag, created_at
          FROM activity_sessions
          WHERE user_id = $1
+           AND ($2::integer IS NULL OR academy_id = $2)
          ORDER BY created_at DESC
          LIMIT 1`,
-        [studentId]
+        [studentId, academyId ?? null]
       ),
       pool.query(
         `SELECT title, completed_at
          FROM user_workout_logs
          WHERE user_id = $1
+           AND ($2::integer IS NULL OR academy_id = $2)
          ORDER BY completed_at DESC
          LIMIT 1`,
-        [studentId]
+        [studentId, academyId ?? null]
       ),
       pool.query(
         `SELECT
@@ -606,10 +620,11 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
            FROM movement_sessions
            WHERE user_id = $1
              AND created_at >= NOW() - INTERVAL '14 days'
+             AND ($2::integer IS NULL OR academy_id = $2)
            ORDER BY created_at DESC
            LIMIT 5
          ) recent_movement`,
-        [studentId]
+        [studentId, academyId ?? null]
       ),
       pool.query(
         `WITH days AS (
@@ -621,29 +636,33 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
              SELECT 1 FROM user_workout_logs uwl
              WHERE uwl.user_id = $1
                AND uwl.completed_at::date = days.day
+               AND ($2::integer IS NULL OR uwl.academy_id = $2)
            ) AS worked_out,
            EXISTS (
              SELECT 1 FROM activity_sessions act
              WHERE act.user_id = $1
                AND act.created_at::date = days.day
+               AND ($2::integer IS NULL OR act.academy_id = $2)
            ) AS had_gps,
            EXISTS (
              SELECT 1 FROM user_daily_checkins chk
              WHERE chk.user_id = $1
                AND chk.date_key = days.day
+               AND ($2::integer IS NULL OR chk.academy_id = $2)
            ) AS checked_in
          FROM days
          ORDER BY days.day ASC`,
-        [studentId]
+        [studentId, academyId ?? null]
       ),
       pool.query(
         `SELECT activity_type AS type, COUNT(*)::int AS count
          FROM activity_sessions
          WHERE user_id = $1
            AND created_at >= NOW() - INTERVAL '14 days'
+           AND ($2::integer IS NULL OR academy_id = $2)
          GROUP BY activity_type
          ORDER BY COUNT(*) DESC, activity_type ASC`,
-        [studentId]
+        [studentId, academyId ?? null]
       ),
       pool.query(
         `SELECT COALESCE(xp, 0)::int AS xp
@@ -659,9 +678,10 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
            ON cm.conversation_id = cc.id
          WHERE cc.personal_id = $1
            AND cc.student_id = $2
+           AND ($3::integer IS NULL OR cc.academy_id = $3)
          ORDER BY cm.created_at DESC
          LIMIT 1`,
-        [personalId, studentId]
+        [personalId, studentId, academyId ?? null]
       ),
       getMetabolismForUser(studentId),
       getMetabolismHistoryForUser(studentId),
@@ -672,19 +692,30 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
            FROM user_workout_logs
            WHERE user_id = $1
              AND completed_at >= NOW() - INTERVAL '30 days'
+             AND ($2::integer IS NULL OR academy_id = $2)
          ) expanded
          WHERE muscle_group IS NOT NULL AND muscle_group <> ''
          GROUP BY muscle_group
          ORDER BY count DESC, muscle_group ASC`,
-        [studentId]
+        [studentId, academyId ?? null]
       ),
       pool.query(
         `SELECT feeling, slept_well, in_pain, stressed, notes, date_key::text AS date_key
          FROM user_daily_checkins
          WHERE user_id = $1
+           AND ($2::integer IS NULL OR academy_id = $2)
          ORDER BY date_key DESC, created_at DESC
          LIMIT 1`,
-        [studentId]
+        [studentId, academyId ?? null]
+      ),
+      pool.query(
+        `SELECT date_key::text AS date_key, feeling, slept_well, in_pain, stressed
+         FROM user_daily_checkins
+         WHERE user_id = $1
+           AND ($2::integer IS NULL OR academy_id = $2)
+           AND date_key >= CURRENT_DATE - INTERVAL '13 days'
+         ORDER BY date_key ASC, created_at ASC`,
+        [studentId, academyId ?? null]
       ),
     ]);
 
@@ -725,6 +756,14 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
         }
       : null;
 
+  const wellbeingHistory14d = wellbeingHistoryRows.rows.map((h) => ({
+    dateKey: String(h.date_key),
+    feeling: h.feeling as string | null,
+    sleptWell: h.slept_well === null || h.slept_well === undefined ? null : Boolean(h.slept_well),
+    inPain: h.in_pain === null || h.in_pain === undefined ? null : Boolean(h.in_pain),
+    stressed: h.stressed === null || h.stressed === undefined ? null : Boolean(h.stressed),
+  }));
+
   return {
     id: String(row.id),
     name: row.name || `Aluno ${row.id}`,
@@ -735,6 +774,17 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
     engagementStatus: student.engagementStatus,
     adherencePct: student.adherencePct,
     streakDays: Number(row.current_streak || 0),
+    metabolismDetail: metabolism
+      ? {
+          score: metabolism.score,
+          status: metabolism.status,
+          trend: metabolism.trend,
+          factors: metabolism.factors,
+          recommendations: metabolism.recommendations,
+          trend7d: metabolism.trend7d,
+          trend30d: metabolism.trend30d,
+        }
+      : null,
     today: {
       checkedInToday: weeklyDays[weeklyDays.length - 1]?.checkedIn ?? false,
       lastCheckinISO: student.lastCheckinISO,
@@ -753,6 +803,12 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
             distanceKm: Number(latestActivityRow.distance_km || 0),
             durationMinutes: Math.round(Number(latestActivityRow.duration_seconds || 0) / 60),
             intensity: latestActivityRow.intensity || null,
+            score: latestActivityRow.score != null ? Number(latestActivityRow.score) : null,
+            caloriesEstimated:
+              latestActivityRow.calories_estimated != null
+                ? Number(latestActivityRow.calories_estimated)
+                : null,
+            validationFlag: Boolean(latestActivityRow.validation_flag),
             createdAt: new Date(latestActivityRow.created_at).toISOString(),
           }
         : null,
@@ -788,8 +844,55 @@ export async function getPersonalStudentSnapshot(personalId: number, studentId: 
         count: Number(item.count || 0),
       })),
       xp: Number(xpRow.rows[0]?.xp || row.xp || 0),
+      wellbeingHistory14d,
     },
   };
+}
+
+export async function listPersonalStudentActivities(
+  personalId: number,
+  studentId: number,
+  academyId: number | null | undefined,
+  limitRaw: number
+) {
+  const assigned = await assertStudentAssignedToPersonal(personalId, studentId);
+  if (!assigned) {
+    const err = new Error('Student is not assigned to this personal trainer');
+    (err as any).code = 'ASSIGNMENT_REQUIRED';
+    throw err;
+  }
+  const limit = Math.min(Math.max(Number.isFinite(limitRaw) ? limitRaw : 10, 1), 50);
+  const result = await pool.query(
+    `SELECT
+        id,
+        activity_type,
+        duration_seconds,
+        distance_km,
+        calories_estimated,
+        avg_pace,
+        intensity,
+        score,
+        validation_flag,
+        created_at
+     FROM activity_sessions
+     WHERE user_id = $1
+       AND ($2::integer IS NULL OR academy_id = $2)
+     ORDER BY created_at DESC
+     LIMIT $3`,
+    [studentId, academyId ?? null, limit]
+  );
+  return result.rows.map((r) => ({
+    id: Number(r.id),
+    activityType: String(r.activity_type),
+    durationSeconds: Number(r.duration_seconds || 0),
+    distanceKm: Number(r.distance_km || 0),
+    caloriesEstimated: Number(r.calories_estimated || 0),
+    avgPace: r.avg_pace != null ? Number(r.avg_pace) : null,
+    intensity: r.intensity ? String(r.intensity) : null,
+    score: r.score != null ? Number(r.score) : null,
+    validationFlag: Boolean(r.validation_flag),
+    createdAt: new Date(r.created_at).toISOString(),
+  }));
 }
 
 export async function getPersonalConsulting(personalId: number, academyId?: number | null) {
@@ -803,11 +906,13 @@ export async function getPersonalConsulting(personalId: number, academyId?: numb
           FROM user_workout_logs uwl30
           WHERE uwl30.user_id = u.id
             AND uwl30.completed_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+            AND ($2::integer IS NULL OR uwl30.academy_id = $2)
         ) AS workouts_30d,
         (
           SELECT uwll.completed_at
           FROM user_workout_logs uwll
           WHERE uwll.user_id = u.id
+            AND ($2::integer IS NULL OR uwll.academy_id = $2)
           ORDER BY uwll.completed_at DESC
           LIMIT 1
         ) AS last_workout_at

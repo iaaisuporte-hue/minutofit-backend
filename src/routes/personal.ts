@@ -30,6 +30,17 @@ import {
   type ReviewPriority,
   type ReviewRisk,
 } from '../services/workoutReviewsService';
+import { listExerciseCatalog } from '../services/exerciseCatalogService';
+import {
+  createWorkoutProtocol,
+  deleteWorkoutProtocol,
+  getWorkoutProtocolById,
+  listWorkoutProtocolsForPersonal,
+  setProtocolFavorite,
+  suggestProtocolsForStudent,
+  updateWorkoutProtocol,
+  type ProtocolScope,
+} from '../services/workoutProtocolService';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('personal'), requireAcademyContext);
@@ -254,6 +265,209 @@ router.delete(
       res.json({ success: true, data: { deleted: true } });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message || 'Failed to delete note' });
+    }
+  }
+);
+
+router.get('/exercise-catalog', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const group = typeof req.query.group === 'string' ? req.query.group : undefined;
+    const limitRaw = Number(req.query.limit);
+    const rows = await listExerciseCatalog({
+      q,
+      group,
+      limit: Number.isFinite(limitRaw) ? limitRaw : 80,
+    });
+    res.json({ success: true, data: rows });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load exercise catalog' });
+  }
+});
+
+router.get('/protocols', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    if (!academyId) {
+      return res.status(400).json({ success: false, error: 'Academy context required' });
+    }
+    const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const scopeRaw = typeof req.query.scope === 'string' ? req.query.scope : undefined;
+    const scope =
+      scopeRaw === 'personal' || scopeRaw === 'academy' || scopeRaw === 'platform' || scopeRaw === 'all'
+        ? (scopeRaw as ProtocolScope | 'all')
+        : 'all';
+    const tagGoal = typeof req.query.tagGoal === 'string' ? req.query.tagGoal : undefined;
+    const limitRaw = Number(req.query.limit);
+    const rows = await listWorkoutProtocolsForPersonal(req.user!.id, academyId, {
+      q,
+      scope,
+      tagGoal,
+      limit: Number.isFinite(limitRaw) ? limitRaw : 80,
+    });
+    res.json({ success: true, data: rows });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to list protocols' });
+  }
+});
+
+router.get('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    if (!academyId) {
+      return res.status(400).json({ success: false, error: 'Academy context required' });
+    }
+    const protocolId = Number(req.params.protocolId);
+    if (!Number.isFinite(protocolId)) {
+      return res.status(400).json({ success: false, error: 'Invalid protocol id' });
+    }
+    const row = await getWorkoutProtocolById(req.user!.id, academyId, protocolId);
+    if (!row) {
+      return res.status(404).json({ success: false, error: 'Protocol not found' });
+    }
+    res.json({ success: true, data: row });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load protocol' });
+  }
+});
+
+router.post('/protocols', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    if (!academyId) {
+      return res.status(400).json({ success: false, error: 'Academy context required' });
+    }
+    const body = req.body || {};
+    const scope = body.scope === 'academy' ? 'academy' : 'personal';
+    const title = typeof body.title === 'string' ? body.title : '';
+    const description = body.description === undefined ? undefined : body.description;
+    const tags = body.tags;
+    const weekPreset = typeof body.weekPreset === 'string' ? body.weekPreset : String(body.weekPreset ?? '5');
+    const selectedGroup =
+      body.selectedGroup === null || body.selectedGroup === undefined
+        ? null
+        : String(body.selectedGroup);
+    const items = Array.isArray(body.items) ? body.items : [];
+
+    const row = await createWorkoutProtocol(req.user!.id, academyId, {
+      scope,
+      title,
+      description,
+      tags,
+      weekPreset,
+      selectedGroup,
+      items,
+    });
+    res.status(201).json({ success: true, data: row });
+  } catch (error: any) {
+    if (error?.message?.includes('required') || error?.message?.includes('Invalid')) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    res.status(500).json({ success: false, error: error.message || 'Failed to create protocol' });
+  }
+});
+
+router.patch('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    if (!academyId) {
+      return res.status(400).json({ success: false, error: 'Academy context required' });
+    }
+    const protocolId = Number(req.params.protocolId);
+    if (!Number.isFinite(protocolId)) {
+      return res.status(400).json({ success: false, error: 'Invalid protocol id' });
+    }
+    const body = req.body || {};
+    const row = await updateWorkoutProtocol(req.user!.id, academyId, protocolId, {
+      title: typeof body.title === 'string' ? body.title : undefined,
+      description: body.description,
+      tags: body.tags,
+      weekPreset: typeof body.weekPreset === 'string' ? body.weekPreset : undefined,
+      selectedGroup:
+        body.selectedGroup === undefined
+          ? undefined
+          : body.selectedGroup === null
+            ? null
+            : String(body.selectedGroup),
+      items: Array.isArray(body.items) ? body.items : undefined,
+    });
+    res.json({ success: true, data: row });
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, error: 'Protocol not found' });
+    }
+    if (error?.code === 'FORBIDDEN') {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+    if (error?.message?.includes('required')) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    res.status(500).json({ success: false, error: error.message || 'Failed to update protocol' });
+  }
+});
+
+router.delete('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    if (!academyId) {
+      return res.status(400).json({ success: false, error: 'Academy context required' });
+    }
+    const protocolId = Number(req.params.protocolId);
+    if (!Number.isFinite(protocolId)) {
+      return res.status(400).json({ success: false, error: 'Invalid protocol id' });
+    }
+    const ok = await deleteWorkoutProtocol(req.user!.id, academyId, protocolId);
+    if (!ok) {
+      return res.status(404).json({ success: false, error: 'Protocol not found' });
+    }
+    res.json({ success: true, data: { deleted: true } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to delete protocol' });
+  }
+});
+
+router.post('/protocols/:protocolId/favorite', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    if (!academyId) {
+      return res.status(400).json({ success: false, error: 'Academy context required' });
+    }
+    const protocolId = Number(req.params.protocolId);
+    if (!Number.isFinite(protocolId)) {
+      return res.status(400).json({ success: false, error: 'Invalid protocol id' });
+    }
+    const favorite = Boolean((req.body || {}).favorite);
+    const row = await getWorkoutProtocolById(req.user!.id, academyId, protocolId);
+    if (!row) {
+      return res.status(404).json({ success: false, error: 'Protocol not found' });
+    }
+    await setProtocolFavorite(req.user!.id, protocolId, favorite);
+    res.json({ success: true, data: { favorite } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to update favorite' });
+  }
+});
+
+router.get(
+  '/students/:studentId/protocol-suggestions',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      if (!academyId) {
+        return res.status(400).json({ success: false, error: 'Academy context required' });
+      }
+      const rows = await suggestProtocolsForStudent(req.user!.id, studentId, academyId);
+      res.json({ success: true, data: rows });
+    } catch (error: any) {
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Failed to load suggestions' });
     }
   }
 );

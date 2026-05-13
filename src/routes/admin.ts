@@ -13,6 +13,12 @@ import {
   type ProductKey,
 } from '../db/ensureProductsSchema';
 import { logAcademyAction } from '../services/auditService';
+import {
+  createPlatformProtocol,
+  deletePlatformProtocol,
+  listPlatformProtocols,
+  updatePlatformProtocol,
+} from '../services/workoutProtocolService';
 
 const router = Router();
 
@@ -912,5 +918,102 @@ router.post('/users/:userId/products/revoke', authMiddleware, adminMiddleware, a
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+router.get('/workout-protocols/platform', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const limitRaw = Number(req.query.limit);
+    const rows = await listPlatformProtocols(Number.isFinite(limitRaw) ? limitRaw : 100);
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.post('/workout-protocols/platform', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const body = req.body || {};
+    const title = typeof body.title === 'string' ? body.title : '';
+    const description = body.description;
+    const tags = body.tags;
+    const weekPreset = typeof body.weekPreset === 'string' ? body.weekPreset : String(body.weekPreset ?? '5');
+    const selectedGroup =
+      body.selectedGroup === null || body.selectedGroup === undefined
+        ? null
+        : String(body.selectedGroup);
+    const items = Array.isArray(body.items) ? body.items : [];
+    const row = await createPlatformProtocol({
+      title,
+      description,
+      tags,
+      weekPreset,
+      selectedGroup,
+      items,
+    });
+    res.status(201).json({ success: true, data: row });
+  } catch (err: any) {
+    if (err?.message?.includes('required') || err?.message?.includes('At least')) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.patch(
+  '/workout-protocols/platform/:protocolId',
+  authMiddleware,
+  adminMiddleware,
+  async (req: Request, res: Response) => {
+    try {
+      const protocolId = Number(req.params.protocolId);
+      if (!Number.isFinite(protocolId)) {
+        return res.status(400).json({ success: false, error: 'Invalid protocol id' });
+      }
+      const body = req.body || {};
+      const row = await updatePlatformProtocol(protocolId, {
+        title: typeof body.title === 'string' ? body.title : undefined,
+        description: body.description,
+        tags: body.tags,
+        weekPreset: typeof body.weekPreset === 'string' ? body.weekPreset : undefined,
+        selectedGroup:
+          body.selectedGroup === undefined
+            ? undefined
+            : body.selectedGroup === null
+              ? null
+              : String(body.selectedGroup),
+        items: Array.isArray(body.items) ? body.items : undefined,
+      });
+      res.json({ success: true, data: row });
+    } catch (err: any) {
+      if (err?.code === 'NOT_FOUND') {
+        return res.status(404).json({ success: false, error: 'Protocol not found' });
+      }
+      if (err?.message?.includes('required')) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+router.delete(
+  '/workout-protocols/platform/:protocolId',
+  authMiddleware,
+  adminMiddleware,
+  async (req: Request, res: Response) => {
+    try {
+      const protocolId = Number(req.params.protocolId);
+      if (!Number.isFinite(protocolId)) {
+        return res.status(400).json({ success: false, error: 'Invalid protocol id' });
+      }
+      const ok = await deletePlatformProtocol(protocolId);
+      if (!ok) {
+        return res.status(404).json({ success: false, error: 'Protocol not found' });
+      }
+      res.json({ success: true, data: { deleted: true } });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
 
 export default router;

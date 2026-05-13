@@ -17,7 +17,7 @@ function sanitizeString(value: unknown, maxLength: number): string {
   return value.slice(0, maxLength);
 }
 
-function sanitizeItem(raw: unknown): WorkoutPlanItemPayload | null {
+export function sanitizeWorkoutPlanItem(raw: unknown): WorkoutPlanItemPayload | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const exerciseId = sanitizeString(r.exerciseId, 64);
@@ -82,7 +82,7 @@ export async function createPersonalWorkoutPlan(
   const selectedGroup = input.selectedGroup ? String(input.selectedGroup).slice(0, 64) : null;
   const rawItems = Array.isArray(input.items) ? input.items : [];
   const items: WorkoutPlanItemPayload[] = rawItems
-    .map((entry) => sanitizeItem(entry))
+    .map((entry) => sanitizeWorkoutPlanItem(entry))
     .filter((entry): entry is WorkoutPlanItemPayload => entry !== null);
 
   const insert = await pool.query(

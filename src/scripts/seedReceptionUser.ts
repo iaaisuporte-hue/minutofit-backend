@@ -93,21 +93,25 @@ async function main() {
 
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
 
+  let anaId = 0;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
     // 2. Upsert Ana Claudia
+    // CPF e phone fictícios — não passam validação matemática, só seed
+    const ANA_CPF   = '00000000001';
+    const ANA_PHONE = '00000000001';
     const upsert = await client.query<{ id: number }>(
-      `INSERT INTO users (email, password, role, name, profile_completed, access_profile)
-       VALUES ($1, $2, 'user', $3, TRUE, 'academy_reception')
+      `INSERT INTO users (email, password, role, name, cpf, phone, profile_completed, access_profile)
+       VALUES ($1, $2, 'user', $3, $4, $5, TRUE, 'academy_reception')
        ON CONFLICT (email) DO UPDATE
          SET name = EXCLUDED.name, password = EXCLUDED.password,
              access_profile = EXCLUDED.access_profile, profile_completed = TRUE
        RETURNING id`,
-      [EMAIL, passwordHash, NAME],
+      [EMAIL, passwordHash, NAME, ANA_CPF, ANA_PHONE],
     );
-    const anaId = upsert.rows[0].id;
+    anaId = upsert.rows[0].id;
     console.log(`[seed-reception] Usuária Ana Claudia id=${anaId} (${EMAIL})`);
 
     // 3. Vincular à academia como recepcionista
@@ -118,14 +122,6 @@ async function main() {
          SET role_id = EXCLUDED.role_id, status = 'active', is_active = TRUE`,
       [anaId, academyId, receptionRoleId],
     );
-
-    // 4. Garantir produto 'academia' para Ana Claudia
-    await client.query(
-      `INSERT INTO user_products (user_id, product_key, status, source, source_academy_id)
-       VALUES ($1, 'academia', 'active', 'academy_enroll', $2)
-       ON CONFLICT (user_id, product_key) DO UPDATE SET status = 'active'`,
-      [anaId, academyId],
-    ).catch(() => { /* tabela pode não ter sido migrada ainda — não bloqueia */ });
 
     // 5. Buscar alunos demo para eventos realistas
     const demoRes = await client.query<{ id: number }>(
@@ -206,6 +202,16 @@ async function main() {
   } finally {
     client.release();
   }
+
+  // Produto 'academia' — opcional, fora da transação principal para não abortá-la
+  try {
+    await pool.query(
+      `INSERT INTO user_products (user_id, product_key, status, source, source_academy_id)
+       VALUES ($1, 'academia', 'active', 'academy_enroll', $2)
+       ON CONFLICT (user_id, product_key) DO UPDATE SET status = 'active'`,
+      [anaId, academyId],
+    );
+  } catch { /* tabela user_products pode não existir neste ambiente */ }
 
   console.log('');
   console.log('══════════════════════════════════════════════════════');

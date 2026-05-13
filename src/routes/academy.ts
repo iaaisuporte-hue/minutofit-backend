@@ -952,8 +952,11 @@ router.post(
       if (!userId) {
         return res.status(400).json({ success: false, error: 'userId é obrigatório.' });
       }
-      if (!reason) {
-        return res.status(400).json({ success: false, error: 'Motivo é obrigatório.' });
+      if (reason.length < 10) {
+        return res.status(400).json({
+          success: false,
+          error: 'Motivo deve ter pelo menos 10 caracteres (auditoria).',
+        });
       }
       const result = await registerStudentAccess({
         academyId: req.tenant!.academyId,
@@ -982,8 +985,11 @@ router.post(
       if (!userId) {
         return res.status(400).json({ success: false, error: 'userId é obrigatório.' });
       }
-      if (!reason) {
-        return res.status(400).json({ success: false, error: 'Motivo é obrigatório.' });
+      if (reason.length < 10) {
+        return res.status(400).json({
+          success: false,
+          error: 'Motivo deve ter pelo menos 10 caracteres (auditoria).',
+        });
       }
       const result = await registerStudentAccess({
         academyId: req.tenant!.academyId,

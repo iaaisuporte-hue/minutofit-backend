@@ -55,6 +55,11 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.reports.read',
     ],
   },
+  /**
+   * Recepção — `academy.billing.operate` está na lista para roadmap V2 (cobrança operacional
+   * leve na recepção, ex.: registrar acordo / liberação pontual). Nenhuma rota HTTP exige
+   * essa permissão ainda; evitar remoção para não quebrar sync futuro de roles no boot.
+   */
   {
     slug: 'academy_reception',
     label: 'Recepção',

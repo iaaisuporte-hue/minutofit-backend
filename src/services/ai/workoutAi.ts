@@ -1,16 +1,10 @@
 /**
  * Geração de fichas de treino via OpenAI Responses API.
- *
- * Usa a camada centralizada em /lib/ai/openai.ts — nunca acessa o
- * cliente OpenAI diretamente.
+ * Usa a camada centralizada — sem parâmetros deprecated (temperature, max_tokens).
  */
 
 import { aiCall, TOKEN_BUDGET } from '../../lib/ai/openai';
 import { WORKOUT_SYSTEM_PROMPT } from './prompts';
-
-// ---------------------------------------------------------------------------
-// Tipos públicos
-// ---------------------------------------------------------------------------
 
 export type GeneratedExercise = {
   name: string;
@@ -25,16 +19,9 @@ export type GeneratedWorkout = {
   exercises: GeneratedExercise[];
 };
 
-// ---------------------------------------------------------------------------
-// Geração de ficha
-// ---------------------------------------------------------------------------
-
 /**
- * Gera uma ficha de treino a partir de um prompt livre do personal.
- *
- * @param prompt   - Solicitação em linguagem natural
- * @param catalogNames - Nomes dos exercícios disponíveis no catálogo
- * @param userId   - ID do usuário para rate limit
+ * Adapta/gera uma ficha de treino a partir de um prompt do personal.
+ * max_output_tokens: 250 — respostas objetivas, sem verbosidade.
  */
 export async function generateWorkout(
   prompt: string,
@@ -43,31 +30,27 @@ export async function generateWorkout(
 ): Promise<GeneratedWorkout> {
   const catalogSection =
     catalogNames.length > 0
-      ? `Catálogo disponível (use estes nomes preferencialmente):\n${catalogNames.join(', ')}\n\n`
+      ? `Catálogo disponível:\n${catalogNames.join(', ')}\n\n`
       : '';
 
   const { text } = await aiCall({
     userId,
     instructions: WORKOUT_SYSTEM_PROMPT,
-    input: `${catalogSection}Solicitação: ${prompt}`,
+    input: `${catalogSection}Pedido: ${prompt}`,
     maxOutputTokens: TOKEN_BUDGET.WORKOUT_PLAN,
-    temperature: 0.4,
-    jsonOutput: true,
   });
 
   let parsed: GeneratedWorkout & { error?: string };
   try {
     parsed = JSON.parse(text) as GeneratedWorkout & { error?: string };
   } catch {
-    throw new Error('Resposta da IA inválida. Tente novamente com um prompt mais específico.');
+    throw new Error('Resposta da IA inválida. Tente com um prompt mais específico.');
   }
 
-  if (parsed.error) {
-    throw new Error(parsed.error);
-  }
+  if (parsed.error) throw new Error(parsed.error);
 
   if (!Array.isArray(parsed.exercises) || parsed.exercises.length === 0) {
-    throw new Error('A IA não retornou exercícios. Tente reformular o prompt.');
+    throw new Error('A IA não retornou exercícios. Reformule o prompt.');
   }
 
   return parsed;

@@ -1,15 +1,12 @@
 /**
- * Camada centralizada de acesso à OpenAI.
+ * Camada centralizada de acesso à OpenAI — Responses API (GPT-5 compatible).
  *
- * Todas as chamadas à API da OpenAI DEVEM passar por `aiCall()`.
- * Nunca use o cliente OpenAI diretamente em services ou routes.
- *
- * Princípios:
- *  - Único ponto de configuração do modelo e limites de tokens
- *  - Rate limit por usuário (in-memory, reset a cada hora)
- *  - Timeout fixo por chamada
- *  - Log de uso de tokens para acompanhamento de custo
- *  - Retry automático em falhas transitórias (1 retry com back-off)
+ * REGRAS:
+ *  - Toda chamada à OpenAI passa EXCLUSIVAMENTE por `aiCall()`.
+ *  - Nenhum service ou route usa o cliente OpenAI diretamente.
+ *  - Parâmetros incompatíveis com GPT-5 são proibidos:
+ *      temperature, top_p, frequency_penalty, presence_penalty, max_tokens
+ *  - Único parâmetro de controle de saída: max_output_tokens
  */
 
 import OpenAI from 'openai';
@@ -31,30 +28,30 @@ export function getOpenAIClient(): OpenAI {
 }
 
 // ---------------------------------------------------------------------------
-// Modelo padrão — lido do ambiente para facilitar troca futura
+// Modelo padrão — configurável via env
 // ---------------------------------------------------------------------------
 
 export const AI_MODEL: string = process.env.OPENAI_MODEL ?? 'gpt-5-mini';
 
 // ---------------------------------------------------------------------------
-// Orçamentos de tokens por tipo de operação (output tokens)
-// Ajuste estes valores conforme o custo observado em produção.
+// Orçamentos rígidos de tokens de saída (max_output_tokens)
+// Valores conservadores para MVP — revisitar com dados reais de produção.
 // ---------------------------------------------------------------------------
 
 export const TOKEN_BUDGET = {
-  /** Classificação simples: intenção, nível de energia, etc. */
+  /** Classificação simples: intenção, energia, intensidade. */
   CLASSIFY: 80,
-  /** Sugestão curta: dica metabólica, ajuste de intensidade. */
-  SUGGEST_SHORT: 200,
-  /** Resumo inteligente: análise de sessão, feedback de treino. */
+  /** Sugestão curta: dica metabólica, ajuste de protocolo. */
+  SUGGEST_SHORT: 150,
+  /** Resumo inteligente: feedback de sessão, análise de aderência. */
   SMART_SUMMARY: 300,
-  /** Ficha de treino completa. */
-  WORKOUT_PLAN: 700,
+  /** Ficha de treino objetiva (adaptação de protocolo existente). */
+  WORKOUT_PLAN: 250,
 } as const;
 
 // ---------------------------------------------------------------------------
 // Rate limit por usuário (in-memory)
-// Produção futura: substituir por Redis para ser persistente entre instâncias.
+// Produção futura: substituir por Redis para multi-instância.
 // ---------------------------------------------------------------------------
 
 interface RateLimitEntry {
@@ -64,13 +61,8 @@ interface RateLimitEntry {
 
 const _rateLimitStore = new Map<string, RateLimitEntry>();
 
-/** Máximo de chamadas de IA por usuário por hora. */
 const HOURLY_LIMIT = 10;
 
-/**
- * Verifica e incrementa o contador do usuário.
- * Lança erro se o limite foi atingido.
- */
 export function checkUserRateLimit(userId: string): void {
   const now = Date.now();
   const entry = _rateLimitStore.get(userId);
@@ -94,20 +86,16 @@ export function checkUserRateLimit(userId: string): void {
 // ---------------------------------------------------------------------------
 
 export interface AiCallOptions {
-  /** Identificador do usuário para rate limit (omitir em chamadas de sistema). */
+  /** Identificador do usuário para rate limit. Omitir para chamadas de sistema. */
   userId?: string;
-  /** Modelo a usar. Padrão: AI_MODEL. */
+  /** Modelo. Padrão: AI_MODEL. */
   model?: string;
-  /** Instrução de sistema (equivale ao antigo role:system). */
+  /** Instrução de sistema (scope guard, formato de saída esperado). */
   instructions: string;
   /** Mensagem do usuário. */
   input: string;
   /** Limite rígido de tokens de saída. Obrigatório. */
   maxOutputTokens: number;
-  /** Temperatura. Padrão: 0.4 — moderada. */
-  temperature?: number;
-  /** Se true, força saída em JSON (json_object). */
-  jsonOutput?: boolean;
   /** Timeout em ms. Padrão: 15 000. */
   timeoutMs?: number;
 }
@@ -121,17 +109,15 @@ const RETRY_DELAY_MS = 1500;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
 /**
- * Executa uma chamada à OpenAI Responses API com:
- *  - rate limit por usuário
- *  - timeout configurável
- *  - 1 retry automático em erros transitórios
- *  - log de tokens consumidos
+ * Executa uma chamada à OpenAI Responses API (GPT-5 compatible).
+ *
+ * Parâmetros usados: model, input, instructions, max_output_tokens.
+ * Parâmetros proibidos: temperature, top_p, frequency_penalty, max_tokens.
  */
 export async function aiCall(opts: AiCallOptions): Promise<AiCallResult> {
   if (opts.userId) {
     checkUserRateLimit(opts.userId);
   }
-
   return _executeWithRetry(opts);
 }
 
@@ -168,10 +154,6 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
         instructions: opts.instructions,
         input: opts.input,
         max_output_tokens: opts.maxOutputTokens,
-        temperature: opts.temperature ?? 0.4,
-        ...(opts.jsonOutput
-          ? { text: { format: { type: 'json_object' as const } } }
-          : {}),
       },
       { signal: controller.signal },
     );
@@ -185,9 +167,7 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
       : null;
 
     if (usage) {
-      console.log(
-        `[AI] model=${model} in_tokens=${usage.inputTokens} out_tokens=${usage.outputTokens}`,
-      );
+      console.log(`[AI] model=${model} in=${usage.inputTokens} out=${usage.outputTokens}`);
     }
 
     return { text, usage };

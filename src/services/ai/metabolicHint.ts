@@ -1,8 +1,6 @@
 /**
- * Dica metabólica curta para o aluno do dia.
- *
- * Usa a camada centralizada em /lib/ai/openai.ts.
- * Resposta máxima: 200 tokens — sugestão curta, objetiva.
+ * Dica metabólica curta via OpenAI Responses API.
+ * max_output_tokens: 150 — resposta sempre curta e objetiva.
  */
 
 import { aiCall, TOKEN_BUDGET } from '../../lib/ai/openai';
@@ -16,9 +14,7 @@ export type MetabolicHint = {
 
 /**
  * Gera uma dica metabólica personalizada com base no contexto do aluno.
- *
- * @param context - Contexto livre: energia, aderência, histórico recente, etc.
- * @param userId  - ID do usuário para rate limit
+ * Sem parâmetros deprecated — somente model, input, instructions, max_output_tokens.
  */
 export async function getMetabolicHint(
   context: string,
@@ -29,8 +25,6 @@ export async function getMetabolicHint(
     instructions: METABOLIC_HINT_SYSTEM_PROMPT,
     input: context,
     maxOutputTokens: TOKEN_BUDGET.SUGGEST_SHORT,
-    temperature: 0.5,
-    jsonOutput: true,
   });
 
   let parsed: MetabolicHint & { error?: string };
@@ -40,10 +34,7 @@ export async function getMetabolicHint(
     throw new Error('Resposta da IA inválida.');
   }
 
-  if (parsed.error) {
-    throw new Error(parsed.error);
-  }
-
+  if (parsed.error) throw new Error(parsed.error);
   if (!parsed.hint || !parsed.intensity || !parsed.action) {
     throw new Error('Resposta da IA incompleta.');
   }

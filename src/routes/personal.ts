@@ -41,6 +41,7 @@ import {
   updateWorkoutProtocol,
   type ProtocolScope,
 } from '../services/workoutProtocolService';
+import { generateWorkoutFromPrompt } from '../services/aiWorkoutService';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('personal'), requireAcademyContext);
@@ -282,6 +283,25 @@ router.get('/exercise-catalog', roleCheckMiddleware('personal'), async (req: Req
     res.json({ success: true, data: rows });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to load exercise catalog' });
+  }
+});
+
+router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'Geração com IA não configurada neste ambiente.' });
+  }
+  const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
+  if (!prompt || prompt.length < 5) {
+    return res.status(400).json({ success: false, error: 'Prompt muito curto. Descreva o treino desejado.' });
+  }
+  const catalogNames = Array.isArray(req.body.catalogNames)
+    ? (req.body.catalogNames as unknown[]).filter((n) => typeof n === 'string').slice(0, 150)
+    : [];
+  try {
+    const workout = await generateWorkoutFromPrompt(prompt, catalogNames as string[]);
+    res.json({ success: true, data: workout });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Falha na geração com IA.' });
   }
 });
 

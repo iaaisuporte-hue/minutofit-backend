@@ -20,7 +20,8 @@ export type AuditAction =
   | 'reception.checkin'
   | 'reception.exception'
   | 'reception.denied'
-  | 'reception.visitor_access';
+  | 'reception.visitor_access'
+  | 'reception.notes_viewed';
 
 export interface AuditEntry {
   academyId: number | null;
@@ -51,8 +52,24 @@ export interface AuditLogRow {
 export async function listAcademyAudit(
   academyId: number,
   limit = 50,
-  offset = 0
+  offset = 0,
+  options?: { actorUserId?: number; actionPrefix?: string }
 ): Promise<AuditLogRow[]> {
+  const params: unknown[] = [academyId];
+  let where = 'WHERE aal.academy_id = $1';
+  if (options?.actorUserId != null && Number.isFinite(options.actorUserId)) {
+    params.push(options.actorUserId);
+    where += ` AND aal.user_id = $${params.length}`;
+  }
+  if (options?.actionPrefix && /^[a-z_.]+$/.test(options.actionPrefix)) {
+    params.push(`${options.actionPrefix}%`);
+    where += ` AND aal.action::text LIKE $${params.length}`;
+  }
+  const lim = Math.min(Math.max(limit, 1), 100);
+  const off = Math.max(offset, 0);
+  params.push(lim, off);
+  const limIdx = params.length - 1;
+  const offIdx = params.length;
   const result = await pool.query<AuditLogRow>(
     `SELECT
        aal.id,
@@ -66,10 +83,10 @@ export async function listAcademyAudit(
        aal.created_at
      FROM academy_audit_log aal
      LEFT JOIN users u ON u.id = aal.user_id
-     WHERE aal.academy_id = $1
+     ${where}
      ORDER BY aal.created_at DESC
-     LIMIT $2 OFFSET $3`,
-    [academyId, limit, offset]
+     LIMIT $${limIdx} OFFSET $${offIdx}`,
+    params
   );
   return result.rows;
 }

@@ -33,11 +33,23 @@ export async function ensureReceptionSchema(): Promise<void> {
         name           VARCHAR(200) NOT NULL,
         document       VARCHAR(80),
         visitor_type   VARCHAR(40) NOT NULL DEFAULT 'visitor'
-                         CHECK (visitor_type IN ('visitor','external_personal')),
+                         CHECK (visitor_type IN ('visitor','external_personal','prospect','trial_class')),
+        phone          VARCHAR(30),
+        referred_by    VARCHAR(120),
         valid_until    TIMESTAMPTZ,
         created_by     INTEGER REFERENCES users(id) ON DELETE SET NULL,
         created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `);
+
+    await pool.query(`ALTER TABLE academy_visitors ADD COLUMN IF NOT EXISTS phone VARCHAR(30)`);
+    await pool.query(`ALTER TABLE academy_visitors ADD COLUMN IF NOT EXISTS referred_by VARCHAR(120)`);
+
+    await pool.query(`ALTER TABLE academy_visitors DROP CONSTRAINT IF EXISTS academy_visitors_visitor_type_check`);
+    await pool.query(`
+      ALTER TABLE academy_visitors
+        ADD CONSTRAINT academy_visitors_visitor_type_check
+        CHECK (visitor_type IN ('visitor','external_personal','prospect','trial_class'))
     `);
 
     await pool.query(`ALTER TABLE academy_access_events ADD COLUMN IF NOT EXISTS visitor_id INTEGER`);

@@ -33,9 +33,14 @@ import { listAcademyPayments, getAcademyFinanceKPIs } from '../services/academyF
 import {
   createVisitorAccess,
   getReceptionDashboard,
+  getReceptionPanel,
+  getReceptionStudentContext,
+  logReceptionNotesViewed,
   registerStudentAccess,
   searchReceptionStudents,
+  type ReceptionPanelApiKey,
 } from '../services/academyReceptionService';
+import { receptionStreamSubscribe } from '../services/receptionStream';
 import { validateBrandingColor, contrastRatio } from '../utils/contrastValidator';
 import { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } from '../utils/colorContrast';
 import { sanitizeBrandingText } from '../utils/htmlSanitize';
@@ -401,6 +406,110 @@ router.post(
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
     }
+  }
+);
+
+// GET /academy/students/:userId/reception-context
+router.get(
+  '/students/:userId/reception-context',
+  requireTenantPermission('academy.recepcao.dashboard'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.params.userId);
+      if (!userId) {
+        return res.status(400).json({ success: false, error: 'userId inválido.' });
+      }
+      const data = await getReceptionStudentContext(req.tenant!.academyId, userId);
+      res.json({ success: true, data });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// POST /academy/recepcao/student-notes-audit  { studentUserId }
+router.post(
+  '/recepcao/student-notes-audit',
+  requireTenantPermission('academy.recepcao.dashboard'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentUserId = Number(req.body.studentUserId);
+      if (!studentUserId) {
+        return res.status(400).json({ success: false, error: 'studentUserId é obrigatório.' });
+      }
+      await logReceptionNotesViewed({
+        academyId: req.tenant!.academyId,
+        actorUserId: req.user!.id,
+        studentUserId,
+        ipAddress: req.ip,
+      });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// GET /academy/recepcao/panel/:panelKey?page=1&pageSize=10&q=
+router.get(
+  '/recepcao/panel/:panelKey',
+  requireTenantPermission('academy.recepcao.dashboard'),
+  async (req: Request, res: Response) => {
+    try {
+      const raw = String(req.params.panelKey ?? '');
+      const allowed: ReceptionPanelApiKey[] = [
+        'occupancyNow',
+        'accessToday',
+        'overdueStudents',
+        'birthdaysToday',
+        'exceptionsToday',
+        'deniedToday',
+        'newStudents7d',
+      ];
+      if (raw === 'observability' || !allowed.includes(raw as ReceptionPanelApiKey)) {
+        return res.status(400).json({ success: false, error: 'Painel inválido.' });
+      }
+      const page = Math.max(1, Number(req.query.page ?? 1));
+      const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize ?? 10)));
+      const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+      const data = await getReceptionPanel(req.tenant!.academyId, raw as ReceptionPanelApiKey, page, pageSize, q);
+      res.json({ success: true, data });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// GET /academy/recepcao/stream  (SSE — opt-in via RECEPCAO_SSE_ENABLED)
+router.get(
+  '/recepcao/stream',
+  requireTenantPermission('academy.recepcao.dashboard'),
+  (req: Request, res: Response) => {
+    if (process.env.RECEPCAO_SSE_ENABLED !== 'true') {
+      return res.status(503).json({ success: false, error: 'SSE desativado no servidor.' });
+    }
+    const academyId = req.tenant!.academyId;
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    (res as Response & { flushHeaders?: () => void }).flushHeaders?.();
+    const send = (payload: unknown) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+    const unsubscribe = receptionStreamSubscribe(academyId, send);
+    const hb = setInterval(() => {
+      res.write(': keepalive\n\n');
+    }, 25000);
+    const maxTimer = setTimeout(() => {
+      clearInterval(hb);
+      unsubscribe();
+      res.end();
+    }, 5 * 60 * 1000);
+    req.on('close', () => {
+      clearInterval(hb);
+      clearTimeout(maxTimer);
+      unsubscribe();
+    });
   }
 );
 
@@ -1013,12 +1122,19 @@ router.post(
   requireTenantPermission('academy.checkin.write'),
   async (req: Request, res: Response) => {
     try {
+      const vtRaw = String(req.body.visitorType ?? 'visitor');
+      const visitorType =
+        vtRaw === 'external_personal' || vtRaw === 'prospect' || vtRaw === 'trial_class'
+          ? vtRaw
+          : 'visitor';
       const result = await createVisitorAccess({
         academyId: req.tenant!.academyId,
         actorUserId: req.user!.id,
         name: String(req.body.name ?? ''),
         document: req.body.document ? String(req.body.document) : undefined,
-        visitorType: req.body.visitorType === 'external_personal' ? 'external_personal' : 'visitor',
+        visitorType,
+        phone: req.body.phone ? String(req.body.phone) : undefined,
+        referredBy: req.body.referredBy ? String(req.body.referredBy) : undefined,
         validUntil: req.body.validUntil ? String(req.body.validUntil) : undefined,
         reason: req.body.reason ? String(req.body.reason) : undefined,
         ipAddress: req.ip,
@@ -1041,7 +1157,15 @@ router.get(
     const { academyId } = req.tenant!;
     const limit  = Math.min(Number(req.query.limit  ?? 50), 100);
     const offset = Number(req.query.offset ?? 0);
-    const rows = await listAcademyAudit(academyId, limit, offset);
+    const actorUserId = req.query.actor_user_id ? Number(req.query.actor_user_id) : undefined;
+    const actionPrefix =
+      typeof req.query.action_prefix === 'string' && req.query.action_prefix.length > 0
+        ? req.query.action_prefix
+        : undefined;
+    const rows = await listAcademyAudit(academyId, limit, offset, {
+      actorUserId: Number.isFinite(actorUserId) ? actorUserId : undefined,
+      actionPrefix,
+    });
     res.json({ success: true, data: rows });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });

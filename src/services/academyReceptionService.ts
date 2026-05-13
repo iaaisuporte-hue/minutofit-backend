@@ -38,6 +38,18 @@ export interface ReceptionAccessEvent {
   actorName: string | null;
 }
 
+export interface ReceptionDashboardStudent {
+  userId: number;
+  name: string;
+  email: string;
+  phone: string | null;
+  birthDate: string | null;
+  studentStatus: StudentStatus | null;
+  joinedAt: string | null;
+  activePlan: { id: number; name: string; monthlyPrice: number } | null;
+  lastAccessAt: string | null;
+}
+
 function normalizeSearchTerm(q: string): string {
   return q.trim().replace(/\s+/g, ' ');
 }
@@ -86,6 +98,26 @@ function mapEvent(row: any): ReceptionAccessEvent {
       type: row.visitor_type ?? null,
     },
     actorName: row.actor_name ?? null,
+  };
+}
+
+function mapDashboardStudent(row: any): ReceptionDashboardStudent {
+  return {
+    userId: Number(row.user_id),
+    name: row.name ?? '',
+    email: row.email ?? '',
+    phone: row.phone ?? null,
+    birthDate: row.birth_date ? new Date(row.birth_date).toISOString() : null,
+    studentStatus: row.student_status ?? null,
+    joinedAt: row.joined_at ? new Date(row.joined_at).toISOString() : null,
+    activePlan: row.plan_id
+      ? {
+          id: Number(row.plan_id),
+          name: row.plan_name,
+          monthlyPrice: Number(row.monthly_price ?? 0),
+        }
+      : null,
+    lastAccessAt: row.last_access_at ? new Date(row.last_access_at).toISOString() : null,
   };
 }
 
@@ -237,8 +269,123 @@ async function listAccessEvents(academyId: number, limit = 12): Promise<Receptio
   return result.rows.map(mapEvent);
 }
 
+async function listDashboardEvents(
+  academyId: number,
+  filter: 'occupancy_now' | 'access_today' | 'exceptions_today' | 'denied_today',
+  limit = 50
+): Promise<ReceptionAccessEvent[]> {
+  const filters = {
+    occupancy_now: "aae.created_at >= NOW() - INTERVAL '90 minutes' AND aae.event_type IN ('checkin','exception','visitor')",
+    access_today: 'aae.created_at::date = CURRENT_DATE',
+    exceptions_today: "aae.created_at::date = CURRENT_DATE AND aae.event_type = 'exception'",
+    denied_today: "aae.created_at::date = CURRENT_DATE AND aae.event_type = 'denied'",
+  } as const;
+
+  const result = await pool.query(
+    `SELECT
+       aae.id,
+       aae.event_type,
+       aae.source,
+       aae.reason,
+       aae.created_at,
+       u.id AS user_id,
+       u.name AS student_name,
+       u.email AS student_email,
+       u.avatar_url,
+       au.student_status,
+       av.id AS visitor_id,
+       av.name AS visitor_name,
+       av.visitor_type,
+       actor.name AS actor_name
+     FROM academy_access_events aae
+     LEFT JOIN users u ON u.id = aae.user_id
+     LEFT JOIN academy_users au ON au.academy_id = aae.academy_id AND au.user_id = aae.user_id
+     LEFT JOIN academy_visitors av ON av.id = aae.visitor_id AND av.academy_id = aae.academy_id
+     LEFT JOIN users actor ON actor.id = aae.performed_by
+     WHERE aae.academy_id = $1
+       AND ${filters[filter]}
+     ORDER BY aae.created_at DESC
+     LIMIT $2`,
+    [academyId, Math.min(Math.max(limit, 1), 100)]
+  );
+
+  return result.rows.map(mapEvent);
+}
+
+async function listDashboardStudents(
+  academyId: number,
+  filter: 'overdue' | 'new_7d' | 'birthdays_today',
+  limit = 50
+): Promise<ReceptionDashboardStudent[]> {
+  const filters = {
+    overdue: "au.student_status = 'overdue'",
+    new_7d: "au.joined_at >= NOW() - INTERVAL '7 days'",
+    birthdays_today: `u.birth_date IS NOT NULL
+      AND EXTRACT(MONTH FROM u.birth_date) = EXTRACT(MONTH FROM CURRENT_DATE)
+      AND EXTRACT(DAY FROM u.birth_date) = EXTRACT(DAY FROM CURRENT_DATE)`,
+  } as const;
+
+  const result = await pool.query(
+    `SELECT
+       u.id AS user_id,
+       u.name,
+       u.email,
+       u.phone,
+       u.birth_date,
+       au.student_status,
+       au.joined_at,
+       e.plan_id,
+       e.plan_name,
+       e.monthly_price,
+       last_event.last_access_at
+     FROM academy_users au
+     JOIN users u ON u.id = au.user_id
+     JOIN academy_roles ar ON ar.id = au.role_id
+     LEFT JOIN LATERAL (
+       SELECT ae.plan_id, ap.name AS plan_name, ap.monthly_price
+       FROM academy_enrollments ae
+       LEFT JOIN academy_plans ap ON ap.id = ae.plan_id
+       WHERE ae.academy_id = au.academy_id
+         AND ae.user_id = au.user_id
+         AND ae.status = 'active'
+       ORDER BY ae.created_at DESC
+       LIMIT 1
+     ) e ON TRUE
+     LEFT JOIN LATERAL (
+       SELECT MAX(created_at) AS last_access_at
+       FROM academy_access_events aae
+       WHERE aae.academy_id = au.academy_id
+         AND aae.user_id = au.user_id
+         AND aae.event_type IN ('checkin','exception')
+     ) last_event ON TRUE
+     WHERE au.academy_id = $1
+       AND au.is_active = TRUE
+       AND au.status = 'active'
+       AND ar.slug = 'academy_student'
+       AND ${filters[filter]}
+     ORDER BY au.joined_at DESC NULLS LAST, u.name
+     LIMIT $2`,
+    [academyId, Math.min(Math.max(limit, 1), 100)]
+  );
+
+  return result.rows.map(mapDashboardStudent);
+}
+
 export async function getReceptionDashboard(academyId: number) {
-  const [accessRes, studentsRes, birthdayRes, recentEvents, exceptionEvents] = await Promise.all([
+  const [
+    accessRes,
+    studentsRes,
+    birthdayRes,
+    recentEvents,
+    exceptionEvents,
+    occupancyNowEvents,
+    accessTodayEvents,
+    exceptionsTodayEvents,
+    deniedTodayEvents,
+    overdueStudentsList,
+    newStudents7dList,
+    birthdaysTodayList,
+  ] = await Promise.all([
     pool.query(
       `SELECT
          COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS access_today,
@@ -308,6 +455,13 @@ export async function getReceptionDashboard(academyId: number) {
        LIMIT 8`,
       [academyId]
     ),
+    listDashboardEvents(academyId, 'occupancy_now'),
+    listDashboardEvents(academyId, 'access_today'),
+    listDashboardEvents(academyId, 'exceptions_today'),
+    listDashboardEvents(academyId, 'denied_today'),
+    listDashboardStudents(academyId, 'overdue'),
+    listDashboardStudents(academyId, 'new_7d'),
+    listDashboardStudents(academyId, 'birthdays_today'),
   ]);
 
   const access = accessRes.rows[0] ?? {};
@@ -332,6 +486,15 @@ export async function getReceptionDashboard(academyId: number) {
     },
     recentEvents,
     exceptions: exceptionEvents.rows.map(mapEvent),
+    related: {
+      occupancyNow: occupancyNowEvents,
+      accessToday: accessTodayEvents,
+      exceptionsToday: exceptionsTodayEvents,
+      deniedToday: deniedTodayEvents,
+      overdueStudents: overdueStudentsList,
+      newStudents7d: newStudents7dList,
+      birthdaysToday: birthdaysTodayList,
+    },
   };
 }
 

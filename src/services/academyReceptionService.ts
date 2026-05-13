@@ -405,6 +405,7 @@ export async function getReceptionDashboard(academyId: number) {
          COUNT(*) FILTER (WHERE au.student_status = 'overdue') AS overdue_students,
          COUNT(*) FILTER (WHERE au.joined_at >= NOW() - INTERVAL '7 days') AS new_students_7d
        FROM academy_users au
+       JOIN users u ON u.id = au.user_id
        JOIN academy_roles ar ON ar.id = au.role_id
        WHERE au.academy_id = $1
          AND au.is_active = TRUE

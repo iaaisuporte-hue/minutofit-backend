@@ -24,6 +24,19 @@ export function requireProduct(productKey: string, bypassRoles: string[] = ['adm
       return;
     }
 
+    // Academy staff profiles implicitly hold the 'academia' product even when
+    // user_products was not seeded (e.g. fresh environment or seed gap).
+    // academy_student is excluded — students must have the product explicitly granted.
+    if (
+      productKey === 'academia' &&
+      typeof req.user.accessProfile === 'string' &&
+      req.user.accessProfile.startsWith('academy_') &&
+      req.user.accessProfile !== 'academy_student'
+    ) {
+      next();
+      return;
+    }
+
     const products: string[] = req.user.products ?? [];
     if (!products.includes(productKey)) {
       res.status(403).json({

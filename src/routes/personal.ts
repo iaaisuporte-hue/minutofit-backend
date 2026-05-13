@@ -41,7 +41,8 @@ import {
   updateWorkoutProtocol,
   type ProtocolScope,
 } from '../services/workoutProtocolService';
-import { generateWorkoutFromPrompt } from '../services/aiWorkoutService';
+import { generateWorkout } from '../services/ai/workoutAi';
+import { getMetabolicHint } from '../services/ai/metabolicHint';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('personal'), requireAcademyContext);
@@ -298,10 +299,28 @@ router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req:
     ? (req.body.catalogNames as unknown[]).filter((n) => typeof n === 'string').slice(0, 150)
     : [];
   try {
-    const workout = await generateWorkoutFromPrompt(prompt, catalogNames as string[]);
+    const workout = await generateWorkout(prompt, catalogNames as string[], String(req.user!.id));
     res.json({ success: true, data: workout });
   } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message || 'Falha na geração com IA.' });
+    const status = error.message?.includes('Limite de') ? 429 : 500;
+    res.status(status).json({ success: false, error: error.message || 'Falha na geração com IA.' });
+  }
+});
+
+router.post('/ai/metabolic-hint', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  if (!process.env.OPENAI_API_KEY) {
+    return res.status(503).json({ success: false, error: 'IA não configurada neste ambiente.' });
+  }
+  const context = typeof req.body.context === 'string' ? req.body.context.trim() : '';
+  if (!context || context.length < 5) {
+    return res.status(400).json({ success: false, error: 'Contexto muito curto.' });
+  }
+  try {
+    const hint = await getMetabolicHint(context, String(req.user!.id));
+    res.json({ success: true, data: hint });
+  } catch (error: any) {
+    const status = error.message?.includes('Limite de') ? 429 : 500;
+    res.status(status).json({ success: false, error: error.message || 'Falha na dica metabólica.' });
   }
 });
 

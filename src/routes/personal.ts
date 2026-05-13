@@ -9,6 +9,13 @@ import {
   listPersonalStudentActivities,
 } from '../services/personalDashboardService';
 import {
+  createStudentExerciseNote,
+  deleteStudentExerciseNote,
+  listStudentExerciseNotes,
+  updateStudentExerciseNote,
+} from '../services/studentExerciseNotesService';
+import { logAcademyAction } from '../services/auditService';
+import {
   createPersonalWorkoutPlan,
   listPersonalWorkoutPlans,
   listWorkoutPlansForStudent,
@@ -92,6 +99,161 @@ router.get(
         return res.status(403).json({ success: false, error: error.message });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to list student activities' });
+    }
+  }
+);
+
+router.post(
+  '/students/:studentId/notes',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const body = req.body || {};
+      const row = await createStudentExerciseNote(req.user!.id, studentId, academyId, {
+        exerciseKey: body.exerciseKey,
+        exerciseName: String(body.exerciseName || ''),
+        kind: String(body.kind || 'general'),
+        note: String(body.note || ''),
+        severity: body.severity,
+        loadKg: body.loadKg,
+        reps: body.reps,
+        sets: body.sets,
+        recordedAt: body.recordedAt,
+      });
+      if (academyId != null) {
+        logAcademyAction({
+          academyId,
+          userId: req.user!.id,
+          action: 'personal.student_note.created',
+          entityType: 'student_exercise_note',
+          entityId: row.id,
+          meta: { studentId, kind: row.kind, exerciseName: row.exerciseName },
+          ipAddress: req.ip,
+        });
+      }
+      res.status(201).json({ success: true, data: row });
+    } catch (error: any) {
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
+      if (error?.message === 'Invalid note kind' || error?.message?.includes('required')) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Failed to create note' });
+    }
+  }
+);
+
+router.get(
+  '/students/:studentId/notes',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+      const exerciseKey = typeof req.query.exerciseKey === 'string' ? req.query.exerciseKey : undefined;
+      const since = typeof req.query.since === 'string' ? req.query.since : undefined;
+      const limitRaw = Number(req.query.limit);
+      const rows = await listStudentExerciseNotes(req.user!.id, studentId, academyId, {
+        kind,
+        exerciseKey,
+        since,
+        limit: Number.isFinite(limitRaw) ? limitRaw : 50,
+      });
+      res.json({ success: true, data: rows });
+    } catch (error: any) {
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Failed to list notes' });
+    }
+  }
+);
+
+router.patch(
+  '/students/:studentId/notes/:noteId',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const noteId = Number(req.params.noteId);
+      if (!Number.isFinite(noteId)) {
+        return res.status(400).json({ success: false, error: 'Invalid note id' });
+      }
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const body = req.body || {};
+      const row = await updateStudentExerciseNote(req.user!.id, Number(req.params.studentId), noteId, {
+        exerciseKey: body.exerciseKey,
+        exerciseName: body.exerciseName,
+        kind: body.kind,
+        note: body.note,
+        severity: body.severity,
+        loadKg: body.loadKg,
+        reps: body.reps,
+        sets: body.sets,
+        recordedAt: body.recordedAt,
+      });
+      if (!row) {
+        return res.status(404).json({ success: false, error: 'Note not found' });
+      }
+      if (academyId != null) {
+        logAcademyAction({
+          academyId,
+          userId: req.user!.id,
+          action: 'personal.student_note.updated',
+          entityType: 'student_exercise_note',
+          entityId: noteId,
+          meta: { studentId: Number(req.params.studentId) },
+          ipAddress: req.ip,
+        });
+      }
+      res.json({ success: true, data: row });
+    } catch (error: any) {
+      if (error?.message === 'Invalid note kind' || error?.message?.includes('required')) {
+        return res.status(400).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Failed to update note' });
+    }
+  }
+);
+
+router.delete(
+  '/students/:studentId/notes/:noteId',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      const noteId = Number(req.params.noteId);
+      if (!Number.isFinite(studentId) || !Number.isFinite(noteId)) {
+        return res.status(400).json({ success: false, error: 'Invalid id' });
+      }
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const ok = await deleteStudentExerciseNote(req.user!.id, studentId, noteId);
+      if (!ok) {
+        return res.status(404).json({ success: false, error: 'Note not found' });
+      }
+      if (academyId != null) {
+        logAcademyAction({
+          academyId,
+          userId: req.user!.id,
+          action: 'personal.student_note.deleted',
+          entityType: 'student_exercise_note',
+          entityId: noteId,
+          meta: { studentId },
+          ipAddress: req.ip,
+        });
+      }
+      res.json({ success: true, data: { deleted: true } });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to delete note' });
     }
   }
 );

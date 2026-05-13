@@ -21,7 +21,10 @@ export type AuditAction =
   | 'reception.exception'
   | 'reception.denied'
   | 'reception.visitor_access'
-  | 'reception.notes_viewed';
+  | 'reception.notes_viewed'
+  | 'personal.student_note.created'
+  | 'personal.student_note.updated'
+  | 'personal.student_note.deleted';
 
 export interface AuditEntry {
   academyId: number | null;

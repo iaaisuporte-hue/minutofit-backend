@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import { getMetabolismForUser, getMetabolismHistoryForUser } from '../modules/metabolism/metabolic.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
+import { fetchTechnicalSnapshotData } from './studentExerciseNotesService';
 
 type DashboardRisk = 'ok' | 'alerta' | 'critico';
 type DashboardPlan = 'basic' | 'silver' | 'gold' | 'black';
@@ -37,6 +38,7 @@ type DashboardStudent = {
   metabolismTrend: MetabolicTrend;
   metabolismDelta7d: number | null;
   latestSleptWell: boolean | null;
+  lastTechnicalNoteAt: string | null;
 };
 
 type DashboardAlert = {
@@ -382,7 +384,14 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
             AND ($2::integer IS NULL OR udc_last.academy_id = $2)
           ORDER BY udc_last.date_key DESC, udc_last.created_at DESC
           LIMIT 1
-        ) AS latest_slept_well
+        ) AS latest_slept_well,
+        (
+          SELECT MAX(sen.recorded_at)
+          FROM student_exercise_notes sen
+          WHERE sen.student_id = u.id
+            AND sen.personal_id = $1
+            AND ($2::integer IS NULL OR sen.academy_id IS NULL OR sen.academy_id = $2)
+        ) AS last_technical_note_at
       FROM personal_student_assignments psa
       JOIN users u
         ON u.id = psa.student_id
@@ -444,6 +453,9 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       lastCheckinISO,
       checkins7d: Number(row.checkins_7d || 0),
       latestSleptWell: row.latest_slept_well === null || row.latest_slept_well === undefined ? null : Boolean(row.latest_slept_well),
+      lastTechnicalNoteAt: row.last_technical_note_at
+        ? new Date(row.last_technical_note_at).toISOString()
+        : null,
     };
   });
 
@@ -547,6 +559,7 @@ export async function getPersonalStudentSnapshot(
     muscleGroupRows,
     latestWellbeingRow,
     wellbeingHistoryRows,
+    technicalData,
   ] =
     await Promise.all([
       getPersonalDashboard(personalId, academyId ?? null),
@@ -717,6 +730,7 @@ export async function getPersonalStudentSnapshot(
          ORDER BY date_key ASC, created_at ASC`,
         [studentId, academyId ?? null]
       ),
+      fetchTechnicalSnapshotData(studentId, academyId ?? null),
     ]);
 
   const student = dashboard.students.find((item) => item.id === String(studentId));
@@ -845,6 +859,27 @@ export async function getPersonalStudentSnapshot(
       })),
       xp: Number(xpRow.rows[0]?.xp || row.xp || 0),
       wellbeingHistory14d,
+    },
+    technical: {
+      highlights: technicalData.highlights.map((h) => ({
+        exerciseName: h.exerciseName,
+        kind: h.kind,
+        count: h.count,
+        lastNoteAt: h.lastNoteAt,
+      })),
+      recentNotes: technicalData.recentNotes.map((n) => ({
+        id: n.id,
+        exerciseName: n.exerciseName,
+        exerciseKey: n.exerciseKey,
+        kind: n.kind,
+        note: n.note,
+        recordedAt: n.recordedAt,
+        loadKg: n.loadKg,
+        reps: n.reps,
+        sets: n.sets,
+        severity: n.severity,
+        personalId: n.personalId,
+      })),
     },
   };
 }

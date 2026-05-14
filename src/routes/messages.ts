@@ -10,6 +10,7 @@ import {
   sendMessageToConversation,
 } from '../services/messagesService';
 import { chatStreamSubscribe } from '../services/chatStream';
+import { recordMessageSentAction } from '../services/personalRetentionService';
 
 const router = Router();
 router.use(authMiddleware, requireAcademyContext);
@@ -107,6 +108,29 @@ router.post(
         typeof req.body?.text === 'string' ? req.body.text : '',
         academyId
       );
+
+      // Best-effort: record message_sent action in retention timeline when personal sends
+      if (req.user!.role === 'personal') {
+        void (async () => {
+          try {
+            const { default: pool } = await import('../config/database');
+            const convRow = await pool.query(
+              `SELECT student_id FROM chat_conversations WHERE id = $1 AND personal_id = $2`,
+              [conversationId, req.user!.id]
+            );
+            if (convRow.rows[0]?.student_id) {
+              await recordMessageSentAction(
+                req.user!.id,
+                Number(convRow.rows[0].student_id),
+                academyId,
+                conversationId
+              );
+            }
+          } catch {
+            // best-effort — never block the response
+          }
+        })();
+      }
 
       res.status(201).json({ success: true, data });
     } catch (error: any) {

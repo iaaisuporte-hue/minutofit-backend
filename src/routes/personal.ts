@@ -42,6 +42,30 @@ import {
 } from '../services/workoutProtocolService';
 import { generateWorkout } from '../services/ai/workoutAi';
 import { getMetabolicHint } from '../services/ai/metabolicHint';
+import {
+  createRelationshipAction,
+  deleteRelationshipAction,
+  listRelationshipTimeline,
+  resolveRelationshipAction,
+  type ActionType,
+} from '../services/personalRetentionService';
+import {
+  createPersonalTemplate,
+  deletePersonalTemplate,
+  listVisibleTemplates,
+  updatePersonalTemplate,
+} from '../services/personalMessageTemplateService';
+import {
+  cancelSubscription,
+  computeFinanceSummary,
+  createBillingPlan,
+  deleteBillingPlan,
+  getBillingSettings,
+  listBillingPlans,
+  subscribeStudent,
+  updateBillingPlan,
+  upsertBillingSettings,
+} from '../services/personalBillingService';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('personal'), requireAcademyContext);
@@ -828,6 +852,314 @@ router.delete(
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message || 'Failed to revoke invite' });
+    }
+  }
+);
+
+// ===========================================================================
+// Retention Intelligence — Actions
+// ===========================================================================
+
+router.post(
+  '/students/:studentId/actions',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const { actionType, payloadJson, source, dueAt } = req.body;
+
+      if (!actionType) return res.status(400).json({ success: false, error: 'actionType required' });
+
+      const action = await createRelationshipAction(personalId, studentId, academyId, {
+        actionType: actionType as ActionType,
+        payloadJson,
+        source,
+        dueAt,
+      });
+      res.status(201).json({ success: true, data: action });
+    } catch (error: any) {
+      if (error.code === 'ASSIGNMENT_REQUIRED') return res.status(403).json({ success: false, error: 'Student not assigned' });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.get(
+  '/students/:studentId/timeline',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const limit = Number(req.query.limit) || 50;
+      const items = await listRelationshipTimeline(personalId, studentId, academyId, { limit });
+      res.json({ success: true, data: items });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.patch(
+  '/actions/:actionId/resolve',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const actionId = Number(req.params.actionId);
+      const action = await resolveRelationshipAction(actionId, personalId);
+      res.json({ success: true, data: action });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.delete(
+  '/actions/:actionId',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const actionId = Number(req.params.actionId);
+      const result = await deleteRelationshipAction(actionId, personalId);
+      res.json({ success: true, data: result });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+// ===========================================================================
+// Retention Intelligence — Message Templates
+// ===========================================================================
+
+router.get(
+  '/message-templates',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const templates = await listVisibleTemplates(personalId, academyId);
+      res.json({ success: true, data: templates });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.post(
+  '/message-templates',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const { category, title, body, isDefault } = req.body;
+      if (!title || !body || !category) {
+        return res.status(400).json({ success: false, error: 'category, title and body are required' });
+      }
+      const template = await createPersonalTemplate(personalId, academyId, { category, title, body, isDefault });
+      res.status(201).json({ success: true, data: template });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.patch(
+  '/message-templates/:id',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const templateId = Number(req.params.id);
+      const template = await updatePersonalTemplate(templateId, personalId, req.body);
+      res.json({ success: true, data: template });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.delete(
+  '/message-templates/:id',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const templateId = Number(req.params.id);
+      await deletePersonalTemplate(templateId, personalId);
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+// ===========================================================================
+// Billing — Settings + Plans
+// ===========================================================================
+
+router.get(
+  '/billing/settings',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const settings = await getBillingSettings(req.user!.id);
+      res.json({ success: true, data: settings });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.patch(
+  '/billing/settings',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const settings = await upsertBillingSettings(req.user!.id, req.body);
+      res.json({ success: true, data: settings });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.get(
+  '/billing/plans',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const plans = await listBillingPlans(personalId, academyId);
+      res.json({ success: true, data: plans });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.post(
+  '/billing/plans',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const { title, description, priceCents, period } = req.body;
+      if (!title || priceCents == null) {
+        return res.status(400).json({ success: false, error: 'title and priceCents are required' });
+      }
+      const plan = await createBillingPlan(personalId, academyId, { title, description, priceCents, period });
+      res.status(201).json({ success: true, data: plan });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.patch(
+  '/billing/plans/:id',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const planId = Number(req.params.id);
+      const plan = await updateBillingPlan(planId, personalId, req.body);
+      res.json({ success: true, data: plan });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.delete(
+  '/billing/plans/:id',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const planId = Number(req.params.id);
+      await deleteBillingPlan(planId, personalId);
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.post(
+  '/students/:studentId/subscribe',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const { planId, discountCents, studentEmail, studentName } = req.body;
+
+      if (!planId || !studentEmail) {
+        return res.status(400).json({ success: false, error: 'planId and studentEmail are required' });
+      }
+
+      const frontendUrl =
+        (process.env.FRONTEND_URL ?? '').split(',')[0]?.trim() || 'https://app.minutofit.com.br';
+
+      const result = await subscribeStudent(personalId, studentId, academyId, planId, {
+        discountCents,
+        studentEmail,
+        studentName: studentName ?? '',
+        frontendUrl,
+      });
+      res.status(201).json({ success: true, data: result });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.post(
+  '/subscriptions/:id/cancel',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const subId = Number(req.params.id);
+      const sub = await cancelSubscription(subId, personalId);
+      res.json({ success: true, data: sub });
+    } catch (error: any) {
+      if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.get(
+  '/finance/summary',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const range = (req.query.range as '30d' | '90d' | '12m') || '30d';
+      const summary = await computeFinanceSummary(personalId, academyId, range);
+      res.json({ success: true, data: summary });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
     }
   }
 );

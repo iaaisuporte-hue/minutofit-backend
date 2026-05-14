@@ -63,6 +63,7 @@ export async function generateWorkout(
     instructions: WORKOUT_SYSTEM_PROMPT,
     input: `${catalogSection}Pedido: ${prompt}`,
     maxOutputTokens: TOKEN_BUDGET.WORKOUT_PLAN,
+    jsonOutput: true,
   });
 
   const jsonStr = extractJson(text);

@@ -25,6 +25,7 @@ export async function getMetabolicHint(
     instructions: METABOLIC_HINT_SYSTEM_PROMPT,
     input: context,
     maxOutputTokens: TOKEN_BUDGET.SUGGEST_SHORT,
+    jsonOutput: true,
   });
 
   let parsed: MetabolicHint & { error?: string };

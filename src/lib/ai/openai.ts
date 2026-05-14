@@ -96,6 +96,12 @@ export interface AiCallOptions {
   input: string;
   /** Limite rígido de tokens de saída. Obrigatório. */
   maxOutputTokens: number;
+  /**
+   * Força saída em JSON via text.format: json_object.
+   * Distinto de temperature/top_p — é suportado no GPT-5.
+   * Usar quando a resposta precisa ser JSON estruturado confiável.
+   */
+  jsonOutput?: boolean;
   /** Timeout em ms. Padrão: 15 000. */
   timeoutMs?: number;
 }
@@ -154,6 +160,9 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
         instructions: opts.instructions,
         input: opts.input,
         max_output_tokens: opts.maxOutputTokens,
+        ...(opts.jsonOutput
+          ? { text: { format: { type: 'json_object' as const } } }
+          : {}),
       },
       { signal: controller.signal },
     );

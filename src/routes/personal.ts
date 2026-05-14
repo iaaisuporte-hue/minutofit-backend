@@ -551,10 +551,7 @@ router.post(
           : String(body.selectedGroup);
       const items = Array.isArray(body.items) ? body.items : [];
 
-      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId;
-      if (!academyId) {
-        return res.status(400).json({ success: false, error: 'Academy context required to create a workout plan' });
-      }
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
 
       const row = await createPersonalWorkoutPlan(req.user!.id, studentId, academyId, {
         title,
@@ -614,10 +611,7 @@ router.post(
         body.workoutPlanId === undefined || body.workoutPlanId === null
           ? null
           : Number(body.workoutPlanId);
-      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId;
-      if (!academyId) {
-        return res.status(400).json({ success: false, error: 'Academy context required to create a review' });
-      }
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
 
       const row = await createWorkoutReview(req.user!.id, academyId, {
         studentId,
@@ -733,6 +727,113 @@ router.post(
         return res.status(404).json({ success: false, error: error.message });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to archive review' });
+    }
+  }
+);
+
+// ── Direct Invites (personal autônomo → aluno direto sem academia) ────────────
+
+import crypto from 'crypto';
+import pool from '../config/database';
+
+const INVITE_EXPIRY_DAYS = 14;
+
+router.post(
+  '/direct-invites',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const invitedEmail = typeof req.body.invitedEmail === 'string' ? req.body.invitedEmail.trim().toLowerCase() || null : null;
+      const invitedName = typeof req.body.invitedName === 'string' ? req.body.invitedName.trim().slice(0, 255) || null : null;
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const expiresAt = new Date(Date.now() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+
+      const result = await pool.query(
+        `INSERT INTO personal_direct_invites (personal_id, token, invited_email, invited_name, expires_at)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, token, invited_email, invited_name, status, expires_at, created_at`,
+        [personalId, token, invitedEmail, invitedName, expiresAt]
+      );
+
+      const row = result.rows[0];
+      const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+      const inviteUrl = `${frontendUrl}/convite-personal/${token}`;
+
+      res.status(201).json({ success: true, data: { ...row, inviteUrl } });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to create invite' });
+    }
+  }
+);
+
+router.get(
+  '/direct-invites',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+
+      // Expire pending tokens past expiry date
+      await pool.query(
+        `UPDATE personal_direct_invites
+         SET status = 'expired'
+         WHERE personal_id = $1 AND status = 'pending' AND expires_at < NOW()`,
+        [personalId]
+      );
+
+      const result = await pool.query(
+        `SELECT pdi.id, pdi.token, pdi.invited_email, pdi.invited_name,
+                pdi.status, pdi.expires_at, pdi.created_at, pdi.accepted_at,
+                u.name AS accepted_user_name
+         FROM personal_direct_invites pdi
+         LEFT JOIN users u ON u.id = pdi.accepted_user_id
+         WHERE pdi.personal_id = $1
+         ORDER BY pdi.created_at DESC
+         LIMIT 100`,
+        [personalId]
+      );
+
+      const rows = result.rows.map((r) => ({
+        ...r,
+        inviteUrl: `${frontendUrl}/convite-personal/${r.token}`,
+      }));
+
+      res.json({ success: true, data: rows });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to list invites' });
+    }
+  }
+);
+
+router.delete(
+  '/direct-invites/:id',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const inviteId = Number(req.params.id);
+      if (!Number.isFinite(inviteId)) {
+        return res.status(400).json({ success: false, error: 'Invalid invite id' });
+      }
+
+      const result = await pool.query(
+        `UPDATE personal_direct_invites
+         SET status = 'revoked'
+         WHERE id = $1 AND personal_id = $2 AND status = 'pending'
+         RETURNING id`,
+        [inviteId, personalId]
+      );
+
+      if (result.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Invite not found or already used/expired' });
+      }
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to revoke invite' });
     }
   }
 );

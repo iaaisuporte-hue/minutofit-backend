@@ -62,7 +62,7 @@ export async function assertStudentAssignedToPersonal(personalId: number, studen
 export async function createPersonalWorkoutPlan(
   personalId: number,
   studentId: number,
-  academyId: number,
+  academyId: number | null,
   input: {
     title: string;
     weekPreset: string;

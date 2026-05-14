@@ -602,6 +602,140 @@ router.get('/invitations/:token', async (req: Request, res: Response) => {
   }
 });
 
+// GET /auth/direct-invite/:token — public, no auth required
+router.get('/direct-invite/:token', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+    if (!token || token.length > 64) {
+      return res.status(400).json({ success: false, error: 'Token inválido.' });
+    }
+
+    const result = await pool.query(
+      `SELECT pdi.id, pdi.invited_email, pdi.invited_name, pdi.status, pdi.expires_at,
+              u.name AS personal_name
+       FROM personal_direct_invites pdi
+       JOIN users u ON u.id = pdi.personal_id
+       WHERE pdi.token = $1
+       LIMIT 1`,
+      [token]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Convite não encontrado.' });
+    }
+
+    const row = result.rows[0];
+    const expired = row.status !== 'pending' || new Date(row.expires_at) < new Date();
+
+    res.json({
+      success: true,
+      data: {
+        personalName: row.personal_name,
+        invitedName: row.invited_name,
+        invitedEmail: row.invited_email,
+        status: row.status,
+        expired,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /auth/direct-invite/:token/accept — public, creates user + assignment
+router.post('/direct-invite/:token/accept', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+    if (!token || token.length > 64) {
+      return res.status(400).json({ success: false, error: 'Token inválido.' });
+    }
+
+    // Fetch invite
+    const inviteResult = await pool.query(
+      `SELECT id, personal_id, invited_email, invited_name, status, expires_at
+       FROM personal_direct_invites
+       WHERE token = $1
+       LIMIT 1`,
+      [token]
+    );
+
+    if (inviteResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Convite não encontrado.' });
+    }
+
+    const invite = inviteResult.rows[0];
+
+    if (invite.status !== 'pending') {
+      return res.status(409).json({ success: false, error: 'Este convite já foi usado ou foi revogado.' });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      await pool.query(`UPDATE personal_direct_invites SET status = 'expired' WHERE id = $1`, [invite.id]);
+      return res.status(410).json({ success: false, error: 'Este convite expirou.' });
+    }
+
+    const { email, password, name, cpf, phone } = req.body;
+    const h = req.body.healthFlags;
+    let healthFlags: authService.HealthFlags | undefined;
+    if (h && typeof h === 'object') {
+      const candidate = {
+        semHistoricoHipertensao: h.sem_historico_hipertensao,
+        semHistoricoCardiaco: h.sem_historico_cardiaco,
+        semRestricaoMedicaExercicio: h.sem_restricao_medica_exercicio,
+        aptoParaAtividadeFisica: h.apto_para_atividade_fisica,
+        aceitaResponsabilidadeInformacoes: h.aceita_responsabilidade_informacoes,
+      };
+      if (Object.values(candidate).every((v) => typeof v === 'boolean')) {
+        healthFlags = candidate as authService.HealthFlags;
+      }
+    }
+
+    const finalEmail = (typeof email === 'string' ? email : invite.invited_email || '').trim().toLowerCase();
+    const finalName  = (typeof name === 'string'  ? name  : invite.invited_name  || '').trim();
+
+    if (!finalEmail || !password || !finalName || !cpf || !phone) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nome, CPF, telefone, email e senha são obrigatórios.',
+      });
+    }
+
+    // Create user (reuse registerUser which handles password policy + free subscription)
+    const { user, accessToken, refreshToken } = await authService.registerUser({
+      email: finalEmail,
+      password,
+      name: finalName,
+      cpf,
+      phone,
+      healthFlags,
+    });
+
+    // Create assignment with academy_id = NULL (direct relationship)
+    await pool.query(
+      `INSERT INTO personal_student_assignments (personal_id, student_id, status, created_at, updated_at)
+       VALUES ($1, $2, 'active', NOW(), NOW())
+       ON CONFLICT (personal_id, student_id)
+       DO UPDATE SET status = 'active', updated_at = NOW()`,
+      [invite.personal_id, user.id]
+    );
+
+    // Mark invite as accepted
+    await pool.query(
+      `UPDATE personal_direct_invites
+       SET status = 'accepted', accepted_user_id = $1, accepted_at = NOW()
+       WHERE id = $2`,
+      [user.id, invite.id]
+    );
+
+    res.status(201).json({ success: true, data: { user, accessToken, refreshToken } });
+  } catch (err: any) {
+    const msg = String(err.message || 'Não foi possível concluir o cadastro.');
+    const status =
+      msg === 'CPF ja cadastrado.' || msg === 'Email ja cadastrado.' ? 409 : 400;
+    res.status(status).json({ success: false, error: msg });
+  }
+});
+
 // POST /auth/accept-invitation
 router.post('/accept-invitation', async (req: Request, res: Response) => {
   try {

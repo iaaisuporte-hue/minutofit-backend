@@ -80,7 +80,7 @@ export async function listWorkoutReviews(personalId: number): Promise<WorkoutRev
 
 export async function createWorkoutReview(
   personalId: number,
-  academyId: number,
+  academyId: number | null,
   input: {
     studentId: number;
     title: string;

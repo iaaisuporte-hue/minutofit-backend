@@ -25,6 +25,8 @@ import { ensureStudentsSchema } from './db/ensureStudentsSchema';
 import { ensureTenantColumnsPhase2 } from './db/ensureTenantColumnsPhase2';
 import { backfillTenantColumns } from './db/backfillTenantColumns';
 import { ensureTenantColumnsPhase2Lock } from './db/ensureTenantColumnsPhase2Lock';
+import { relaxAcademyIdNullable } from './db/relaxAcademyIdNullable';
+import { ensurePersonalDirectInvitesSchema } from './db/ensurePersonalDirectInvitesSchema';
 import { ensureStudentExerciseNotesSchema } from './db/ensureStudentExerciseNotesSchema';
 import { ensureWorkoutProtocolsSchema } from './db/ensureWorkoutProtocolsSchema';
 import { ensureMetabolismSchema } from './db/ensureMetabolismSchema';
@@ -88,6 +90,8 @@ void ensureAcademiesSchema()
   .then(() => ensureTenantColumnsPhase2())
   .then(() => backfillTenantColumns())
   .then(() => ensureTenantColumnsPhase2Lock())
+  .then(() => relaxAcademyIdNullable())
+  .then(() => ensurePersonalDirectInvitesSchema())
   .then(() => ensureStudentExerciseNotesSchema())
   .then(() => ensureWorkoutProtocolsSchema())
   .then(() => ensureProductsSchema())

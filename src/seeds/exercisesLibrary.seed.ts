@@ -65,7 +65,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Supino Inclinado com Halteres',
-    freeDbId: 'Incline_Dumbbell_Bench_Press',
+    freeDbId: 'Incline_Dumbbell_Press',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral maior (cabeça clavicular)',
     secondaryMuscles: ['Tríceps braquial', 'Deltoide anterior'],
@@ -126,7 +126,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Flexão de Braço',
-    freeDbId: 'Push-Up',
+    freeDbId: 'Pushups',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral maior',
     secondaryMuscles: ['Tríceps braquial', 'Deltoide anterior', 'Core'],
@@ -145,6 +145,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Peck Deck (Máquina)',
+    freeDbId: 'Butterfly',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral maior',
     secondaryMuscles: ['Deltoide anterior'],
@@ -225,7 +226,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Barra Fixa',
-    freeDbId: 'Pull-Up',
+    freeDbId: 'Pullups',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal',
     secondaryMuscles: ['Bíceps braquial', 'Braquial', 'Rombóide'],
@@ -245,6 +246,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Remada Baixa no Cabo',
+    freeDbId: 'Low_Pulley_Row_To_Neck',
     bodyPart: 'costas',
     targetMuscle: 'Rombóide',
     secondaryMuscles: ['Grande dorsal', 'Trapézio médio', 'Bíceps braquial'],
@@ -285,6 +287,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Leg Press 45°',
+    freeDbId: 'Leg_Press',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo máximo', 'Isquiotibiais', 'Panturrilha'],
@@ -303,6 +306,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Cadeira Extensora',
+    freeDbId: 'Leg_Extensions',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: [],
@@ -360,6 +364,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Afundo (Lunge)',
+    freeDbId: 'Dumbbell_Lunges',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo máximo', 'Isquiotibiais'],
@@ -378,6 +383,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Panturrilha em Pé (Calf Raise)',
+    freeDbId: 'Rocking_Standing_Calf_Raise',
     bodyPart: 'perna',
     targetMuscle: 'Gastrocnêmio',
     secondaryMuscles: ['Sóleo'],
@@ -417,6 +423,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Abdução de Quadril na Máquina',
+    freeDbId: 'Thigh_Adductor',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo médio',
     secondaryMuscles: ['Glúteo mínimo', 'TFL'],
@@ -434,6 +441,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Agachamento Sumô',
+    freeDbId: 'Plie_Dumbbell_Squat',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo máximo',
     secondaryMuscles: ['Adutores', 'Quadríceps', 'Isquiotibiais'],
@@ -491,6 +499,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Elevação Frontal',
+    freeDbId: 'Front_Raise_And_Pullover',
     bodyPart: 'ombro',
     targetMuscle: 'Deltoide anterior',
     secondaryMuscles: ['Peitoral (feixe clavicular)', 'Trapézio'],
@@ -527,6 +536,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Arnold Press',
+    freeDbId: 'Arnold_Dumbbell_Press',
     bodyPart: 'ombro',
     targetMuscle: 'Deltoide (todos os feixes)',
     secondaryMuscles: ['Tríceps braquial', 'Trapézio'],
@@ -564,6 +574,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rosca Alternada com Halteres',
+    freeDbId: 'Dumbbell_Alternate_Bicep_Curl',
     bodyPart: 'bíceps',
     targetMuscle: 'Bíceps braquial',
     secondaryMuscles: ['Braquial', 'Braquiorradial'],
@@ -581,6 +592,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rosca Martelo',
+    freeDbId: 'Hammer_Curls',
     bodyPart: 'bíceps',
     targetMuscle: 'Braquiorradial',
     secondaryMuscles: ['Bíceps braquial', 'Braquial'],
@@ -617,6 +629,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Tríceps Corda (Pushdown)',
+    freeDbId: 'Triceps_Pushdown_-_Rope_Attachment',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
     secondaryMuscles: [],
@@ -654,6 +667,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Tríceps Francês com Haltere',
+    freeDbId: 'Overhead_Triceps',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial (cabeça longa)',
     secondaryMuscles: [],
@@ -671,6 +685,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Mergulho (Tríceps Dip)',
+    freeDbId: 'Dips_-_Triceps_Version',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
     secondaryMuscles: ['Peitoral menor', 'Deltoide anterior'],
@@ -689,6 +704,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Prancha Isométrica',
+    freeDbId: 'Plank',
     bodyPart: 'abdômen',
     targetMuscle: 'Core (transverso abdominal)',
     secondaryMuscles: ['Reto abdominal', 'Oblíquos', 'Glúteo médio'],
@@ -707,6 +723,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Crunch Abdominal',
+    freeDbId: 'Crunches',
     bodyPart: 'abdômen',
     targetMuscle: 'Reto abdominal',
     secondaryMuscles: ['Oblíquos'],
@@ -726,6 +743,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Abdominal Infra (Elevação de Pernas)',
+    freeDbId: 'Flat_Bench_Lying_Leg_Raise',
     bodyPart: 'abdômen',
     targetMuscle: 'Reto abdominal inferior',
     secondaryMuscles: ['Flexores do quadril'],
@@ -743,6 +761,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Oblíquo com Rotação',
+    freeDbId: 'Oblique_Crunches',
     bodyPart: 'abdômen',
     targetMuscle: 'Oblíquo externo',
     secondaryMuscles: ['Oblíquo interno', 'Reto abdominal'],
@@ -761,6 +780,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Esteira (HIIT)',
+    freeDbId: 'Running_Treadmill',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Quadríceps', 'Isquiotibiais', 'Panturrilha'],
@@ -779,6 +799,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Burpee',
+    freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Peitoral', 'Quadríceps', 'Core', 'Deltoide'],
@@ -797,6 +818,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Mountain Climber',
+    freeDbId: 'Mountain_Climbers',
     bodyPart: 'cardio',
     targetMuscle: 'Core',
     secondaryMuscles: ['Flexores do quadril', 'Deltoide', 'Peitoral'],
@@ -813,6 +835,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Jumping Jacks',
+    freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Glúteo médio', 'Deltoide'],
@@ -831,6 +854,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Agachamento Livre (Peso Corporal)',
+    freeDbId: 'Bodyweight_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo máximo', 'Isquiotibiais'],
@@ -848,6 +872,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Glúteo 4 Apoios (Donkey Kick)',
+    freeDbId: 'Glute_Kickback',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo máximo',
     secondaryMuscles: ['Isquiotibiais'],
@@ -865,6 +890,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Flexão Diamante',
+    freeDbId: 'Incline_Push-Up_Close-Grip',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
     secondaryMuscles: ['Peitoral (feixe esternal)'],
@@ -932,6 +958,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Flexão Inclinada (Declinada)',
+    freeDbId: 'Decline_Push-Up',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral superior',
     secondaryMuscles: ['Deltóide anterior', 'Tríceps'],
@@ -1028,6 +1055,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Hiperextensão Lombar',
+    freeDbId: 'Hyperextensions_Back_Extensions',
     bodyPart: 'costas',
     targetMuscle: 'Eretor da espinha',
     secondaryMuscles: ['Glúteo máximo', 'Isquiotibiais'],
@@ -1043,6 +1071,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Remada com Elástico',
+    freeDbId: 'Bent_Over_Two-Dumbbell_Row',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal',
     secondaryMuscles: ['Romboides', 'Bíceps'],
@@ -1124,6 +1153,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Agachamento Búlgaro',
+    freeDbId: 'Split_Squat_with_Dumbbells',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo', 'Isquiotibiais'],
@@ -1154,6 +1184,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Agachamento Sumo',
+    freeDbId: 'Plie_Dumbbell_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Adutores',
     secondaryMuscles: ['Quadríceps', 'Glúteo'],
@@ -1169,6 +1200,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Leg Press 45°',
+    freeDbId: 'Leg_Press',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo', 'Isquiotibiais'],
@@ -1184,6 +1216,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Cadeira Adutora',
+    freeDbId: 'Adductor',
     bodyPart: 'perna',
     targetMuscle: 'Adutores',
     secondaryMuscles: [],
@@ -1249,6 +1282,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Abdução com Elástico (Monster Walk)',
+    freeDbId: 'Monster_Walk',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo médio',
     secondaryMuscles: ['TFL'],
@@ -1263,6 +1297,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Abdução na Máquina',
+    freeDbId: 'Thigh_Adductor',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo médio',
     secondaryMuscles: ['TFL'],
@@ -1278,6 +1313,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Afundo Reverso',
+    freeDbId: 'Dumbbell_Rear_Lunge',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo máximo',
     secondaryMuscles: ['Quadríceps', 'Isquiotibiais'],
@@ -1295,6 +1331,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Desenvolvimento com Barra (Press Militar)',
+    freeDbId: 'Seated_Barbell_Military_Press',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide (feixe anterior e médio)',
     secondaryMuscles: ['Tríceps', 'Trapézio'],
@@ -1342,6 +1379,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Elevação Frontal com Halteres',
+    freeDbId: 'Front_Raise_And_Pullover',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide anterior',
     secondaryMuscles: ['Peitoral superior'],
@@ -1357,6 +1395,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rotação Interna/Externa com Elástico',
+    freeDbId: 'External_Rotation_with_Band',
     bodyPart: 'ombro',
     targetMuscle: 'Manguito rotador',
     secondaryMuscles: [],
@@ -1371,6 +1410,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Encolhimento de Ombros com Halteres',
+    freeDbId: 'Dumbbell_Shrug',
     bodyPart: 'ombro',
     targetMuscle: 'Trapézio',
     secondaryMuscles: ['Elevador da escápula'],
@@ -1386,6 +1426,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Remada Alta no Cabo',
+    freeDbId: 'Kneeling_High_Pulley_Row',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide médio',
     secondaryMuscles: ['Trapézio', 'Bíceps'],
@@ -1434,6 +1475,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rosca com Elástico',
+    freeDbId: 'Cable_Preacher_Curl',
     bodyPart: 'bíceps',
     targetMuscle: 'Bíceps braquial',
     secondaryMuscles: ['Braquiorradial'],
@@ -1483,6 +1525,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Extensão de Tríceps com Haltere Unilateral',
+    freeDbId: 'Dumbbell_One-Arm_Triceps_Extension',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial (cabeça longa)',
     secondaryMuscles: [],
@@ -1500,6 +1543,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rosca de Punho',
+    freeDbId: 'Palms-Down_Dumbbell_Wrist_Curl_Over_A_Bench',
     bodyPart: 'antebraço',
     targetMuscle: 'Flexores do punho',
     secondaryMuscles: [],
@@ -1514,6 +1558,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Extensão de Punho',
+    freeDbId: 'Palms-Down_Dumbbell_Wrist_Curl_Over_A_Bench',
     bodyPart: 'antebraço',
     targetMuscle: 'Extensores do punho',
     secondaryMuscles: [],
@@ -1528,6 +1573,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Pronação e Supinação com Haltere',
+    freeDbId: 'Seated_Dumbbell_Palms-Down_Wrist_Curl',
     bodyPart: 'antebraço',
     targetMuscle: 'Pronadores e supinadores',
     secondaryMuscles: [],
@@ -1619,6 +1665,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Abdominal Bicicleta',
+    freeDbId: 'Cross-Body_Crunch',
     bodyPart: 'abdômen',
     targetMuscle: 'Oblíquos e reto abdominal',
     secondaryMuscles: [],
@@ -1633,6 +1680,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Dead Bug',
+    freeDbId: 'Dead_Bug',
     bodyPart: 'abdômen',
     targetMuscle: 'Core (estabilizadores)',
     secondaryMuscles: [],
@@ -1648,6 +1696,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Prancha Lateral',
+    freeDbId: 'Push_Up_to_Side_Plank',
     bodyPart: 'abdômen',
     targetMuscle: 'Oblíquos',
     secondaryMuscles: ['Core', 'Glúteo médio'],
@@ -1662,6 +1711,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Crunch com Cabo',
+    freeDbId: 'Cable_Crunch',
     bodyPart: 'abdômen',
     targetMuscle: 'Reto abdominal',
     secondaryMuscles: [],
@@ -1677,6 +1727,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Hollow Body Hold',
+    freeDbId: 'Plank',
     bodyPart: 'abdômen',
     targetMuscle: 'Core (transverso)',
     secondaryMuscles: ['Hip flexors'],
@@ -1692,6 +1743,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Leg Raise Deitado',
+    freeDbId: 'Flat_Bench_Lying_Leg_Raise',
     bodyPart: 'abdômen',
     targetMuscle: 'Reto abdominal inferior',
     secondaryMuscles: ['Hip flexors'],
@@ -1723,6 +1775,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Pular Corda',
+    freeDbId: 'Battling_Ropes',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Panturrilha', 'Ombros'],
@@ -1737,6 +1790,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Burpee',
+    freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
     targetMuscle: 'Corpo inteiro',
     secondaryMuscles: ['Peito', 'Quadríceps', 'Core'],
@@ -1752,6 +1806,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Polichinelo (Jumping Jack)',
+    freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Deltóide', 'Adutores'],
@@ -1767,6 +1822,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Sprint Curto (Tiro)',
+    freeDbId: 'Running_Treadmill',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Quadríceps', 'Glúteo', 'Panturrilha'],
@@ -1781,6 +1837,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Remo Ergométrico',
+    freeDbId: 'Rowing_Stationary',
     bodyPart: 'cardio',
     targetMuscle: 'Costas, pernas, core',
     secondaryMuscles: ['Bíceps', 'Ombros'],
@@ -1796,6 +1853,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Skipping (Corrida no Lugar)',
+    freeDbId: 'Running_Treadmill',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Quadríceps', 'Core'],
@@ -1810,6 +1868,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Box Jump',
+    freeDbId: 'Front_Box_Jump',
     bodyPart: 'cardio',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo', 'Panturrilha'],
@@ -1827,6 +1886,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Flexão de Braço Larga',
+    freeDbId: 'Incline_Push-Up_Wide',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral (feixe lateral)',
     secondaryMuscles: ['Deltóide anterior', 'Tríceps'],
@@ -1841,6 +1901,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Flexão de Braço Fechada',
+    freeDbId: 'Incline_Push-Up_Close-Grip',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
     secondaryMuscles: ['Peitoral medial'],
@@ -1855,6 +1916,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Dip em Barras Paralelas',
+    freeDbId: 'Parallel_Bar_Dip',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
     secondaryMuscles: ['Peitoral inferior', 'Deltóide anterior'],
@@ -1870,6 +1932,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Prancha com Toque no Ombro',
+    freeDbId: 'Plank',
     bodyPart: 'abdômen',
     targetMuscle: 'Core (anti-rotação)',
     secondaryMuscles: ['Ombros'],
@@ -1900,6 +1963,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Superman (Extensão Dorsal no Chão)',
+    freeDbId: 'Hyperextensions_With_No_Hyperextension_Bench',
     bodyPart: 'costas',
     targetMuscle: 'Eretor da espinha',
     secondaryMuscles: ['Glúteo', 'Ombros'],
@@ -1915,6 +1979,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Bear Crawl',
+    freeDbId: 'Bear_Crawl_Sled_Drags',
     bodyPart: 'abdômen',
     targetMuscle: 'Core',
     secondaryMuscles: ['Ombros', 'Quadríceps'],
@@ -1930,6 +1995,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Handstand Hold (Parada de Mão)',
+    freeDbId: 'Handstand_Push-Ups',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide',
     secondaryMuscles: ['Core', 'Tríceps'],
@@ -1945,6 +2011,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Pike Push-Up',
+    freeDbId: 'Incline_Push-Up',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide anterior',
     secondaryMuscles: ['Tríceps', 'Tríceps'],
@@ -1960,6 +2027,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Dip em Cadeira',
+    freeDbId: 'Bench_Dips',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
     secondaryMuscles: ['Deltóide anterior'],
@@ -1975,6 +2043,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Pistol Squat (Agachamento Unilateral)',
+    freeDbId: 'Kettlebell_Pistol_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo', 'Core', 'Tornozelo'],
@@ -1992,6 +2061,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rotação Torácica',
+    freeDbId: 'External_Rotation',
     bodyPart: 'mobilidade',
     targetMuscle: 'Coluna torácica',
     secondaryMuscles: ['Oblíquos'],
@@ -2007,6 +2077,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Hip 90/90 (Mobilidade de Quadril)',
+    freeDbId: 'Kneeling_Hip_Flexor',
     bodyPart: 'mobilidade',
     targetMuscle: 'Rotadores do quadril',
     secondaryMuscles: ['Piriforme', 'TFL'],
@@ -2022,6 +2093,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'World Greatest Stretch',
+    freeDbId: 'Worlds_Greatest_Stretch',
     bodyPart: 'mobilidade',
     targetMuscle: 'Quadril, ombro, coluna',
     secondaryMuscles: ['Isquiotibiais', 'Peitoral'],
@@ -2037,6 +2109,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Alongamento de Isquiotibiais (Faixa)',
+    freeDbId: 'Chair_Leg_Extended_Stretch',
     bodyPart: 'mobilidade',
     targetMuscle: 'Isquiotibiais',
     secondaryMuscles: [],
@@ -2065,6 +2138,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Ankle Mobility Drill',
+    freeDbId: 'Standing_Hip_Flexors',
     bodyPart: 'mobilidade',
     targetMuscle: 'Tornozelo',
     secondaryMuscles: ['Panturrilha'],
@@ -2094,6 +2168,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Pigeon Pose (Pombo — Quadril)',
+    freeDbId: 'Kneeling_Hip_Flexor',
     bodyPart: 'mobilidade',
     targetMuscle: 'Piriforme',
     secondaryMuscles: ['Rotadores externos do quadril'],
@@ -2111,6 +2186,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rotação de Braços',
+    freeDbId: 'Chest_And_Front_Of_Shoulder_Stretch',
     bodyPart: 'aquecimento',
     targetMuscle: 'Ombro (manguito rotador)',
     secondaryMuscles: [],
@@ -2125,6 +2201,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Corrida Elevada no Lugar',
+    freeDbId: 'Running_Treadmill',
     bodyPart: 'aquecimento',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: [],
@@ -2136,6 +2213,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Agachamento com Rotação de Ombro',
+    freeDbId: 'Overhead_Squat',
     bodyPart: 'aquecimento',
     targetMuscle: 'Quadríceps + Ombros',
     secondaryMuscles: [],
@@ -2149,6 +2227,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Leg Swing (Balanço de Perna)',
+    freeDbId: 'Chair_Leg_Extended_Stretch',
     bodyPart: 'aquecimento',
     targetMuscle: 'Quadril',
     secondaryMuscles: ['Isquiotibiais'],
@@ -2163,6 +2242,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Inchworm',
+    freeDbId: 'Inchworm',
     bodyPart: 'aquecimento',
     targetMuscle: 'Isquiotibiais + Core',
     secondaryMuscles: ['Ombros'],
@@ -2178,6 +2258,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Lateral Shuffle',
+    freeDbId: 'Side_Leg_Raises',
     bodyPart: 'aquecimento',
     targetMuscle: 'Adutores e abdutores',
     secondaryMuscles: ['Quadríceps'],
@@ -2211,6 +2292,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Power Clean',
+    freeDbId: 'Power_Clean',
     bodyPart: 'costas',
     targetMuscle: 'Full body (cadeia posterior)',
     secondaryMuscles: ['Quadríceps', 'Trapézio', 'Core'],
@@ -2225,6 +2307,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Supino Reto com Halteres',
+    freeDbId: 'Dumbbell_Bench_Press',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral maior',
     secondaryMuscles: ['Deltóide anterior', 'Tríceps'],
@@ -2240,6 +2323,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Terra Sumo',
+    freeDbId: 'Sumo_Deadlift',
     bodyPart: 'perna',
     targetMuscle: 'Adutores e glúteo',
     secondaryMuscles: ['Quadríceps', 'Isquiotibiais'],
@@ -2254,6 +2338,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Clean and Press',
+    freeDbId: 'Clean_and_Press',
     bodyPart: 'ombro',
     targetMuscle: 'Full body',
     secondaryMuscles: ['Deltóide', 'Quadríceps', 'Core'],
@@ -2271,6 +2356,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Muscle-Up',
+    freeDbId: 'Muscle_Up',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal + Tríceps',
     secondaryMuscles: ['Peitoral', 'Core'],
@@ -2286,6 +2372,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'L-Sit',
+    freeDbId: 'Plank',
     bodyPart: 'abdômen',
     targetMuscle: 'Core (hip flexors)',
     secondaryMuscles: ['Tríceps', 'Ombros'],
@@ -2300,6 +2387,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Front Lever',
+    freeDbId: 'Hanging_Leg_Raise',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal (comprimento total)',
     secondaryMuscles: ['Core', 'Peitoral'],
@@ -2314,6 +2402,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Skin the Cat',
+    freeDbId: 'Muscle_Up',
     bodyPart: 'ombro',
     targetMuscle: 'Manguito rotador',
     secondaryMuscles: ['Grande dorsal', 'Core'],
@@ -2328,6 +2417,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'One-Arm Push-Up',
+    freeDbId: 'One_Arm_Dumbbell_Bench_Press',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral (unilateral)',
     secondaryMuscles: ['Tríceps', 'Core', 'Deltóide'],
@@ -2343,6 +2433,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Handstand Push-Up',
+    freeDbId: 'Handstand_Push-Ups',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide',
     secondaryMuscles: ['Tríceps', 'Core'],
@@ -2360,6 +2451,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rosca 21 com Barra',
+    freeDbId: 'Barbell_Curl',
     bodyPart: 'bíceps',
     targetMuscle: 'Bíceps braquial',
     secondaryMuscles: ['Braquiorradial'],
@@ -2373,6 +2465,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Rosca com Cabo (Cross Body)',
+    freeDbId: 'Cross_Body_Hammer_Curl',
     bodyPart: 'bíceps',
     targetMuscle: 'Bíceps braquial',
     secondaryMuscles: ['Braquial'],
@@ -2388,6 +2481,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Tríceps Coice com Haltere',
+    freeDbId: 'Tricep_Dumbbell_Kickback',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial (cabeça longa)',
     secondaryMuscles: [],
@@ -2403,6 +2497,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Tríceps com Elástico',
+    freeDbId: 'Speed_Band_Overhead_Triceps',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
     secondaryMuscles: [],
@@ -2419,6 +2514,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Bicicleta Ergométrica',
+    freeDbId: 'Elliptical_Trainer',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Quadríceps', 'Panturrilha'],
@@ -2433,6 +2529,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Elíptico',
+    freeDbId: 'Elliptical_Trainer',
     bodyPart: 'cardio',
     targetMuscle: 'Sistema cardiovascular',
     secondaryMuscles: ['Quadríceps', 'Glúteo', 'Panturrilha'],
@@ -2448,6 +2545,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Kettlebell Swing',
+    freeDbId: 'One-Arm_Kettlebell_Swings',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo máximo',
     secondaryMuscles: ['Isquiotibiais', 'Core', 'Ombros'],
@@ -2463,6 +2561,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Snatch com Haltere',
+    freeDbId: 'Power_Clean',
     bodyPart: 'ombro',
     targetMuscle: 'Full body',
     secondaryMuscles: ['Glúteo', 'Trapézio', 'Deltóide'],
@@ -2477,6 +2576,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Thruster (Agachamento + Press)',
+    freeDbId: 'Barbell_Hip_Thrust',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps + Deltóide',
     secondaryMuscles: ['Glúteo', 'Core'],
@@ -2493,6 +2593,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Prancha com Elevação de Quadril (Pike)',
+    freeDbId: 'Push_Up_to_Side_Plank',
     bodyPart: 'abdômen',
     targetMuscle: 'Core',
     secondaryMuscles: ['Ombros', 'Isquiotibiais'],
@@ -2507,6 +2608,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Escalador com Torção',
+    freeDbId: 'Mountain_Climbers',
     bodyPart: 'abdômen',
     targetMuscle: 'Oblíquos',
     secondaryMuscles: ['Core', 'Ombros'],
@@ -2522,6 +2624,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Swing Lateral com Elástico',
+    freeDbId: 'External_Rotation_with_Band',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo médio',
     secondaryMuscles: ['TFL', 'Abdutores'],
@@ -2536,6 +2639,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Superman com Alternância',
+    freeDbId: 'Hyperextensions_With_No_Hyperextension_Bench',
     bodyPart: 'costas',
     targetMuscle: 'Eretor da espinha',
     secondaryMuscles: ['Glúteo', 'Isquiotibiais'],
@@ -2550,6 +2654,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Chair Squat (Agachamento na Cadeira)',
+    freeDbId: 'Chair_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo'],
@@ -2564,6 +2669,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Glute Kickback de Joelhos',
+    freeDbId: 'Glute_Kickback',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo máximo',
     secondaryMuscles: ['Core'],
@@ -2578,6 +2684,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Tuck Jump',
+    freeDbId: 'Knee_Tuck_Jump',
     bodyPart: 'cardio',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Core', 'Panturrilha'],
@@ -2592,6 +2699,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Frog Jump (Salto Sapo)',
+    freeDbId: 'Weighted_Jump_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps + Glúteo',
     secondaryMuscles: ['Core'],
@@ -2606,6 +2714,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Wall Sit (Cadeira na Parede)',
+    freeDbId: 'Sit_Squats',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo', 'Core'],
@@ -2620,6 +2729,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Cossack Squat (Agachamento Lateral)',
+    freeDbId: 'Barbell_Side_Split_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Adutores',
     secondaryMuscles: ['Quadríceps', 'Glúteo'],
@@ -2634,6 +2744,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Nordic Curl (Curl Nórdico)',
+    freeDbId: 'Lying_Machine_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Isquiotibiais',
     secondaryMuscles: ['Glúteo', 'Core'],
@@ -2649,6 +2760,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Tempo Push-Up (Flexão Lenta)',
+    freeDbId: 'Clock_Push-Up',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral maior',
     secondaryMuscles: ['Tríceps', 'Core'],
@@ -2662,6 +2774,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Staggered Push-Up (Flexão Assimétrica)',
+    freeDbId: 'Clock_Push-Up',
     bodyPart: 'peito',
     targetMuscle: 'Peitoral (unilateral)',
     secondaryMuscles: ['Tríceps', 'Core'],
@@ -2677,7 +2790,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Agachamento com Haltere (Goblet)',
-    freeDbId: 'Dumbbell_Goblet_Squat',
+    freeDbId: 'Goblet_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
     secondaryMuscles: ['Glúteo', 'Core'],
@@ -2695,6 +2808,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Band Pull-Apart',
+    freeDbId: 'Band_Pull_Apart',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide posterior',
     secondaryMuscles: ['Romboides', 'Manguito rotador'],
@@ -2710,6 +2824,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Remada com Elástico na Porta',
+    freeDbId: 'Alternating_Kettlebell_Row',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal',
     secondaryMuscles: ['Bíceps', 'Romboides'],
@@ -2723,6 +2838,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Extensão de Quadril em Pé',
+    freeDbId: 'Hip_Extension_with_Bands',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo máximo',
     secondaryMuscles: ['Isquiotibiais'],
@@ -2737,6 +2853,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Chest Stretch (Alongamento de Peitoral)',
+    freeDbId: 'Chin_To_Chest_Stretch',
     bodyPart: 'mobilidade',
     targetMuscle: 'Peitoral maior',
     secondaryMuscles: ['Deltóide anterior'],
@@ -2751,6 +2868,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Mobilidade de Ombro (Towel Stretch)',
+    freeDbId: 'Chest_And_Front_Of_Shoulder_Stretch',
     bodyPart: 'mobilidade',
     targetMuscle: 'Cápsula articular do ombro',
     secondaryMuscles: ['Manguito rotador'],

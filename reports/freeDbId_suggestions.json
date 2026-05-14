@@ -1,0 +1,1181 @@
+{
+  "high": [
+    {
+      "ptName": "Elevação Frontal",
+      "freeDbId": "Calf_Raise_On_A_Dumbbell",
+      "enName": "Calf Raise On A Dumbbell",
+      "score": 1,
+      "tokens_matched": [
+        "raise",
+        "lateral raise",
+        "front raise",
+        "front"
+      ]
+    },
+    {
+      "ptName": "Rosca Martelo",
+      "freeDbId": "Hammer_Curls",
+      "enName": "Hammer Curls",
+      "score": 1,
+      "tokens_matched": [
+        "curl",
+        "hammer"
+      ]
+    },
+    {
+      "ptName": "Tríceps Corda (Pushdown)",
+      "freeDbId": "Triceps_Pushdown_-_Rope_Attachment",
+      "enName": "Triceps Pushdown - Rope Attachment",
+      "score": 1,
+      "tokens_matched": [
+        "tricep",
+        "triceps",
+        "rope",
+        "pushdown"
+      ]
+    },
+    {
+      "ptName": "Mountain Climber",
+      "freeDbId": "Mountain_Climbers",
+      "enName": "Mountain Climbers",
+      "score": 1,
+      "tokens_matched": [
+        "mountain climber",
+        "climber"
+      ]
+    },
+    {
+      "ptName": "Dead Bug",
+      "freeDbId": "Dead_Bug",
+      "enName": "Dead Bug",
+      "score": 1,
+      "tokens_matched": [
+        "dead",
+        "bug"
+      ]
+    },
+    {
+      "ptName": "World Greatest Stretch",
+      "freeDbId": "Worlds_Greatest_Stretch",
+      "enName": "World's Greatest Stretch",
+      "score": 1,
+      "tokens_matched": [
+        "world",
+        "greatest",
+        "stretch"
+      ]
+    },
+    {
+      "ptName": "Inchworm",
+      "freeDbId": "Inchworm",
+      "enName": "Inchworm",
+      "score": 1,
+      "tokens_matched": [
+        "inchworm"
+      ]
+    },
+    {
+      "ptName": "Power Clean",
+      "freeDbId": "Power_Clean",
+      "enName": "Power Clean",
+      "score": 1,
+      "tokens_matched": [
+        "power",
+        "clean"
+      ]
+    },
+    {
+      "ptName": "Clean and Press",
+      "freeDbId": "Clean_and_Press",
+      "enName": "Clean and Press",
+      "score": 1,
+      "tokens_matched": [
+        "clean",
+        "and",
+        "press"
+      ]
+    },
+    {
+      "ptName": "Muscle-Up",
+      "freeDbId": "Muscle_Up",
+      "enName": "Muscle Up",
+      "score": 1,
+      "tokens_matched": [
+        "muscle",
+        "up"
+      ]
+    },
+    {
+      "ptName": "Handstand Push-Up",
+      "freeDbId": "Handstand_Push-Ups",
+      "enName": "Handstand Push-Ups",
+      "score": 1,
+      "tokens_matched": [
+        "handstand",
+        "push",
+        "up"
+      ]
+    },
+    {
+      "ptName": "Band Pull-Apart",
+      "freeDbId": "Band_Pull_Apart",
+      "enName": "Band Pull Apart",
+      "score": 1,
+      "tokens_matched": [
+        "band",
+        "pull",
+        "apart"
+      ]
+    },
+    {
+      "ptName": "Desenvolvimento com Barra (Press Militar)",
+      "freeDbId": "Seated_Barbell_Military_Press",
+      "enName": "Seated Barbell Military Press",
+      "score": 0.8333333333333334,
+      "tokens_matched": [
+        "press",
+        "overhead press",
+        "shoulder press",
+        "barbell",
+        "militar"
+      ]
+    },
+    {
+      "ptName": "Panturrilha em Pé (Calf Raise)",
+      "freeDbId": "Rocking_Standing_Calf_Raise",
+      "enName": "Rocking Standing Calf Raise",
+      "score": 0.8,
+      "tokens_matched": [
+        "calf",
+        "calf raise",
+        "standing",
+        "raise"
+      ]
+    },
+    {
+      "ptName": "Tríceps com Elástico",
+      "freeDbId": "Speed_Band_Overhead_Triceps",
+      "enName": "Speed Band Overhead Triceps",
+      "score": 0.8,
+      "tokens_matched": [
+        "tricep",
+        "triceps",
+        "band",
+        "resistance band"
+      ]
+    },
+    {
+      "ptName": "Chest Stretch (Alongamento de Peitoral)",
+      "freeDbId": "Chin_To_Chest_Stretch",
+      "enName": "Chin To Chest Stretch",
+      "score": 0.8,
+      "tokens_matched": [
+        "chest",
+        "stretch",
+        "alongamento",
+        "pectoral"
+      ]
+    },
+    {
+      "ptName": "Mergulho (Tríceps Dip)",
+      "freeDbId": "Body_Tricep_Press",
+      "enName": "Body Tricep Press",
+      "score": 0.75,
+      "tokens_matched": [
+        "tricep dip",
+        "tricep",
+        "triceps"
+      ]
+    },
+    {
+      "ptName": "Hiperextensão Lombar",
+      "freeDbId": "Hyperextensions_Back_Extensions",
+      "enName": "Hyperextensions (Back Extensions)",
+      "score": 0.75,
+      "tokens_matched": [
+        "hyperextension",
+        "back extension",
+        "lower back"
+      ]
+    },
+    {
+      "ptName": "Rosca com Elástico",
+      "freeDbId": "Seated_Band_Hamstring_Curl",
+      "enName": "Seated Band Hamstring Curl",
+      "score": 0.75,
+      "tokens_matched": [
+        "curl",
+        "band",
+        "resistance band"
+      ]
+    },
+    {
+      "ptName": "One-Arm Push-Up",
+      "freeDbId": "One_Arm_Chin-Up",
+      "enName": "One Arm Chin-Up",
+      "score": 0.75,
+      "tokens_matched": [
+        "one",
+        "arm",
+        "up"
+      ]
+    },
+    {
+      "ptName": "Peck Deck (Máquina)",
+      "freeDbId": "Ab_Crunch_Machine",
+      "enName": "Ab Crunch Machine",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "pec fly machine",
+        "machine"
+      ]
+    },
+    {
+      "ptName": "Remada Baixa no Cabo",
+      "freeDbId": "Low_Pulley_Row_To_Neck",
+      "enName": "Low Pulley Row To Neck",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "row",
+        "rowing",
+        "low",
+        "low cable"
+      ]
+    },
+    {
+      "ptName": "Arnold Press",
+      "freeDbId": "Arnold_Dumbbell_Press",
+      "enName": "Arnold Dumbbell Press",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "arnold",
+        "press"
+      ]
+    },
+    {
+      "ptName": "Crunch Abdominal",
+      "freeDbId": "Ab_Crunch_Machine",
+      "enName": "Ab Crunch Machine",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "crunch",
+        "ab"
+      ]
+    },
+    {
+      "ptName": "Flexão Diamante",
+      "freeDbId": "3_4_Sit-Up",
+      "enName": "3/4 Sit-Up",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "push up",
+        "pushup"
+      ]
+    },
+    {
+      "ptName": "Abdução na Máquina",
+      "freeDbId": "Ab_Crunch_Machine",
+      "enName": "Ab Crunch Machine",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "abduction",
+        "machine"
+      ]
+    },
+    {
+      "ptName": "Elevação Frontal com Halteres",
+      "freeDbId": "Calf_Raise_On_A_Dumbbell",
+      "enName": "Calf Raise On A Dumbbell",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "raise",
+        "lateral raise",
+        "front raise",
+        "front"
+      ]
+    },
+    {
+      "ptName": "Remada Alta no Cabo",
+      "freeDbId": "Kneeling_High_Pulley_Row",
+      "enName": "Kneeling High Pulley Row",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "row",
+        "rowing",
+        "high",
+        "high cable"
+      ]
+    },
+    {
+      "ptName": "Extensão de Tríceps com Haltere Unilateral",
+      "freeDbId": "Dumbbell_One-Arm_Triceps_Extension",
+      "enName": "Dumbbell One-Arm Triceps Extension",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "extension",
+        "tricep",
+        "triceps",
+        "dumbbell",
+        "one arm",
+        "single arm"
+      ]
+    },
+    {
+      "ptName": "Rosca de Punho",
+      "freeDbId": "Spider_Curl",
+      "enName": "Spider Curl",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "curl",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Prancha Lateral",
+      "freeDbId": "Side_Lateral_Raise",
+      "enName": "Side Lateral Raise",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "lateral",
+        "side"
+      ]
+    },
+    {
+      "ptName": "Crunch com Cabo",
+      "freeDbId": "Ab_Crunch_Machine",
+      "enName": "Ab Crunch Machine",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "crunch",
+        "cable"
+      ]
+    },
+    {
+      "ptName": "Leg Raise Deitado",
+      "freeDbId": "Front_Leg_Raises",
+      "enName": "Front Leg Raises",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "leg",
+        "raise"
+      ]
+    },
+    {
+      "ptName": "Polichinelo (Jumping Jack)",
+      "freeDbId": "Bench_Jump",
+      "enName": "Bench Jump",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "jumping jacks",
+        "jumping"
+      ]
+    },
+    {
+      "ptName": "Box Jump",
+      "freeDbId": "Front_Box_Jump",
+      "enName": "Front Box Jump",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "box",
+        "jump"
+      ]
+    },
+    {
+      "ptName": "Pike Push-Up",
+      "freeDbId": "Clock_Push-Up",
+      "enName": "Clock Push-Up",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "push",
+        "up"
+      ]
+    },
+    {
+      "ptName": "Lateral Shuffle",
+      "freeDbId": "Side_Lateral_Raise",
+      "enName": "Side Lateral Raise",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "lateral",
+        "side"
+      ]
+    },
+    {
+      "ptName": "Tuck Jump",
+      "freeDbId": "Knee_Tuck_Jump",
+      "enName": "Knee Tuck Jump",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "tuck",
+        "jump"
+      ]
+    },
+    {
+      "ptName": "Tempo Push-Up (Flexão Lenta)",
+      "freeDbId": "Clock_Push-Up",
+      "enName": "Clock Push-Up",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "push",
+        "up",
+        "push up",
+        "pushup"
+      ]
+    },
+    {
+      "ptName": "Staggered Push-Up (Flexão Assimétrica)",
+      "freeDbId": "Clock_Push-Up",
+      "enName": "Clock Push-Up",
+      "score": 0.6666666666666666,
+      "tokens_matched": [
+        "push",
+        "up",
+        "push up",
+        "pushup"
+      ]
+    },
+    {
+      "ptName": "Abdução de Quadril na Máquina",
+      "freeDbId": "On_Your_Side_Quad_Stretch",
+      "enName": "On Your Side Quad Stretch",
+      "score": 0.6,
+      "tokens_matched": [
+        "abduction",
+        "de",
+        "quadril"
+      ]
+    },
+    {
+      "ptName": "Tríceps Francês com Haltere",
+      "freeDbId": "Decline_Dumbbell_Triceps_Extension",
+      "enName": "Decline Dumbbell Triceps Extension",
+      "score": 0.6,
+      "tokens_matched": [
+        "tricep",
+        "triceps",
+        "dumbbell"
+      ]
+    },
+    {
+      "ptName": "Glúteo 4 Apoios (Donkey Kick)",
+      "freeDbId": "Glute_Kickback",
+      "enName": "Glute Kickback",
+      "score": 0.6,
+      "tokens_matched": [
+        "glute",
+        "glutes",
+        "kick"
+      ]
+    },
+    {
+      "ptName": "Remada com Elástico",
+      "freeDbId": "Catch_and_Overhead_Throw",
+      "enName": "Catch and Overhead Throw",
+      "score": 0.6,
+      "tokens_matched": [
+        "row",
+        "band",
+        "resistance band"
+      ]
+    },
+    {
+      "ptName": "Flexão de Braço Larga",
+      "freeDbId": "Decline_Push-Up",
+      "enName": "Decline Push-Up",
+      "score": 0.6,
+      "tokens_matched": [
+        "push up",
+        "pushup",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Flexão de Braço Fechada",
+      "freeDbId": "Decline_Push-Up",
+      "enName": "Decline Push-Up",
+      "score": 0.6,
+      "tokens_matched": [
+        "push up",
+        "pushup",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Pistol Squat (Agachamento Unilateral)",
+      "freeDbId": "Lying_One-Arm_Lateral_Raise",
+      "enName": "Lying One-Arm Lateral Raise",
+      "score": 0.6,
+      "tokens_matched": [
+        "one arm",
+        "single arm",
+        "unilateral"
+      ]
+    },
+    {
+      "ptName": "Supino Reto com Halteres",
+      "freeDbId": "Barbell_Squat_To_A_Bench",
+      "enName": "Barbell Squat To A Bench",
+      "score": 0.6,
+      "tokens_matched": [
+        "bench press",
+        "bench",
+        "reto"
+      ]
+    },
+    {
+      "ptName": "Rosca com Cabo (Cross Body)",
+      "freeDbId": "Cross_Body_Hammer_Curl",
+      "enName": "Cross Body Hammer Curl",
+      "score": 0.6,
+      "tokens_matched": [
+        "curl",
+        "cross",
+        "body"
+      ]
+    },
+    {
+      "ptName": "Tríceps Coice com Haltere",
+      "freeDbId": "Decline_Dumbbell_Triceps_Extension",
+      "enName": "Decline Dumbbell Triceps Extension",
+      "score": 0.6,
+      "tokens_matched": [
+        "tricep",
+        "triceps",
+        "dumbbell"
+      ]
+    },
+    {
+      "ptName": "Extensão de Quadril em Pé",
+      "freeDbId": "On_Your_Side_Quad_Stretch",
+      "enName": "On Your Side Quad Stretch",
+      "score": 0.6,
+      "tokens_matched": [
+        "extension",
+        "de",
+        "quadril"
+      ]
+    }
+  ],
+  "mid": [
+    {
+      "ptName": "Leg Press 45°",
+      "freeDbId": "Bent_Press",
+      "enName": "Bent Press",
+      "score": 0.5,
+      "tokens_matched": [
+        "leg press"
+      ]
+    },
+    {
+      "ptName": "Afundo (Lunge)",
+      "freeDbId": "Barbell_Lunge",
+      "enName": "Barbell Lunge",
+      "score": 0.5,
+      "tokens_matched": [
+        "lunge"
+      ]
+    },
+    {
+      "ptName": "Agachamento Sumô",
+      "freeDbId": "Barbell_Squat",
+      "enName": "Barbell Squat",
+      "score": 0.5,
+      "tokens_matched": [
+        "squat"
+      ]
+    },
+    {
+      "ptName": "Prancha Isométrica",
+      "freeDbId": "Plank",
+      "enName": "Plank",
+      "score": 0.5,
+      "tokens_matched": [
+        "plank"
+      ]
+    },
+    {
+      "ptName": "Abdominal Infra (Elevação de Pernas)",
+      "freeDbId": "Standing_Dumbbell_Straight-Arm_Front_Delt_Raise_Above_Head",
+      "enName": "Standing Dumbbell Straight-Arm Front Delt Raise Above Head",
+      "score": 0.5,
+      "tokens_matched": [
+        "ab",
+        "raise",
+        "lateral raise",
+        "front raise",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Esteira (HIIT)",
+      "freeDbId": "Running_Treadmill",
+      "enName": "Running, Treadmill",
+      "score": 0.5,
+      "tokens_matched": [
+        "treadmill",
+        "run"
+      ]
+    },
+    {
+      "ptName": "Jumping Jacks",
+      "freeDbId": "Bench_Jump",
+      "enName": "Bench Jump",
+      "score": 0.5,
+      "tokens_matched": [
+        "jumping jacks"
+      ]
+    },
+    {
+      "ptName": "Flexão Inclinada (Declinada)",
+      "freeDbId": "3_4_Sit-Up",
+      "enName": "3/4 Sit-Up",
+      "score": 0.5,
+      "tokens_matched": [
+        "push up",
+        "pushup"
+      ]
+    },
+    {
+      "ptName": "Agachamento Búlgaro",
+      "freeDbId": "Barbell_Squat",
+      "enName": "Barbell Squat",
+      "score": 0.5,
+      "tokens_matched": [
+        "squat"
+      ]
+    },
+    {
+      "ptName": "Agachamento Sumo",
+      "freeDbId": "Barbell_Squat",
+      "enName": "Barbell Squat",
+      "score": 0.5,
+      "tokens_matched": [
+        "squat"
+      ]
+    },
+    {
+      "ptName": "Leg Press 45°",
+      "freeDbId": "Bent_Press",
+      "enName": "Bent Press",
+      "score": 0.5,
+      "tokens_matched": [
+        "leg press"
+      ]
+    },
+    {
+      "ptName": "Cadeira Adutora",
+      "freeDbId": "Chin_To_Chest_Stretch",
+      "enName": "Chin To Chest Stretch",
+      "score": 0.5,
+      "tokens_matched": [
+        "machine",
+        "adutora"
+      ]
+    },
+    {
+      "ptName": "Abdução com Elástico (Monster Walk)",
+      "freeDbId": "Push-Ups_With_Feet_On_An_Exercise_Ball",
+      "enName": "Push-Ups With Feet On An Exercise Ball",
+      "score": 0.5,
+      "tokens_matched": [
+        "abduction",
+        "band",
+        "resistance band",
+        "monster"
+      ]
+    },
+    {
+      "ptName": "Afundo Reverso",
+      "freeDbId": "Barbell_Lunge",
+      "enName": "Barbell Lunge",
+      "score": 0.5,
+      "tokens_matched": [
+        "lunge"
+      ]
+    },
+    {
+      "ptName": "Rotação Interna/Externa com Elástico",
+      "freeDbId": "External_Rotation_with_Band",
+      "enName": "External Rotation with Band",
+      "score": 0.5,
+      "tokens_matched": [
+        "externa",
+        "band",
+        "resistance band"
+      ]
+    },
+    {
+      "ptName": "Extensão de Punho",
+      "freeDbId": "Decline_Dumbbell_Triceps_Extension",
+      "enName": "Decline Dumbbell Triceps Extension",
+      "score": 0.5,
+      "tokens_matched": [
+        "extension",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Pronação e Supinação com Haltere",
+      "freeDbId": "Calf_Raise_On_A_Dumbbell",
+      "enName": "Calf Raise On A Dumbbell",
+      "score": 0.5,
+      "tokens_matched": [
+        "pronação",
+        "dumbbell"
+      ]
+    },
+    {
+      "ptName": "Strengthener de Pegada (Gripper)",
+      "freeDbId": "Wide-Grip_Lat_Pulldown",
+      "enName": "Wide-Grip Lat Pulldown",
+      "score": 0.5,
+      "tokens_matched": [
+        "de",
+        "gripper"
+      ]
+    },
+    {
+      "ptName": "Abdominal Bicicleta",
+      "freeDbId": "Ab_Crunch_Machine",
+      "enName": "Ab Crunch Machine",
+      "score": 0.5,
+      "tokens_matched": [
+        "crunch",
+        "ab"
+      ]
+    },
+    {
+      "ptName": "Pular Corda",
+      "freeDbId": "Battling_Ropes",
+      "enName": "Battling Ropes",
+      "score": 0.5,
+      "tokens_matched": [
+        "rope"
+      ]
+    },
+    {
+      "ptName": "Dip em Barras Paralelas",
+      "freeDbId": "Parallel_Bar_Dip",
+      "enName": "Parallel Bar Dip",
+      "score": 0.5,
+      "tokens_matched": [
+        "dip",
+        "barras"
+      ]
+    },
+    {
+      "ptName": "Bear Crawl",
+      "freeDbId": "Bear_Crawl_Sled_Drags",
+      "enName": "Bear Crawl Sled Drags",
+      "score": 0.5,
+      "tokens_matched": [
+        "bear",
+        "crawl"
+      ]
+    },
+    {
+      "ptName": "Dip em Cadeira",
+      "freeDbId": "Dip_Machine",
+      "enName": "Dip Machine",
+      "score": 0.5,
+      "tokens_matched": [
+        "dip",
+        "machine"
+      ]
+    },
+    {
+      "ptName": "Alongamento de Isquiotibiais (Faixa)",
+      "freeDbId": "Side_Standing_Long_Jump",
+      "enName": "Side Standing Long Jump",
+      "score": 0.5,
+      "tokens_matched": [
+        "alongamento",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Leg Swing (Balanço de Perna)",
+      "freeDbId": "Chair_Leg_Extended_Stretch",
+      "enName": "Chair Leg Extended Stretch",
+      "score": 0.5,
+      "tokens_matched": [
+        "leg",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Terra Sumo",
+      "freeDbId": "Sumo_Deadlift",
+      "enName": "Sumo Deadlift",
+      "score": 0.5,
+      "tokens_matched": [
+        "sumo"
+      ]
+    },
+    {
+      "ptName": "L-Sit",
+      "freeDbId": "3_4_Sit-Up",
+      "enName": "3/4 Sit-Up",
+      "score": 0.5,
+      "tokens_matched": [
+        "sit"
+      ]
+    },
+    {
+      "ptName": "Front Lever",
+      "freeDbId": "Leverage_Deadlift",
+      "enName": "Leverage Deadlift",
+      "score": 0.5,
+      "tokens_matched": [
+        "lever"
+      ]
+    },
+    {
+      "ptName": "Rosca 21 com Barra",
+      "freeDbId": "Barbell_Curl",
+      "enName": "Barbell Curl",
+      "score": 0.5,
+      "tokens_matched": [
+        "curl",
+        "barbell"
+      ]
+    },
+    {
+      "ptName": "Kettlebell Swing",
+      "freeDbId": "Circus_Bell",
+      "enName": "Circus Bell",
+      "score": 0.5,
+      "tokens_matched": [
+        "kettlebell"
+      ]
+    },
+    {
+      "ptName": "Prancha com Elevação de Quadril (Pike)",
+      "freeDbId": "Alternating_Deltoid_Raise",
+      "enName": "Alternating Deltoid Raise",
+      "score": 0.5,
+      "tokens_matched": [
+        "raise",
+        "lateral raise",
+        "front raise",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Glute Kickback de Joelhos",
+      "freeDbId": "Glute_Kickback",
+      "enName": "Glute Kickback",
+      "score": 0.5,
+      "tokens_matched": [
+        "glute",
+        "kickback"
+      ]
+    },
+    {
+      "ptName": "Cossack Squat (Agachamento Lateral)",
+      "freeDbId": "Barbell_Side_Split_Squat",
+      "enName": "Barbell Side Split Squat",
+      "score": 0.5,
+      "tokens_matched": [
+        "squat",
+        "side"
+      ]
+    },
+    {
+      "ptName": "Mobilidade de Ombro (Towel Stretch)",
+      "freeDbId": "Chest_And_Front_Of_Shoulder_Stretch",
+      "enName": "Chest And Front Of Shoulder Stretch",
+      "score": 0.5,
+      "tokens_matched": [
+        "de",
+        "shoulder",
+        "stretch"
+      ]
+    },
+    {
+      "ptName": "Remada com Elástico na Porta",
+      "freeDbId": "Alternating_Kettlebell_Row",
+      "enName": "Alternating Kettlebell Row",
+      "score": 0.42857142857142855,
+      "tokens_matched": [
+        "row",
+        "rowing",
+        "na"
+      ]
+    },
+    {
+      "ptName": "Agachamento Livre (Peso Corporal)",
+      "freeDbId": "Bodyweight_Squat",
+      "enName": "Bodyweight Squat",
+      "score": 0.4,
+      "tokens_matched": [
+        "squat",
+        "bodyweight"
+      ]
+    },
+    {
+      "ptName": "Encolhimento de Ombros com Halteres",
+      "freeDbId": "Push_Up_to_Side_Plank",
+      "enName": "Push Up to Side Plank",
+      "score": 0.4,
+      "tokens_matched": [
+        "encolhimento",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Superman (Extensão Dorsal no Chão)",
+      "freeDbId": "Hyperextensions_With_No_Hyperextension_Bench",
+      "enName": "Hyperextensions With No Hyperextension Bench",
+      "score": 0.4,
+      "tokens_matched": [
+        "extension",
+        "no"
+      ]
+    },
+    {
+      "ptName": "Hip 90/90 (Mobilidade de Quadril)",
+      "freeDbId": "On_Your_Side_Quad_Stretch",
+      "enName": "On Your Side Quad Stretch",
+      "score": 0.4,
+      "tokens_matched": [
+        "de",
+        "quadril"
+      ]
+    },
+    {
+      "ptName": "Pigeon Pose (Pombo — Quadril)",
+      "freeDbId": "On-Your-Back_Quad_Stretch",
+      "enName": "On-Your-Back Quad Stretch",
+      "score": 0.4,
+      "tokens_matched": [
+        "pigeon",
+        "quadril"
+      ]
+    },
+    {
+      "ptName": "Chair Squat (Agachamento na Cadeira)",
+      "freeDbId": "Chair_Squat",
+      "enName": "Chair Squat",
+      "score": 0.4,
+      "tokens_matched": [
+        "chair",
+        "squat"
+      ]
+    }
+  ],
+  "low": [
+    {
+      "ptName": "Cadeira Extensora",
+      "freeDbId": "Ab_Crunch_Machine",
+      "enName": "Ab Crunch Machine",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "machine"
+      ]
+    },
+    {
+      "ptName": "Oblíquo com Rotação",
+      "freeDbId": "Decline_Oblique_Crunch",
+      "enName": "Decline Oblique Crunch",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "oblique"
+      ]
+    },
+    {
+      "ptName": "Hollow Body Hold",
+      "freeDbId": "Body-Up",
+      "enName": "Body-Up",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "body"
+      ]
+    },
+    {
+      "ptName": "Sprint Curto (Tiro)",
+      "freeDbId": "Bench_Sprint",
+      "enName": "Bench Sprint",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "sprint"
+      ]
+    },
+    {
+      "ptName": "Prancha com Toque no Ombro",
+      "freeDbId": "Push_Up_to_Side_Plank",
+      "enName": "Push Up to Side Plank",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "plank",
+        "toque"
+      ]
+    },
+    {
+      "ptName": "Handstand Hold (Parada de Mão)",
+      "freeDbId": "Chest_And_Front_Of_Shoulder_Stretch",
+      "enName": "Chest And Front Of Shoulder Stretch",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "handstand",
+        "de"
+      ]
+    },
+    {
+      "ptName": "Rotação Torácica",
+      "freeDbId": "Elbow_to_Knee",
+      "enName": "Elbow to Knee",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "torácica"
+      ]
+    },
+    {
+      "ptName": "Ankle Mobility Drill",
+      "freeDbId": "Ankle_Circles",
+      "enName": "Ankle Circles",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "ankle"
+      ]
+    },
+    {
+      "ptName": "Rotação de Braços",
+      "freeDbId": "Alternating_Deltoid_Raise",
+      "enName": "Alternating Deltoid Raise",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "de"
+      ]
+    },
+    {
+      "ptName": "Agachamento com Rotação de Ombro",
+      "freeDbId": "Alternating_Cable_Shoulder_Press",
+      "enName": "Alternating Cable Shoulder Press",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "de",
+        "shoulder"
+      ]
+    },
+    {
+      "ptName": "Skin the Cat",
+      "freeDbId": "Around_The_Worlds",
+      "enName": "Around The Worlds",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "the"
+      ]
+    },
+    {
+      "ptName": "Snatch com Haltere",
+      "freeDbId": "Arnold_Dumbbell_Press",
+      "enName": "Arnold Dumbbell Press",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "dumbbell"
+      ]
+    },
+    {
+      "ptName": "Thruster (Agachamento + Press)",
+      "freeDbId": "Alternating_Floor_Press",
+      "enName": "Alternating Floor Press",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "press"
+      ]
+    },
+    {
+      "ptName": "Escalador com Torção",
+      "freeDbId": "Elbow_to_Knee",
+      "enName": "Elbow to Knee",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "torção"
+      ]
+    },
+    {
+      "ptName": "Swing Lateral com Elástico",
+      "freeDbId": "Band_Assisted_Pull-Up",
+      "enName": "Band Assisted Pull-Up",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "band",
+        "resistance band"
+      ]
+    },
+    {
+      "ptName": "Superman com Alternância",
+      "freeDbId": "3_4_Sit-Up",
+      "enName": "3/4 Sit-Up",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "superman"
+      ]
+    },
+    {
+      "ptName": "Wall Sit (Cadeira na Parede)",
+      "freeDbId": "Seated_Flat_Bench_Leg_Pull-In",
+      "enName": "Seated Flat Bench Leg Pull-In",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "machine",
+        "seated"
+      ]
+    },
+    {
+      "ptName": "Nordic Curl (Curl Nórdico)",
+      "freeDbId": "Alternate_Hammer_Curl",
+      "enName": "Alternate Hammer Curl",
+      "score": 0.3333333333333333,
+      "tokens_matched": [
+        "curl"
+      ]
+    },
+    {
+      "ptName": "Rosca Alternada com Halteres",
+      "freeDbId": "Alternate_Hammer_Curl",
+      "enName": "Alternate Hammer Curl",
+      "score": 0.25,
+      "tokens_matched": [
+        "curl"
+      ]
+    },
+    {
+      "ptName": "Skipping (Corrida no Lugar)",
+      "freeDbId": "Arnold_Dumbbell_Press",
+      "enName": "Arnold Dumbbell Press",
+      "score": 0.25,
+      "tokens_matched": [
+        "no"
+      ]
+    },
+    {
+      "ptName": "Corrida Elevada no Lugar",
+      "freeDbId": "Arnold_Dumbbell_Press",
+      "enName": "Arnold Dumbbell Press",
+      "score": 0.25,
+      "tokens_matched": [
+        "no"
+      ]
+    },
+    {
+      "ptName": "Frog Jump (Salto Sapo)",
+      "freeDbId": "Barbell_Squat_To_A_Bench",
+      "enName": "Barbell Squat To A Bench",
+      "score": 0.25,
+      "tokens_matched": [
+        "salto"
+      ]
+    }
+  ],
+  "noMatch": [
+    "Burpee",
+    "Burpee",
+    "Remo Ergométrico",
+    "Cat-Cow (Mobilidade de Coluna)",
+    "Rolamento em Espuma (Foam Roll Costas)",
+    "Bicicleta Ergométrica",
+    "Elíptico"
+  ]
+}

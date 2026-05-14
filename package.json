@@ -13,6 +13,7 @@
     "seed:exercises": "tsx src/scripts/seedExercisesLibrary.ts",
     "seed:refresh-freedb": "tsx src/scripts/refreshFreeExerciseDb.ts",
     "seed:platform-protocols": "tsx src/scripts/seedPlatformProtocols.ts",
+    "map:free-db-ids": "tsx src/scripts/mapFreeDbIds.ts",
     "backfill:exercises": "tsx src/scripts/backfillWorkoutPlanExerciseIds.ts",
     "migrate": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",

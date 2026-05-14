@@ -1,5 +1,9 @@
 import pool from '../config/database';
-import { sanitizeWorkoutPlanItem, type WorkoutPlanItemPayload } from './personalWorkoutPlanService';
+import {
+  sanitizeWorkoutPlanItem,
+  validateWorkoutItems,
+  type WorkoutPlanItemPayload,
+} from './personalWorkoutPlanService';
 import { getPersonalStudentSnapshot } from './personalDashboardService';
 
 export type ProtocolScope = 'personal' | 'academy' | 'platform';
@@ -25,7 +29,18 @@ export type WorkoutProtocolRow = {
 function mapProtocolRow(r: Record<string, unknown>, isFavorite?: boolean): WorkoutProtocolRow {
   const payload = r.payload_json;
   const rawItems = Array.isArray(payload) ? payload : [];
-  const items = rawItems.map((x) => sanitizeWorkoutPlanItem(x)).filter((x): x is WorkoutPlanItemPayload => x !== null);
+  // GET path: tolerant — legacy items pass through with their flag intact
+  const items = rawItems
+    .map((x) => {
+      const result = sanitizeWorkoutPlanItem(x);
+      if (result.ok) return result.item;
+      // Keep legacy items visible in GET; they just can't be saved again
+      if (x && typeof x === 'object' && (x as Record<string, unknown>).legacy === true) {
+        return x as WorkoutPlanItemPayload;
+      }
+      return null;
+    })
+    .filter((x): x is WorkoutPlanItemPayload => x !== null);
   return {
     id: Number(r.id),
     scope: r.scope as ProtocolScope,
@@ -153,9 +168,7 @@ export async function createWorkoutProtocol(
   const title = String(input.title || '').trim().slice(0, 255);
   if (!title) throw new Error('title is required');
 
-  const items = (Array.isArray(input.items) ? input.items : [])
-    .map((x) => sanitizeWorkoutPlanItem(x))
-    .filter((x): x is WorkoutPlanItemPayload => x !== null);
+  const items = validateWorkoutItems(Array.isArray(input.items) ? input.items : []);
   if (!items.length) throw new Error('At least one valid exercise item is required');
 
   const tags = sanitizeTags(input.tags);
@@ -249,9 +262,7 @@ export async function updateWorkoutProtocol(
 
   let items: WorkoutPlanItemPayload[];
   if (input.items !== undefined) {
-    items = (Array.isArray(input.items) ? input.items : [])
-      .map((x) => sanitizeWorkoutPlanItem(x))
-      .filter((x): x is WorkoutPlanItemPayload => x !== null);
+    items = validateWorkoutItems(Array.isArray(input.items) ? input.items : []);
     if (!items.length) throw new Error('At least one valid exercise item is required');
   } else {
     items = mapProtocolRow(row as Record<string, unknown>).items;
@@ -321,9 +332,7 @@ export async function createPlatformProtocol(input: {
 }) {
   const title = String(input.title || '').trim().slice(0, 255);
   if (!title) throw new Error('title is required');
-  const items = (Array.isArray(input.items) ? input.items : [])
-    .map((x) => sanitizeWorkoutPlanItem(x))
-    .filter((x): x is WorkoutPlanItemPayload => x !== null);
+  const items = validateWorkoutItems(Array.isArray(input.items) ? input.items : []);
   if (!items.length) throw new Error('At least one valid exercise item is required');
   const tags = sanitizeTags(input.tags);
   const weekPreset = String(input.weekPreset || '5').slice(0, 32);
@@ -381,9 +390,7 @@ export async function updatePlatformProtocol(
 
   let items = cur.items;
   if (input.items !== undefined) {
-    items = (Array.isArray(input.items) ? input.items : [])
-      .map((x) => sanitizeWorkoutPlanItem(x))
-      .filter((x): x is WorkoutPlanItemPayload => x !== null);
+    items = validateWorkoutItems(Array.isArray(input.items) ? input.items : []);
     if (!items.length) throw new Error('At least one valid exercise item is required');
   }
 

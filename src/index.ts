@@ -56,6 +56,7 @@ import { ensureProductsSchema } from './db/ensureProductsSchema';
 import { backfillUserProducts } from './db/backfillUserProducts';
 import { scheduleDataRetention } from './jobs/dataRetention';
 import { getRedisClient } from './lib/redisClient';
+import { runMigrations } from './db/runMigrations';
 
 // ---------------------------------------------------------------------------
 // Sentry — inicializa antes de qualquer middleware
@@ -74,6 +75,8 @@ if (process.env.SENTRY_DSN) {
 // Cada passo logado com tempo decorrido para diagnóstico de cold start.
 // ---------------------------------------------------------------------------
 async function runBootChain(): Promise<void> {
+  await runMigrations();
+
   const steps: Array<[string, () => Promise<unknown>]> = [
     ['ensureUsersCoreColumns', ensureUsersCoreColumns],
     ['ensureComplianceSchema', ensureComplianceSchema],

@@ -16,8 +16,10 @@
     "map:free-db-ids": "tsx src/scripts/mapFreeDbIds.ts",
     "backfill:exercises": "tsx src/scripts/backfillWorkoutPlanExerciseIds.ts",
     "migrate": "node-pg-migrate up",
+    "migrate:up": "node-pg-migrate up",
     "migrate:down": "node-pg-migrate down",
     "migrate:status": "node-pg-migrate status",
+    "migrate:create": "node-pg-migrate create",
     "test": "jest --passWithNoTests",
     "lint": "eslint src --ext .ts"
   },

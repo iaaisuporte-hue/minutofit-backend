@@ -437,16 +437,13 @@ router.patch('/protocols/:protocolId', roleCheckMiddleware('personal'), async (r
 router.delete('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-    if (!academyId) {
-      return res.status(400).json({ success: false, error: 'Academy context required' });
-    }
     const protocolId = Number(req.params.protocolId);
     if (!Number.isFinite(protocolId)) {
       return res.status(400).json({ success: false, error: 'Invalid protocol id' });
     }
     const ok = await deleteWorkoutProtocol(req.user!.id, academyId, protocolId);
     if (!ok) {
-      return res.status(404).json({ success: false, error: 'Protocol not found' });
+      return res.status(404).json({ success: false, error: 'Protocol not found or not owned by you' });
     }
     res.json({ success: true, data: { deleted: true } });
   } catch (error: any) {

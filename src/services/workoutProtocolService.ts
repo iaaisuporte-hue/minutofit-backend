@@ -284,12 +284,12 @@ export async function updateWorkoutProtocol(
   return mapProtocolRow(result.rows[0] as Record<string, unknown>, false);
 }
 
-export async function deleteWorkoutProtocol(personalId: number, academyId: number, protocolId: number): Promise<boolean> {
+export async function deleteWorkoutProtocol(personalId: number, academyId: number | null, protocolId: number): Promise<boolean> {
   const result = await pool.query(
     `DELETE FROM workout_protocols
      WHERE id = $1
        AND owner_personal_id = $2
-       AND academy_id = $3
+       AND ($3::int IS NULL AND academy_id IS NULL OR academy_id = $3)
        AND scope <> 'platform'`,
     [protocolId, personalId, academyId]
   );

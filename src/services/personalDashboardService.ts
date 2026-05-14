@@ -27,6 +27,9 @@ type DashboardStudent = {
   streakDays: number;
   lastWorkoutISO: string | null;
   adherencePct: number;
+  adherenceScore: number;
+  engagementScore: number;
+  riskScore: number;
   risk: DashboardRisk;
   goal: DashboardGoal;
   notes: string | null;
@@ -152,6 +155,38 @@ function resolveEngagementStatus(input: {
   if (input.risk !== 'ok') return 'attention';
   if (input.streakDays >= 3 && input.adherencePct >= 80) return 'evolving';
   return 'on_track';
+}
+
+function computeEngagementScore(input: {
+  adherencePct: number;
+  workouts7d: number;
+  streakDays: number;
+  checkins7d: number;
+}): number {
+  const recency7d = clamp((input.workouts7d / 4) * 100, 0, 100);
+  const streakNorm = clamp((input.streakDays / 14) * 100, 0, 100);
+  const checkinFreq = clamp((input.checkins7d / 7) * 100, 0, 100);
+  const score =
+    0.45 * input.adherencePct +
+    0.25 * recency7d +
+    0.15 * streakNorm +
+    0.15 * checkinFreq;
+  return Math.round(clamp(score, 0, 100));
+}
+
+function computeRiskScore(input: {
+  engagementScore: number;
+  metabolismDelta7d: number | null;
+  latestSleptWell: boolean | null;
+  lastWorkoutISO: string | null;
+  lastCheckinISO: string | null;
+}): number {
+  let score = 100 - input.engagementScore;
+  if (input.metabolismDelta7d !== null && input.metabolismDelta7d <= -15) score += 15;
+  if (input.latestSleptWell === false) score += 10;
+  const touchpointGap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO);
+  if (touchpointGap >= 10) score += 10;
+  return Math.round(clamp(score, 0, 100));
 }
 
 function bandFromScore(score: number | null): MetabolicBand {
@@ -331,6 +366,70 @@ function buildIntelligentAlerts(students: DashboardStudent[]): DashboardAlert[] 
   return alerts.slice(0, 6);
 }
 
+type RetentionInsight = {
+  kind: 'adherence_correlation' | 'individual_drop' | 'portfolio_signal';
+  title: string;
+  body: string;
+  studentId: string | null;
+};
+
+function computeRetentionInsights(students: DashboardStudent[]): RetentionInsight[] {
+  if (students.length === 0) return [];
+  const insights: RetentionInsight[] = [];
+
+  // Correlação: alunos com 3+ treinos/sem vs demais
+  const frequent = students.filter((s) => s.workouts7d >= 3);
+  const infrequent = students.filter((s) => s.workouts7d < 3);
+  if (frequent.length > 0 && infrequent.length > 0) {
+    const avgFreq = Math.round(frequent.reduce((a, s) => a + s.adherencePct, 0) / frequent.length);
+    const avgInfreq = Math.round(
+      infrequent.reduce((a, s) => a + s.adherencePct, 0) / infrequent.length
+    );
+    if (avgFreq > avgInfreq + 10) {
+      insights.push({
+        kind: 'adherence_correlation',
+        title: 'Frequência e aderência andam juntas',
+        body: `Alunos com 3+ treinos/sem têm aderência média ${avgFreq}% — ${avgFreq - avgInfreq}pts acima dos demais. Vale incentivar esse ritmo.`,
+        studentId: null,
+      });
+    }
+  }
+
+  // Sinal individual: aluno com maior queda de risco recente
+  const worstDrop = [...students]
+    .filter((s) => s.riskScore >= 60 && s.workouts7d <= 1)
+    .sort((a, b) => b.riskScore - a.riskScore)[0];
+  if (worstDrop) {
+    const daysSince = daysSinceLastWorkout(worstDrop.lastWorkoutISO);
+    insights.push({
+      kind: 'individual_drop',
+      title: `${worstDrop.name} com queda de aderência`,
+      body: `Sem treino há ${daysSince} dias e engajamento baixo nas últimas 2 semanas. Um contato rápido pode fazer diferença.`,
+      studentId: worstDrop.id,
+    });
+  }
+
+  // Sinal de carteira: score metabólico em queda
+  const metabolicDropCount = students.filter(
+    (s) => s.metabolismDelta7d !== null && s.metabolismDelta7d <= -10
+  ).length;
+  if (metabolicDropCount >= 2) {
+    insights.push({
+      kind: 'portfolio_signal',
+      title: `${metabolicDropCount} alunos com score metabólico em queda`,
+      body: 'Vale revisar carga, volume e recuperação desta semana para evitar fadiga acumulada.',
+      studentId: null,
+    });
+  }
+
+  return insights.slice(0, 3);
+}
+
+function daysSinceLastWorkout(iso: string | null): number {
+  if (!iso) return 999;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24));
+}
+
 export async function getPersonalDashboard(personalId: number, academyId?: number | null) {
   const result = await pool.query(
     `SELECT
@@ -467,10 +566,26 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     const baselineScore = m?.baseline_score ?? null;
     const delta =
       latestScore !== null && baselineScore !== null ? latestScore - baselineScore : null;
+    const engagementScore = computeEngagementScore({
+      adherencePct: s.adherencePct,
+      workouts7d: s.workouts7d,
+      streakDays: s.streakDays,
+      checkins7d: s.checkins7d,
+    });
+    const riskScore = computeRiskScore({
+      engagementScore,
+      metabolismDelta7d: delta,
+      latestSleptWell: s.latestSleptWell,
+      lastWorkoutISO: s.lastWorkoutISO,
+      lastCheckinISO: s.lastCheckinISO,
+    });
     const { numericId: _omit, ...rest } = s;
     void _omit;
     return {
       ...rest,
+      adherenceScore: s.adherencePct,
+      engagementScore,
+      riskScore,
       metabolismScore: latestScore,
       metabolismBand: bandFromScore(latestScore),
       metabolismTrend: normalizeTrend(m?.latest_trend),
@@ -511,6 +626,13 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     { low: 0, moderate: 0, high: 0, unknown: 0 }
   );
 
+  const atRiskTop = [...students]
+    .filter((s) => s.riskScore >= 55)
+    .sort((a, b) => b.riskScore - a.riskScore)
+    .slice(0, 8);
+
+  const insights = computeRetentionInsights(students);
+
   return {
     summary: {
       totalStudents,
@@ -526,6 +648,8 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       needsFollowUp,
       intelligentAlerts: buildIntelligentAlerts(students),
       metabolismDistribution,
+      atRiskTop,
+      insights,
     },
     students,
     generatedAt: new Date().toISOString(),

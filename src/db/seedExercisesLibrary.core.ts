@@ -120,7 +120,10 @@ async function upsertExerciseMedia(
   await pool.query(
     `INSERT INTO exercise_media (exercise_id, media_type, url, source, is_primary)
      VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT DO NOTHING`,
+     ON CONFLICT (exercise_id, url) DO UPDATE
+       SET is_primary = EXCLUDED.is_primary,
+           source     = EXCLUDED.source,
+           updated_at = NOW()`,
     [exerciseId, mediaType, url, source, isPrimary]
   );
 }

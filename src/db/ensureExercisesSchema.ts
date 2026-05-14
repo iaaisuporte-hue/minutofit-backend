@@ -48,8 +48,23 @@ export async function ensureExercisesSchema(): Promise<void> {
       source      VARCHAR(64),
       is_primary  BOOLEAN NOT NULL DEFAULT FALSE,
       created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT exercise_media_exercise_url_uq UNIQUE (exercise_id, url)
     )
+  `);
+
+  // Add unique constraint idempotently on existing tables that may not have it
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'exercise_media_exercise_url_uq'
+      ) THEN
+        ALTER TABLE exercise_media
+          ADD CONSTRAINT exercise_media_exercise_url_uq UNIQUE (exercise_id, url);
+      END IF;
+    END$$
   `);
 
   await pool.query(`

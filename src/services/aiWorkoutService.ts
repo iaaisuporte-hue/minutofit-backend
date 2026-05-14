@@ -2,9 +2,10 @@
  * @deprecated Use src/services/ai/workoutAi.ts diretamente.
  * Este arquivo mantém compatibilidade com imports existentes.
  */
-export type { GeneratedExercise, GeneratedWorkout } from './ai/workoutAi';
+export type { GeneratedExercise, GeneratedDay, GeneratedWeeklyPlan } from './ai/workoutAi';
 
 import { generateWorkout } from './ai/workoutAi';
+import type { GeneratedWeeklyPlan } from './ai/workoutAi';
 
 /**
  * @deprecated Prefira generateWorkout() de ./ai/workoutAi que exige userId para rate limit.
@@ -13,6 +14,6 @@ import { generateWorkout } from './ai/workoutAi';
 export async function generateWorkoutFromPrompt(
   prompt: string,
   catalogNames: string[],
-): Promise<import('./ai/workoutAi').GeneratedWorkout> {
+): Promise<GeneratedWeeklyPlan> {
   return generateWorkout(prompt, catalogNames, 'system');
 }

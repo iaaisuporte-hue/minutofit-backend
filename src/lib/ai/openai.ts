@@ -49,8 +49,8 @@ export const TOKEN_BUDGET = {
   SUGGEST_SHORT: 500,
   /** Resumo inteligente: feedback de sessão, análise de aderência. */
   SMART_SUMMARY: 800,
-  /** Ficha de treino: JSON com até 5 exercícios + reasoning minimal. */
-  WORKOUT_PLAN: 1500,
+  /** Plano semanal: JSON com até 5 dias × 7 exercícios + reasoning minimal. */
+  WORKOUT_PLAN: 3000,
 } as const;
 
 // ---------------------------------------------------------------------------

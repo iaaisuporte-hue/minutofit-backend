@@ -2,26 +2,27 @@
  * Adiciona coluna exercise_id opcional na tabela videos.
  * Permite vincular vídeos institucionais (com flags de acessibilidade) a
  * exercícios da biblioteca MetaCore sem quebrar vídeos legados.
+ *
+ * Idempotente: IF NOT EXISTS protege contra execução em BDs onde
+ * a coluna/índice já existem.
  */
 
 /** @type {import('node-pg-migrate').MigrationBuilder} */
 exports.up = (pgm) => {
-  pgm.addColumn('videos', {
-    exercise_id: {
-      type: 'uuid',
-      notNull: false,
-      references: '"exercises"',
-      onDelete: 'SET NULL',
-    },
-  });
+  pgm.sql(`
+    ALTER TABLE videos
+    ADD COLUMN IF NOT EXISTS exercise_id uuid
+      REFERENCES exercises(id) ON DELETE SET NULL
+  `);
 
-  pgm.createIndex('videos', 'exercise_id', {
-    name: 'videos_exercise_id_idx',
-    where: 'exercise_id IS NOT NULL',
-  });
+  pgm.sql(`
+    CREATE INDEX IF NOT EXISTS videos_exercise_id_idx
+    ON videos (exercise_id)
+    WHERE exercise_id IS NOT NULL
+  `);
 };
 
 exports.down = (pgm) => {
-  pgm.dropIndex('videos', 'exercise_id', { name: 'videos_exercise_id_idx' });
+  pgm.sql(`DROP INDEX IF EXISTS videos_exercise_id_idx`);
   pgm.dropColumn('videos', 'exercise_id');
 };

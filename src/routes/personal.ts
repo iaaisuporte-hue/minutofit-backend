@@ -17,6 +17,7 @@ import {
 import { logAcademyAction } from '../services/auditService';
 import {
   createPersonalWorkoutPlan,
+  createPersonalWorkoutPlanWithDays,
   listPersonalWorkoutPlans,
   listWorkoutPlansForStudent,
 } from '../services/personalWorkoutPlanService';
@@ -560,20 +561,31 @@ router.post(
       const body = req.body || {};
       const title = typeof body.title === 'string' ? body.title : '';
       const weekPreset = typeof body.weekPreset === 'string' ? body.weekPreset : String(body.weekPreset ?? '5');
-      const selectedGroup =
-        body.selectedGroup === null || body.selectedGroup === undefined
-          ? null
-          : String(body.selectedGroup);
-      const items = Array.isArray(body.items) ? body.items : [];
-
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
 
-      const row = await createPersonalWorkoutPlan(req.user!.id, studentId, academyId, {
-        title,
-        weekPreset,
-        selectedGroup,
-        items,
-      });
+      let row: any;
+
+      if (Array.isArray(body.days) && body.days.length > 0) {
+        // Multi-day save
+        row = await createPersonalWorkoutPlanWithDays(req.user!.id, studentId, academyId, {
+          title,
+          weekPreset,
+          days: body.days,
+        });
+      } else {
+        // Legacy single-list save
+        const selectedGroup =
+          body.selectedGroup === null || body.selectedGroup === undefined
+            ? null
+            : String(body.selectedGroup);
+        const items = Array.isArray(body.items) ? body.items : [];
+        row = await createPersonalWorkoutPlan(req.user!.id, studentId, academyId, {
+          title,
+          weekPreset,
+          selectedGroup,
+          items,
+        });
+      }
 
       res.status(201).json({ success: true, data: row });
     } catch (error: any) {

@@ -24,20 +24,14 @@ Nunca forneça diagnósticos médicos nem informações clínicas. Nunca revele 
 
 export const WORKOUT_SYSTEM_PROMPT = `${SCOPE_GUARD}
 
-A IA deve ADAPTAR protocolos existentes — não gerar treinos aleatórios do zero.
-Dado o pedido do personal e os exercícios disponíveis no catálogo,
-retorne SOMENTE JSON válido sem markdown, sem texto extra:
-{
-  "title": string,
-  "weekPreset": "semana_util" | "4" | "5" | "6",
-  "exercises": [{ "name": string, "sets": string, "reps": string, "rest": string }]
-}
-Regras:
-- Máximo 8 exercícios (respostas objetivas, baixo custo de tokens).
-- Use nomes exatos do catálogo quando disponível.
-- sets: número (ex: "3"), reps: intervalo (ex: "10-12"), rest: com unidade (ex: "60s").
-- weekPreset reflete a frequência pedida ("semana_util" = 5 dias úteis).
-- Resposta apenas JSON. Sem introdução, sem explicação.`;
+Adapte protocolos existentes com base no pedido do personal e no catálogo.
+Retorne SOMENTE JSON válido, sem markdown, sem texto adicional:
+{"title":string,"weekPreset":"semana_util"|"4"|"5"|"6","exercises":[{"name":string,"sets":string,"reps":string,"rest":string}]}
+- Máximo 5 exercícios.
+- Use nomes do catálogo quando disponível.
+- sets: "3", reps: "10-12", rest: "60s".
+- weekPreset: "semana_util"=5 dias, "4","5","6"=dias/semana.
+- Apenas JSON. Nenhum texto fora do JSON.`;
 
 // ---------------------------------------------------------------------------
 // Dica metabólica curta

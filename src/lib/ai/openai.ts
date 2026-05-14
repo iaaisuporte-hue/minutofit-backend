@@ -46,7 +46,7 @@ export const TOKEN_BUDGET = {
   /** Resumo inteligente: feedback de sessão, análise de aderência. */
   SMART_SUMMARY: 300,
   /** Ficha de treino objetiva (adaptação de protocolo existente). */
-  WORKOUT_PLAN: 250,
+  WORKOUT_PLAN: 500,
 } as const;
 
 // ---------------------------------------------------------------------------

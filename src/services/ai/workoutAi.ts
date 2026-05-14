@@ -120,11 +120,25 @@ export async function generateWorkout(
   const catalog = await getExerciseCatalogForAI();
   const validIds = new Set(catalog.map((e) => e.id));
 
-  // Formato compacto para o prompt (ID — Nome — equipamento)
+  // Sampling balanceado: pega até 10 itens de cada grupo muscular para garantir
+  // cobertura (peito, costas, pernas, ombro, bíceps, tríceps, abdômen, glúteo etc.).
+  // Slicing puro alfabético tende a concentrar em poucos grupos.
+  const PER_GROUP = 10;
+  const TOTAL_CAP = 80; // limite de tokens — 80 itens × ~40 tokens ≈ 3200 tokens de input
+  const byGroup = new Map<string, typeof catalog>();
+  for (const ex of catalog) {
+    const key = (ex.bodyPart || 'outros').toLowerCase();
+    const arr = byGroup.get(key) ?? [];
+    if (arr.length < PER_GROUP) {
+      arr.push(ex);
+      byGroup.set(key, arr);
+    }
+  }
+  const sampled = Array.from(byGroup.values()).flat().slice(0, TOTAL_CAP);
+
   const catalogSection =
-    catalog.length > 0
-      ? `Catálogo disponível (exercise_id — nome — equipamento):\n${catalog
-          .slice(0, 120) // Token budget: ~120 exercícios no prompt
+    sampled.length > 0
+      ? `Catálogo disponível (exercise_id — nome — equipamento):\n${sampled
           .map((e) => `${e.id} — ${e.name} — ${e.equipment}`)
           .join('\n')}\n\n`
       : '';
@@ -136,6 +150,9 @@ export async function generateWorkout(
     maxOutputTokens: TOKEN_BUDGET.WORKOUT_PLAN,
     jsonOutput: true,
     reasoningEffort: 'minimal',
+    // Reasoning models são lentos. 45s cobre p95 observado em produção com prompt
+    // grande (catálogo + regras + JSON de 4-5 dias) sem cair em UX ruim de espera.
+    timeoutMs: 45_000,
   });
 
   const jsonStr = extractJson(text);

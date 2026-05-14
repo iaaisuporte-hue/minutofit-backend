@@ -285,8 +285,13 @@ router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req:
     const workout = await generateWorkout(prompt, catalogNames as string[], String(req.user!.id));
     res.json({ success: true, data: workout });
   } catch (error: any) {
-    const status = error.message?.includes('Limite de') ? 429 : 500;
-    res.status(status).json({ success: false, error: error.message || 'Falha na geração com IA.' });
+    const msg = String(error?.message ?? '');
+    const status = msg.includes('Limite de')
+      ? 429
+      : msg.toLowerCase().includes('aborted') || msg.includes('demorou')
+        ? 504
+        : 500;
+    res.status(status).json({ success: false, error: msg || 'Falha na geração com IA.' });
   }
 });
 

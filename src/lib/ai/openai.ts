@@ -235,8 +235,17 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
 
     return { text, usage };
   } catch (err: any) {
-    if (err.name === 'AbortError') {
-      throw new Error('A IA demorou demais para responder. Tente novamente.');
+    // OpenAI SDK v6 lança APIUserAbortError (com message 'Request was aborted.')
+    // quando o AbortController interno expira. O nome do erro NÃO é 'AbortError'.
+    // Detectamos por constructor.name, message ou pela presença do signal abortado.
+    const isAbort =
+      err?.constructor?.name === 'APIUserAbortError' ||
+      err?.name === 'APIUserAbortError' ||
+      err?.name === 'AbortError' ||
+      typeof err?.message === 'string' && err.message.toLowerCase().includes('aborted');
+    if (isAbort) {
+      logger.warn({ model, timeoutMs }, '[AI] request aborted (timeout)');
+      throw new Error('A IA demorou demais para responder. Tente novamente em alguns instantes.');
     }
     throw err;
   } finally {

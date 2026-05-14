@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
+import { handleMpPreapprovalWebhook } from '../services/personalBillingService';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -96,7 +97,7 @@ router.post('/mercadopago', async (req: Request, res: Response) => {
       await handlePaymentNotification(data);
     } else if (type === 'plan') {
       await handlePlanNotification(data);
-    } else if (type === 'subscription') {
+    } else if (type === 'subscription' || type === 'subscription_preapproval' || type === 'preapproval') {
       await handleSubscriptionNotification(data);
     }
 
@@ -159,8 +160,15 @@ async function handleSubscriptionNotification(data: any) {
   try {
     const preapprovalId = data.id;
     const status = data.status;
+    const externalReference: string | undefined = data.external_reference;
 
-    logger.info({ preapprovalId, status }, 'Subscription notification');
+    logger.info({ preapprovalId, status, externalReference }, 'Subscription notification');
+
+    // Route personal-sub webhooks to the personal billing service
+    if (externalReference?.startsWith('personal-sub:')) {
+      await handleMpPreapprovalWebhook(preapprovalId, status, data);
+      return;
+    }
 
     const result = await pool.query(
       `SELECT id, user_id FROM user_subscriptions

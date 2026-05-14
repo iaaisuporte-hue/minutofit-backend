@@ -7,6 +7,8 @@
  *  - Parâmetros incompatíveis com GPT-5 são proibidos:
  *      temperature, top_p, frequency_penalty, presence_penalty, max_tokens
  *  - Único parâmetro de controle de saída: max_output_tokens
+ *  - gpt-5-mini é reasoning model: reservar budget generoso para compensar
+ *    tokens internos de reasoning. Usar effort='minimal' para minimizar custo.
  */
 
 import OpenAI from 'openai';
@@ -34,24 +36,25 @@ export function getOpenAIClient(): OpenAI {
 export const AI_MODEL: string = process.env.OPENAI_MODEL ?? 'gpt-5-mini';
 
 // ---------------------------------------------------------------------------
-// Orçamentos rígidos de tokens de saída (max_output_tokens)
-// Valores conservadores para MVP — revisitar com dados reais de produção.
+// Orçamentos de tokens de saída (max_output_tokens)
+// IMPORTANTE: gpt-5-mini é reasoning model — tokens internos de "thinking"
+// consomem parte do budget antes do output real. Valores incluem margem para
+// reasoning com effort='minimal' (~400–600 tokens extras).
 // ---------------------------------------------------------------------------
 
 export const TOKEN_BUDGET = {
   /** Classificação simples: intenção, energia, intensidade. */
-  CLASSIFY: 80,
+  CLASSIFY: 200,
   /** Sugestão curta: dica metabólica, ajuste de protocolo. */
-  SUGGEST_SHORT: 150,
+  SUGGEST_SHORT: 500,
   /** Resumo inteligente: feedback de sessão, análise de aderência. */
-  SMART_SUMMARY: 300,
-  /** Ficha de treino objetiva (adaptação de protocolo existente). */
-  WORKOUT_PLAN: 500,
+  SMART_SUMMARY: 800,
+  /** Ficha de treino: JSON com até 5 exercícios + reasoning minimal. */
+  WORKOUT_PLAN: 1500,
 } as const;
 
 // ---------------------------------------------------------------------------
 // Rate limit por usuário (in-memory)
-// Produção futura: substituir por Redis para multi-instância.
 // ---------------------------------------------------------------------------
 
 interface RateLimitEntry {
@@ -60,7 +63,6 @@ interface RateLimitEntry {
 }
 
 const _rateLimitStore = new Map<string, RateLimitEntry>();
-
 const HOURLY_LIMIT = 10;
 
 export function checkUserRateLimit(userId: string): void {
@@ -94,32 +96,31 @@ export interface AiCallOptions {
   instructions: string;
   /** Mensagem do usuário. */
   input: string;
-  /** Limite rígido de tokens de saída. Obrigatório. */
+  /** Limite rígido de tokens de saída. Obrigatório. Deve incluir margem para reasoning. */
   maxOutputTokens: number;
   /**
+   * Esforço de reasoning para modelos GPT-5.
+   * Default: 'minimal' — menos tokens de thinking, mais rápido, mais barato.
+   * Aumentar para 'low' ou 'medium' apenas quando precisão analítica for crítica.
+   */
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | null;
+  /**
    * Força saída em JSON via text.format: json_object.
-   * Distinto de temperature/top_p — é suportado no GPT-5.
-   * Usar quando a resposta precisa ser JSON estruturado confiável.
+   * Requer que a palavra "json" apareça no input (injetada automaticamente se ausente).
    */
   jsonOutput?: boolean;
-  /** Timeout em ms. Padrão: 15 000. */
+  /** Timeout em ms. Padrão: 20 000 (reasoning models são mais lentos). */
   timeoutMs?: number;
 }
 
 export interface AiCallResult {
   text: string;
-  usage: { inputTokens: number; outputTokens: number } | null;
+  usage: { inputTokens: number; outputTokens: number; reasoningTokens: number } | null;
 }
 
 const RETRY_DELAY_MS = 1500;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
-/**
- * Executa uma chamada à OpenAI Responses API (GPT-5 compatible).
- *
- * Parâmetros usados: model, input, instructions, max_output_tokens.
- * Parâmetros proibidos: temperature, top_p, frequency_penalty, max_tokens.
- */
 export async function aiCall(opts: AiCallOptions): Promise<AiCallResult> {
   if (opts.userId) {
     checkUserRateLimit(opts.userId);
@@ -148,7 +149,8 @@ async function _executeWithRetry(opts: AiCallOptions, attempt = 0): Promise<AiCa
 async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
   const client = getOpenAIClient();
   const model = opts.model ?? AI_MODEL;
-  const timeoutMs = opts.timeoutMs ?? 15_000;
+  // Reasoning models são mais lentos — timeout padrão maior
+  const timeoutMs = opts.timeoutMs ?? 20_000;
 
   // A API exige a palavra "json" no input quando json_object está ativo.
   const safeInput =
@@ -166,6 +168,7 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
         instructions: opts.instructions,
         input: safeInput,
         max_output_tokens: opts.maxOutputTokens,
+        reasoning: { effort: opts.reasoningEffort ?? 'minimal' },
         ...(opts.jsonOutput
           ? { text: { format: { type: 'json_object' as const } } }
           : {}),
@@ -173,16 +176,36 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
       { signal: controller.signal },
     );
 
+    // Detectar resposta truncada antes de tentar parsear
+    if (response.status === 'incomplete') {
+      const reason = response.incomplete_details?.reason ?? 'unknown';
+      const reasoningTokens = (response.usage as any)?.output_tokens_details?.reasoning_tokens ?? 0;
+      console.error('[AI] response incomplete', {
+        model,
+        reason,
+        maxRequested: opts.maxOutputTokens,
+        outputUsed: response.usage?.output_tokens,
+        reasoningTokens,
+      });
+      throw new Error(
+        `A IA não conseguiu completar a resposta (${reason}). Tente um prompt mais curto.`,
+      );
+    }
+
     const text = response.output_text ?? '';
+    const reasoningTokens = (response.usage as any)?.output_tokens_details?.reasoning_tokens ?? 0;
     const usage = response.usage
       ? {
           inputTokens: response.usage.input_tokens,
           outputTokens: response.usage.output_tokens,
+          reasoningTokens,
         }
       : null;
 
     if (usage) {
-      console.log(`[AI] model=${model} in=${usage.inputTokens} out=${usage.outputTokens}`);
+      console.log(
+        `[AI] model=${model} in=${usage.inputTokens} out=${usage.outputTokens} reasoning=${usage.reasoningTokens}`,
+      );
     }
 
     return { text, usage };

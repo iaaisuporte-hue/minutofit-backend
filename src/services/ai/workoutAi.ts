@@ -72,14 +72,21 @@ export async function generateWorkout(
   try {
     parsed = JSON.parse(jsonStr) as GeneratedWorkout & { error?: string };
   } catch {
-    console.error('[AI] JSON parse failed. raw text:', text);
+    console.error('[AI] JSON parse failed', {
+      rawLength: text.length,
+      rawSample: text.slice(0, 200),
+      rawTail: text.slice(-100),
+    });
     throw new Error('Resposta da IA inválida. Tente com um prompt mais específico.');
   }
 
   if (parsed.error) throw new Error(parsed.error);
 
   if (!Array.isArray(parsed.exercises) || parsed.exercises.length === 0) {
-    console.error('[AI] No exercises in response. raw text:', text);
+    console.error('[AI] No exercises in response', {
+      rawLength: text.length,
+      rawSample: text.slice(0, 200),
+    });
     throw new Error('A IA não retornou exercícios. Reformule o prompt.');
   }
 

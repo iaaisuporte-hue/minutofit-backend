@@ -51,6 +51,7 @@ import { ensurePersonalDirectInvitesSchema } from './db/ensurePersonalDirectInvi
 import { ensureStudentExerciseNotesSchema } from './db/ensureStudentExerciseNotesSchema';
 import { ensureWorkoutProtocolsSchema } from './db/ensureWorkoutProtocolsSchema';
 import { ensureExercisesSchema } from './db/ensureExercisesSchema';
+import { seedExercisesIfEmpty } from './db/seedExercisesIfEmpty';
 import { ensureProductsSchema } from './db/ensureProductsSchema';
 import { backfillUserProducts } from './db/backfillUserProducts';
 import { scheduleDataRetention } from './jobs/dataRetention';
@@ -99,6 +100,7 @@ async function runBootChain(): Promise<void> {
     ['ensureStudentExerciseNotesSchema', ensureStudentExerciseNotesSchema],
     ['ensureWorkoutProtocolsSchema', ensureWorkoutProtocolsSchema],
     ['ensureExercisesSchema', ensureExercisesSchema],
+    ['seedExercisesIfEmpty', seedExercisesIfEmpty],
     ['ensureProductsSchema', ensureProductsSchema],
     ['backfillUserProducts', backfillUserProducts],
   ];

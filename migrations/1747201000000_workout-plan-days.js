@@ -27,7 +27,7 @@ exports.up = (pgm) => {
       name: {
         type: 'varchar(120)',
         notNull: true,
-        default: "'Dia'",
+        default: pgm.func("'Dia'"),
       },
       focus: {
         type: 'varchar(120)',
@@ -35,7 +35,7 @@ exports.up = (pgm) => {
       payload_json: {
         type: 'jsonb',
         notNull: true,
-        default: "'[]'",
+        default: pgm.func("'[]'::jsonb"),
       },
       created_at: {
         type: 'timestamptz',

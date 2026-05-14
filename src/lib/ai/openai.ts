@@ -150,6 +150,12 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
   const model = opts.model ?? AI_MODEL;
   const timeoutMs = opts.timeoutMs ?? 15_000;
 
+  // A API exige a palavra "json" no input quando json_object está ativo.
+  const safeInput =
+    opts.jsonOutput && !opts.input.toLowerCase().includes('json')
+      ? `${opts.input}\nResponda apenas em JSON.`
+      : opts.input;
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -158,7 +164,7 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
       {
         model,
         instructions: opts.instructions,
-        input: opts.input,
+        input: safeInput,
         max_output_tokens: opts.maxOutputTokens,
         ...(opts.jsonOutput
           ? { text: { format: { type: 'json_object' as const } } }

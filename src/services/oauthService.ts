@@ -1,6 +1,7 @@
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
 import { createPublicKey } from 'crypto';
+import logger from '../lib/logger';
 
 interface GoogleTokenPayload {
   iss: string;
@@ -63,7 +64,7 @@ export async function validateGoogleToken(idToken: string): Promise<GoogleTokenP
 
     return payload;
   } catch (error) {
-    console.error('Google token validation error:', error);
+    logger.error({ err: error }, 'Google token validation error');
     throw new Error('Invalid Google token');
   }
 }
@@ -101,7 +102,7 @@ export async function validateAppleToken(identityToken: string): Promise<AppleTo
 
     return payload;
   } catch (error) {
-    console.error('Apple token validation error:', error);
+    logger.error({ err: error }, 'Apple token validation error');
     throw new Error('Invalid Apple token');
   }
 }

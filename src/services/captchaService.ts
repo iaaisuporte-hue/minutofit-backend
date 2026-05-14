@@ -1,4 +1,5 @@
 import axios from 'axios';
+import logger from '../lib/logger';
 
 /**
  * Cloudflare Turnstile — validação server-side do token enviado no cadastro.
@@ -18,7 +19,7 @@ export async function verifyRegistrationCaptcha(
     if (process.env.NODE_ENV === 'production') {
       throw new Error('Captcha nao configurado no servidor.');
     }
-    console.warn('[captcha] TURNSTILE_SECRET_KEY ausente — verificacao ignorada (ambiente nao-producao).');
+    logger.warn('[captcha] TURNSTILE_SECRET_KEY ausente — verificacao ignorada (ambiente nao-producao).');
     return;
   }
 

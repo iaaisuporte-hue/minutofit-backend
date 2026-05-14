@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 export interface TenantContext {
   academyId: number;
@@ -99,7 +100,7 @@ export async function tenantContextMiddleware(req: Request, res: Response, next:
 
     next();
   } catch (err) {
-    console.error('[tenantContext] error:', err);
+    logger.error({ err }, '[tenantContext] error');
     return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 }

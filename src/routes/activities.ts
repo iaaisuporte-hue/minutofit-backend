@@ -4,6 +4,7 @@ import { authMiddleware } from '../middleware/auth';
 import { requireAcademyContext } from '../middleware/tenantContext';
 import { requireProduct } from '../middleware/productGate';
 import { withTenant, TENANT_PLACEHOLDER } from '../db/tenantQuery';
+import logger from '../lib/logger';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('app'), requireAcademyContext);
@@ -57,7 +58,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     return res.status(201).json({ success: true, data: { id: result.rows[0].id, createdAt: result.rows[0].created_at } });
   } catch (error: any) {
-    console.error('POST /api/activities error:', error);
+    logger.error({ err: error }, 'POST /api/activities error');
     return res.status(500).json({ success: false, error: 'Não foi possível salvar a sessão.' });
   }
 });
@@ -93,7 +94,7 @@ router.get('/', async (req: Request, res: Response) => {
         );
     return res.json({ success: true, data: result.rows });
   } catch (error: any) {
-    console.error('GET /api/activities error:', error);
+    logger.error({ err: error }, 'GET /api/activities error');
     return res.status(500).json({ success: false, error: 'Não foi possível carregar as sessões.' });
   }
 });

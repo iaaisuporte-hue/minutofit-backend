@@ -37,3 +37,15 @@ export async function withTenant(
   const resolvedParams = params.map((p) => (p === TENANT_PLACEHOLDER ? academyId : p));
   return db.query(sql, resolvedParams);
 }
+
+/**
+ * Alias semântico para uso nos services e routes.
+ * Use `tenantQuery` no código novo — reserva `withTenant` para retrocompatibilidade.
+ *
+ * @example
+ *   const { rows } = await tenantQuery(pool, academyId,
+ *     'SELECT * FROM user_daily_checkins WHERE user_id = $1 AND academy_id = $2',
+ *     [userId, TENANT_PLACEHOLDER]
+ *   );
+ */
+export const tenantQuery = withTenant;

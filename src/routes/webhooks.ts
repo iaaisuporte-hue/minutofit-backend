@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
+import logger from '../lib/logger';
 
 const router = Router();
 
@@ -28,10 +29,10 @@ function validateMercadoPagoSignature(req: Request): boolean {
 
   if (!secret) {
     if (process.env.NODE_ENV === 'production') {
-      console.error('[webhook] MERCADOPAGO_WEBHOOK_SECRET not set in production — rejecting request');
+      logger.error('[webhook] MERCADOPAGO_WEBHOOK_SECRET not set in production — rejecting request');
       return false;
     }
-    console.warn('[webhook] MERCADOPAGO_WEBHOOK_SECRET not set — skipping signature check (non-production)');
+    logger.warn('[webhook] MERCADOPAGO_WEBHOOK_SECRET not set — skipping signature check (non-production)');
     return true;
   }
 
@@ -82,18 +83,14 @@ function validateMercadoPagoSignature(req: Request): boolean {
 // POST /webhooks/mercadopago - Handle Mercado Pago webhook
 router.post('/mercadopago', async (req: Request, res: Response) => {
   if (!validateMercadoPagoSignature(req)) {
-    console.warn('[webhook] Rejected request with invalid or missing Mercado Pago signature', {
-      ip: req.ip,
-      xSignature: req.headers['x-signature'],
-      xRequestId: req.headers['x-request-id'],
-    });
+    logger.warn({ ip: req.ip, xSignature: req.headers['x-signature'], xRequestId: req.headers['x-request-id'] }, '[webhook] Rejected request with invalid or missing Mercado Pago signature');
     return res.status(401).json({ success: false, error: 'Invalid webhook signature' });
   }
 
   try {
     const { type, data } = req.body;
 
-    console.log('Mercado Pago webhook received:', { type, data });
+    logger.info({ type, data }, 'Mercado Pago webhook received');
 
     if (type === 'payment') {
       await handlePaymentNotification(data);
@@ -105,7 +102,7 @@ router.post('/mercadopago', async (req: Request, res: Response) => {
 
     res.json({ success: true });
   } catch (error: any) {
-    console.error('Webhook error:', error);
+    logger.error({ err: error }, 'Webhook error');
     // Still return 200 to prevent Mercado Pago from retrying on processing errors
     res.json({ success: true, error: error.message });
   }
@@ -116,7 +113,7 @@ async function handlePaymentNotification(data: any) {
     const paymentId = data.id;
     const status = data.status;
 
-    console.log(`Payment ${paymentId} status: ${status}`);
+    logger.info({ paymentId, status }, 'Payment notification');
 
     const preapprovalId = data.preapproval_id;
 
@@ -149,13 +146,13 @@ async function handlePaymentNotification(data: any) {
       }
     }
   } catch (error) {
-    console.error('Payment notification error:', error);
+    logger.error({ err: error }, 'Payment notification error');
     throw error;
   }
 }
 
 async function handlePlanNotification(data: any) {
-  console.log('Plan notification:', data);
+  logger.info({ data }, 'Plan notification');
 }
 
 async function handleSubscriptionNotification(data: any) {
@@ -163,7 +160,7 @@ async function handleSubscriptionNotification(data: any) {
     const preapprovalId = data.id;
     const status = data.status;
 
-    console.log(`Subscription ${preapprovalId} status: ${status}`);
+    logger.info({ preapprovalId, status }, 'Subscription notification');
 
     const result = await pool.query(
       `SELECT id, user_id FROM user_subscriptions
@@ -186,7 +183,7 @@ async function handleSubscriptionNotification(data: any) {
       await subscriptionService.updateUserSubscription(subscription.id, undefined, localStatus);
     }
   } catch (error) {
-    console.error('Subscription notification error:', error);
+    logger.error({ err: error }, 'Subscription notification error');
     throw error;
   }
 }

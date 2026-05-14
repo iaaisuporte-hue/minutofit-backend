@@ -10,6 +10,7 @@ import pool from '../config/database';
 import { validateInvitationToken, acceptInvitation } from '../services/academyTeamService';
 import { logAcademyAction } from '../services/auditService';
 import { getUserProducts, getUserProductsWithMeta } from '../db/ensureProductsSchema';
+import logger from '../lib/logger';
 import {
   calcPrimarySoftStrong,
   calcPrimaryGlow,
@@ -177,7 +178,7 @@ router.get('/branding', async (req: Request, res: Response) => {
 
     return res.json({ success: true, data: { branding } });
   } catch (err: any) {
-    console.error('[auth/branding]', err);
+    logger.error({ err }, '[auth/branding]');
     return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
@@ -210,7 +211,7 @@ router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
       }
     });
   } catch (error: any) {
-    console.error('Login error:', error);
+    logger.error({ err: error }, 'Login error');
     const msg = String(error?.message || 'Nao foi possivel entrar.');
     const status = msg.includes('Sem acesso') ? 403 : 401;
     res.status(status).json({ success: false, error: msg });
@@ -587,6 +588,42 @@ router.patch('/profile', authMiddleware, async (req: Request, res: Response) => 
   } catch (error: unknown) {
     const msg = error instanceof Error ? error.message : 'Erro interno.';
     res.status(500).json({ success: false, error: msg });
+  }
+});
+
+// PATCH /auth/onboarding — persiste as respostas do wizard de onboarding do aluno
+// Disponível para qualquer role autenticado (personal também pode ter onboarding futuro).
+router.patch('/onboarding', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const answers = req.body?.answers;
+
+    if (!answers || typeof answers !== 'object' || Array.isArray(answers)) {
+      return res.status(400).json({ success: false, error: 'answers deve ser um objeto.' });
+    }
+
+    // Whitelist de chaves permitidas — impede injeção de campos arbitrários
+    const ALLOWED_KEYS = new Set([
+      'trainingPlace', 'timePerDay', 'injuries', 'surgeryRecent', 'frequentPain',
+      'daysPerWeek', 'bestTime', 'intensityPref', 'equipmentPref', 'wantsCloseFollow',
+    ]);
+
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(answers)) {
+      if (ALLOWED_KEYS.has(key)) sanitized[key] = value;
+    }
+
+    if (Object.keys(sanitized).length === 0) {
+      return res.status(400).json({ success: false, error: 'Nenhuma chave de onboarding válida.' });
+    }
+
+    await pool.query(
+      `UPDATE users SET onboarding_answers = $1, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify(sanitized), req.user!.id]
+    );
+
+    res.json({ success: true, data: { onboardingAnswers: sanitized } });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: String(error?.message || 'Erro ao salvar onboarding.') });
   }
 });
 

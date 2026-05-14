@@ -1,5 +1,6 @@
 import pkg from 'pg';
 import dotenv from 'dotenv';
+import logger from '../lib/logger';
 
 dotenv.config();
 
@@ -69,7 +70,7 @@ const pool = new Pool({
 });
 
 pool.on('error', (err: any) => {
-  console.error('Unexpected error on idle client', err);
+  logger.error({ err }, 'Unexpected error on idle client');
 });
 
 export default pool;

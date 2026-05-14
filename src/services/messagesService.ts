@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
+import { chatStreamEmit } from './chatStream';
 
 type ViewerRole = 'user' | 'personal' | 'admin' | 'nutri';
 
@@ -449,7 +450,21 @@ export async function sendMessageToConversation(
     );
   }
 
-  return mapMessage(insert.rows[0]);
+  const mapped = mapMessage(insert.rows[0]);
+
+  // Emite evento SSE para clientes conectados nesta conversa
+  chatStreamEmit(conversationId, {
+    conversationId,
+    message: {
+      id: insert.rows[0].id,
+      sender_id: insert.rows[0].sender_id,
+      sender_role: String(insert.rows[0].sender_role),
+      text: insert.rows[0].text,
+      created_at: new Date(insert.rows[0].created_at).toISOString(),
+    },
+  });
+
+  return mapped;
 }
 
 export async function listEligibleStudentsForPersonal(personalId: number) {

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { auditLog } from '../utils/auditLog';
 import { grantUserProduct } from '../db/ensureProductsSchema';
+import logger from '../lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -643,7 +644,7 @@ export async function enrollStudent(
       grantedByUserId: actorUserId,
       notes: `Concedido automaticamente na matrícula (academyId=${academyId})`,
     }).catch((err) => {
-      console.error('[products] bootstrap academia grant failed:', err?.message ?? err);
+      logger.error({ err }, '[products] bootstrap academia grant failed');
     });
 
     const r = ins.rows[0];

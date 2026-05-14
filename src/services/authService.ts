@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
+import logger from '../lib/logger';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { getUserProducts } from '../db/ensureProductsSchema';
@@ -419,7 +420,7 @@ export async function loginOrCreateOAuthUser(
 
     return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken, isNewUser };
   } catch (error: any) {
-    console.error('OAuth login error:', error);
+    logger.error({ err: error }, 'OAuth login error');
     throw new Error('Failed to login with OAuth provider');
   }
 }

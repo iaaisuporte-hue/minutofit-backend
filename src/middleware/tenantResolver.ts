@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /** Slugs that are reserved system subdomains and must never map to an academy. */
 const RESERVED_SLUGS = new Set([
@@ -104,7 +105,7 @@ export async function tenantResolverMiddleware(req: Request, _res: Response, nex
     return next();
   } catch (err) {
     // Non-fatal: if resolver fails, continue without tenant context
-    console.error('[tenantResolver] error:', err);
+    logger.error({ err }, '[tenantResolver] error');
     return next();
   }
 }

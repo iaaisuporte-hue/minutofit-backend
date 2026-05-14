@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../../middleware/auth';
 import { getMetabolismForUser, getMetabolismHistoryForUser } from './metabolic.service';
+import logger from '../../lib/logger';
 
 const router = Router();
 
@@ -14,7 +15,7 @@ router.get('/me/metabolism', authMiddleware, async (req: Request, res: Response)
 
     return res.json(data);
   } catch (error) {
-    console.error('[metabolism] error computing score:', error);
+    logger.error({ err: error }, '[metabolism] error computing score');
     return res.status(500).json({ error: 'Falha ao calcular metabolismo' });
   }
 });
@@ -29,7 +30,7 @@ router.get('/me/metabolism/history', authMiddleware, async (req: Request, res: R
 
     return res.json(data);
   } catch (error) {
-    console.error('[metabolism] error fetching history:', error);
+    logger.error({ err: error }, '[metabolism] error fetching history');
     return res.status(500).json({ error: 'Falha ao buscar histórico metabólico' });
   }
 });

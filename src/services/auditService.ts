@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 export type AuditAction =
   | 'branding.update'
@@ -117,6 +118,6 @@ export function logAcademyAction(entry: AuditEntry): void {
       ]
     )
     .catch((err) => {
-      console.error('[audit] logAcademyAction failed:', err?.message ?? err);
+      logger.error({ err }, '[audit] logAcademyAction failed');
     });
 }

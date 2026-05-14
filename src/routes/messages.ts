@@ -9,6 +9,7 @@ import {
   markConversationRead,
   sendMessageToConversation,
 } from '../services/messagesService';
+import { chatStreamSubscribe } from '../services/chatStream';
 
 const router = Router();
 router.use(authMiddleware, requireAcademyContext);
@@ -157,6 +158,55 @@ router.post(
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to mark chat as read' });
     }
+  }
+);
+
+// GET /messages/conversations/:conversationId/stream — SSE para mensagens em tempo real
+// O cliente abre esta conexão e recebe eventos quando novas mensagens são enviadas.
+// Heartbeat a cada 25 segundos para manter a conexão viva através de proxies.
+router.get(
+  '/conversations/:conversationId/stream',
+  roleCheckMiddleware('user', 'personal', 'admin'),
+  async (req: Request, res: Response) => {
+    const conversationId = Number(req.params.conversationId);
+    if (!Number.isFinite(conversationId) || conversationId <= 0) {
+      return res.status(400).json({ success: false, error: 'Invalid conversation id' });
+    }
+
+    // Verificar acesso à conversa antes de abrir o stream
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    try {
+      await listMessagesForConversation(req.user!.id, req.user!.role, conversationId, 1, academyId);
+    } catch (err: any) {
+      const status = err?.code === 'NOT_FOUND' ? 404 : 403;
+      return res.status(status).json({ success: false, error: err?.message ?? 'Acesso negado.' });
+    }
+
+    // Headers SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Nginx: desabilita buffering
+    res.flushHeaders();
+
+    // Evento de confirmação de conexão
+    res.write(`event: connected\ndata: ${JSON.stringify({ conversationId })}\n\n`);
+
+    // Heartbeat para evitar timeout de proxy (25s)
+    const heartbeat = setInterval(() => {
+      res.write(': heartbeat\n\n');
+    }, 25_000);
+
+    // Subscrever a mensagens desta conversa
+    const unsubscribe = chatStreamSubscribe(conversationId, (payload) => {
+      res.write(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
+    });
+
+    // Limpeza ao fechar a conexão
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
   }
 );
 

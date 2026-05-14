@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { ensureAcademyRoles } from '../db/academyRoles';
 import { getUserProducts, grantUserProduct } from '../db/ensureProductsSchema';
+import logger from '../lib/logger';
 import { auditLog } from '../utils/auditLog';
 import { resolveActiveAcademyId } from './authService';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt';
@@ -149,7 +150,7 @@ export async function addMemberDirect(
         notes: 'Vínculo equipe da academia (cadastro direto)',
       });
     } catch (err: any) {
-      console.error('[products] grant academia (addMemberDirect):', err?.message ?? err);
+      logger.error({ err }, '[products] grant academia (addMemberDirect)');
     }
 
     return {
@@ -449,7 +450,7 @@ export async function acceptInvitation(
         notes: 'Vínculo equipe da academia (convite aceito)',
       });
     } catch (err: any) {
-      console.error('[products] grant academia (acceptInvitation):', err?.message ?? err);
+      logger.error({ err }, '[products] grant academia (acceptInvitation)');
     }
 
     const userRes = await pool.query(`SELECT id, email, role, name, profile_completed, access_profile FROM users WHERE id = $1`, [userId]);
@@ -577,7 +578,7 @@ export async function assignOwner(
         notes: 'Dono da academia atribuído',
       });
     } catch (err: any) {
-      console.error('[products] grant academia (assignOwner):', err?.message ?? err);
+      logger.error({ err }, '[products] grant academia (assignOwner)');
     }
 
     return { ownerId, ownerName, ownerEmail, tempPassword };

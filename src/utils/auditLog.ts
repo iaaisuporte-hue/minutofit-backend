@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from 'pg';
+import logger from '../lib/logger';
 
 /**
  * Grava uma entrada na academy_audit_log.
@@ -32,6 +33,6 @@ export async function auditLog(
       ]
     );
   } catch (err) {
-    console.error('[auditLog] failed to write:', err);
+    logger.error({ err }, '[auditLog] failed to write');
   }
 }

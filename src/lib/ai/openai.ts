@@ -12,6 +12,8 @@
  */
 
 import OpenAI from 'openai';
+import { getRedisClient } from '../redisClient';
+import logger from '../logger';
 
 // ---------------------------------------------------------------------------
 // Cliente singleton
@@ -54,23 +56,50 @@ export const TOKEN_BUDGET = {
 } as const;
 
 // ---------------------------------------------------------------------------
-// Rate limit por usuário (in-memory)
+// Rate limit por usuário — Redis (multi-instância) com fallback in-memory
 // ---------------------------------------------------------------------------
+
+const HOURLY_LIMIT = 10;
+const HOUR_SECONDS = 3600;
 
 interface RateLimitEntry {
   count: number;
   resetAt: number;
 }
+const _memStore = new Map<string, RateLimitEntry>();
 
-const _rateLimitStore = new Map<string, RateLimitEntry>();
-const HOURLY_LIMIT = 10;
+async function checkRateLimitRedis(userId: string): Promise<void> {
+  const redis = getRedisClient();
+  if (!redis) {
+    checkRateLimitMemory(userId);
+    return;
+  }
 
-export function checkUserRateLimit(userId: string): void {
+  const key = `ai_rl:${userId}`;
+  try {
+    const count = await redis.incr(key);
+    if (count === 1) {
+      // Primeiro increment — define TTL de 1h
+      await redis.expire(key, HOUR_SECONDS);
+    }
+    if (count > HOURLY_LIMIT) {
+      throw new Error(
+        `Limite de ${HOURLY_LIMIT} chamadas de IA por hora atingido. Aguarde antes de tentar novamente.`,
+      );
+    }
+  } catch (err: any) {
+    // Se o erro for do rate limit, propaga. Erro de Redis → fallback in-memory.
+    if (err.message?.includes('Limite de')) throw err;
+    checkRateLimitMemory(userId);
+  }
+}
+
+function checkRateLimitMemory(userId: string): void {
   const now = Date.now();
-  const entry = _rateLimitStore.get(userId);
+  const entry = _memStore.get(userId);
 
   if (!entry || now > entry.resetAt) {
-    _rateLimitStore.set(userId, { count: 1, resetAt: now + 60 * 60 * 1000 });
+    _memStore.set(userId, { count: 1, resetAt: now + HOUR_SECONDS * 1000 });
     return;
   }
 
@@ -81,6 +110,10 @@ export function checkUserRateLimit(userId: string): void {
   }
 
   entry.count += 1;
+}
+
+export async function checkUserRateLimit(userId: string): Promise<void> {
+  await checkRateLimitRedis(userId);
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +156,7 @@ const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
 export async function aiCall(opts: AiCallOptions): Promise<AiCallResult> {
   if (opts.userId) {
-    checkUserRateLimit(opts.userId);
+    await checkUserRateLimit(opts.userId);
   }
   return _executeWithRetry(opts);
 }
@@ -180,13 +213,7 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
     if (response.status === 'incomplete') {
       const reason = response.incomplete_details?.reason ?? 'unknown';
       const reasoningTokens = (response.usage as any)?.output_tokens_details?.reasoning_tokens ?? 0;
-      console.error('[AI] response incomplete', {
-        model,
-        reason,
-        maxRequested: opts.maxOutputTokens,
-        outputUsed: response.usage?.output_tokens,
-        reasoningTokens,
-      });
+      logger.error({ model, reason, maxRequested: opts.maxOutputTokens, outputUsed: response.usage?.output_tokens, reasoningTokens }, '[AI] response incomplete');
       throw new Error(
         `A IA não conseguiu completar a resposta (${reason}). Tente um prompt mais curto.`,
       );
@@ -203,9 +230,7 @@ async function _executeOnce(opts: AiCallOptions): Promise<AiCallResult> {
       : null;
 
     if (usage) {
-      console.log(
-        `[AI] model=${model} in=${usage.inputTokens} out=${usage.outputTokens} reasoning=${usage.reasoningTokens}`,
-      );
+      logger.info({ model, in: usage.inputTokens, out: usage.outputTokens, reasoning: usage.reasoningTokens }, '[AI] usage');
     }
 
     return { text, usage };

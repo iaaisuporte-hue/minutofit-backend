@@ -31,6 +31,7 @@ import {
   type ReviewRisk,
 } from '../services/workoutReviewsService';
 import { listExerciseCatalog } from '../services/exerciseCatalogService';
+import { searchExercises as searchExerciseLibrary } from '../services/exerciseLibraryService';
 import {
   createWorkoutProtocol,
   deleteWorkoutProtocol,
@@ -271,21 +272,48 @@ router.delete(
   }
 );
 
+/**
+ * Shim de compatibilidade — internamente chama exerciseLibraryService.
+ * Frontend migrado já usa /api/exercises diretamente.
+ * Remover na Onda 5 após confirmar zero uso direto.
+ */
 router.get('/exercise-catalog', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
-    const group = typeof req.query.group === 'string' ? req.query.group : undefined;
+    const bodyPart = typeof req.query.group === 'string' ? req.query.group.toLowerCase() : undefined;
     const limitRaw = Number(req.query.limit);
-    const rows = await listExerciseCatalog({
-      q,
-      group,
-      limit: Number.isFinite(limitRaw) ? limitRaw : 80,
-    });
-    res.json({ success: true, data: rows });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message || 'Failed to load exercise catalog' });
+    const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : 80;
+
+    // Try new library first; fallback to legacy on error
+    try {
+      const exercises = await searchExerciseLibrary({ q, bodyPart, limit });
+      const data = exercises.map((e) => ({
+        id: e.id,
+        name: e.name,
+        group: bodyPartToGroup(e.bodyPart),
+        source: 'seed' as const,
+        videoUrl: e.primaryMediaType === 'youtube' ? e.primaryMediaUrl : null,
+      }));
+      return res.json({ success: true, data });
+    } catch {
+      // Legacy fallback
+      const rows = await listExerciseCatalog({ q, group: req.query.group as string | undefined, limit });
+      return res.json({ success: true, data: rows });
+    }
+  } catch (error: unknown) {
+    res.status(500).json({ success: false, error: (error as Error).message || 'Failed to load exercise catalog' });
   }
 });
+
+function bodyPartToGroup(bodyPart: string): string {
+  const map: Record<string, string> = {
+    peito: 'Peito', costas: 'Costas', perna: 'Perna',
+    'glúteo': 'Glúteo', gluteo: 'Glúteo', ombro: 'Ombro',
+    'bíceps': 'Bíceps', biceps: 'Bíceps', 'tríceps': 'Tríceps', triceps: 'Tríceps',
+    'abdômen': 'Abdômen', abdomen: 'Abdômen', cardio: 'Cardio',
+  };
+  return map[bodyPart.toLowerCase()] ?? 'Outros';
+}
 
 router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   if (!process.env.OPENAI_API_KEY) {

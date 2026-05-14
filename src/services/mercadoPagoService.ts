@@ -1,4 +1,5 @@
 import axios from 'axios';
+import logger from '../lib/logger';
 
 const MERCADO_PAGO_API_BASE = 'https://api.mercadopago.com';
 const ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
@@ -81,7 +82,7 @@ export async function createPreapprovalSubscription(
         : response.data.sandbox_init_point
     };
   } catch (error: any) {
-    console.error('Mercado Pago error:', error.response?.data || error.message);
+    logger.error({ err: error.response?.data ?? error.message }, 'Mercado Pago error');
     throw new Error('Failed to create subscription');
   }
 }
@@ -99,7 +100,7 @@ export async function getPreapprovalStatus(preapprovalId: string): Promise<any> 
 
     return response.data;
   } catch (error: any) {
-    console.error('Mercado Pago error:', error.response?.data || error.message);
+    logger.error({ err: error.response?.data ?? error.message }, 'Mercado Pago error');
     throw new Error('Failed to get subscription status');
   }
 }
@@ -116,7 +117,7 @@ export async function cancelPreapproval(preapprovalId: string): Promise<void> {
       }
     );
   } catch (error: any) {
-    console.error('Mercado Pago error:', error.response?.data || error.message);
+    logger.error({ err: error.response?.data ?? error.message }, 'Mercado Pago error');
     throw new Error('Failed to cancel subscription');
   }
 }
@@ -134,7 +135,7 @@ export async function getPaymentInfo(paymentId: string): Promise<any> {
 
     return response.data;
   } catch (error: any) {
-    console.error('Mercado Pago error:', error.response?.data || error.message);
+    logger.error({ err: error.response?.data ?? error.message }, 'Mercado Pago error');
     throw new Error('Failed to get payment info');
   }
 }

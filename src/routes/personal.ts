@@ -761,10 +761,72 @@ router.post(
   }
 );
 
+// ── Direct Student Registration ───────────────────────────────────────────────
+
+import pool from '../config/database';
+import { findOrCreateUserFromContext } from '../services/userIdentityService';
+import { grantMembership } from '../services/membershipService';
+
+router.post(
+  '/students',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+
+      const name: string = (req.body.name ?? '').toString().trim();
+      const email: string = (req.body.email ?? '').toString().trim().toLowerCase();
+      const phone: string | null = typeof req.body.phone === 'string' ? req.body.phone.trim() || null : null;
+      const cpf: string | null = typeof req.body.cpf === 'string' ? req.body.cpf.replace(/\D/g, '') || null : null;
+
+      if (!name) return res.status(400).json({ success: false, error: 'Nome é obrigatório.' });
+      if (!email) return res.status(400).json({ success: false, error: 'E-mail é obrigatório.' });
+
+      const { user, isNew, matchedBy } = await findOrCreateUserFromContext({ name, email, phone, cpf });
+
+      // Idempotent assignment
+      const existing = await pool.query(
+        `SELECT id FROM personal_student_assignments WHERE personal_id = $1 AND user_id = $2`,
+        [personalId, user.id]
+      );
+      if (existing.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          error: 'Este aluno já está na sua carteira.',
+          code: 'ALREADY_ASSIGNED',
+          data: { studentId: user.id, name: user.name },
+        });
+      }
+
+      await pool.query(
+        `INSERT INTO personal_student_assignments (personal_id, user_id, academy_id, status, started_at)
+         VALUES ($1, $2, $3, 'active', NOW())`,
+        [personalId, user.id, academyId]
+      );
+
+      await grantMembership(user.id, 'personal', {
+        professionalId: personalId,
+        academyId: academyId ?? undefined,
+        metadata: { source: 'personal_direct_add' },
+      });
+      await grantMembership(user.id, 'app', {
+        metadata: { source: 'personal_direct_add' },
+      });
+
+      res.status(201).json({
+        success: true,
+        data: { student: { id: user.id, name: user.name, email: user.email }, isNew, matchedBy },
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to add student' });
+    }
+  }
+);
+
 // ── Direct Invites (personal autônomo → aluno direto sem academia) ────────────
 
 import crypto from 'crypto';
-import pool from '../config/database';
 
 const INVITE_EXPIRY_DAYS = 14;
 

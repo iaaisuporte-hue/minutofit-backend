@@ -12,6 +12,7 @@ type ConversationRow = {
   student_id: number;
   student_name: string | null;
   student_email: string;
+  student_phone: string | null;
   created_at: Date | string;
   updated_at: Date | string;
   last_read_at_by_student: Date | string | null;
@@ -64,6 +65,7 @@ function mapConversation(
     studentId: String(row.student_id),
     studentName: row.student_name || row.student_email || `Aluno ${row.student_id}`,
     studentEmail: row.student_email,
+    studentPhone: row.student_phone || null,
     personalId: String(row.personal_id),
     personalName: row.personal_name || row.personal_email || `Personal ${row.personal_id}`,
     personalEmail: row.personal_email,
@@ -122,7 +124,8 @@ async function resolveConversationForViewer(
         personal_user.name AS personal_name,
         personal_user.email AS personal_email,
         student_user.name AS student_name,
-        student_user.email AS student_email
+        student_user.email AS student_email,
+        student_user.phone AS student_phone
       FROM chat_conversations cc
       JOIN users personal_user
         ON personal_user.id = cc.personal_id
@@ -206,6 +209,7 @@ export async function listChatConversations(
         personal_user.email AS personal_email,
         student_user.name AS student_name,
         student_user.email AS student_email,
+        student_user.phone AS student_phone,
         last_message.id AS last_message_id,
         last_message.text AS last_message_text,
         last_message.created_at AS last_message_created_at,

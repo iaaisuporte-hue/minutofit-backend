@@ -806,8 +806,8 @@ router.post(
       }
 
       await pool.query(
-        `INSERT INTO personal_student_assignments (personal_id, student_id, academy_id, status, started_at)
-         VALUES ($1, $2, $3, 'active', NOW())`,
+        `INSERT INTO personal_student_assignments (personal_id, student_id, academy_id, status)
+         VALUES ($1, $2, $3, 'active')`,
         [personalId, user.id, academyId]
       );
 

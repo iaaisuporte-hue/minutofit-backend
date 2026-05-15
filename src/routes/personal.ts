@@ -793,7 +793,7 @@ router.post(
 
       // Idempotent assignment
       const existing = await pool.query(
-        `SELECT id FROM personal_student_assignments WHERE personal_id = $1 AND user_id = $2`,
+        `SELECT id FROM personal_student_assignments WHERE personal_id = $1 AND student_id = $2`,
         [personalId, user.id]
       );
       if (existing.rows.length > 0) {
@@ -806,7 +806,7 @@ router.post(
       }
 
       await pool.query(
-        `INSERT INTO personal_student_assignments (personal_id, user_id, academy_id, status, started_at)
+        `INSERT INTO personal_student_assignments (personal_id, student_id, academy_id, status, started_at)
          VALUES ($1, $2, $3, 'active', NOW())`,
         [personalId, user.id, academyId]
       );

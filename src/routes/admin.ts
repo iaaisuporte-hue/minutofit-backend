@@ -7,13 +7,11 @@ import { assignOwner } from '../services/academyTeamService';
 import { auditLog } from '../utils/auditLog';
 import {
   getUserProducts,
-  grantUserProduct,
-  revokeUserProduct,
   PRODUCT_KEYS,
   type ProductKey,
 } from '../db/ensureProductsSchema';
 import { findOrCreateUserFromContext } from '../services/userIdentityService';
-import { expireOverdueGraces } from '../services/membershipService';
+import { cancelMembership, expireOverdueGraces, grantMembership } from '../services/membershipService';
 import { logAcademyAction } from '../services/auditService';
 import {
   createPlatformProtocol,
@@ -853,13 +851,12 @@ router.post('/users/:userId/products/grant', authMiddleware, adminMiddleware, as
       return res.status(400).json({ success: false, error: `Invalid productKey. Valid: ${PRODUCT_KEYS.join(', ')}` });
     }
 
-    await grantUserProduct({
-      userId,
-      productKey: productKey as ProductKey,
+    await grantMembership(userId, productKey as ProductKey, {
       source: 'metacore',
       grantedByUserId: req.user!.id,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
       notes: notes ?? null,
+      metadata: { channel: 'admin_grant' },
     });
 
     logAcademyAction({
@@ -889,10 +886,9 @@ router.post('/users/:userId/products/revoke', authMiddleware, adminMiddleware, a
       return res.status(400).json({ success: false, error: `Invalid productKey. Valid: ${PRODUCT_KEYS.join(', ')}` });
     }
 
-    const revoked = await revokeUserProduct({
-      userId,
-      productKey: productKey as ProductKey,
+    const revoked = await cancelMembership(userId, productKey as ProductKey, {
       revokedByUserId: req.user!.id,
+      reason: 'revoked_by_admin',
     });
 
     if (!revoked) {

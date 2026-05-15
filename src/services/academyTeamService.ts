@@ -1,8 +1,7 @@
 import pool from '../config/database';
-import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { ensureAcademyRoles } from '../db/academyRoles';
-import { getUserProducts, grantUserProduct } from '../db/ensureProductsSchema';
+import { getUserProducts } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
 import { findOrCreateUserFromContext } from './userIdentityService';
 import logger from '../lib/logger';
@@ -87,36 +86,23 @@ export async function addMemberDirect(
   const roleId = await getRoleId(academyId, params.roleSlug);
   if (!roleId) throw new Error(`Role "${params.roleSlug}" não encontrado nesta academia.`);
 
+  let tempPassword: string | undefined = generateTempPassword();
+  const identity = await findOrCreateUserFromContext({
+    email,
+    name: String(params.name).trim(),
+    cpf: params.cpf ?? null,
+    phone: params.phone ?? null,
+    password: tempPassword,
+    skipPasswordPolicy: true,
+  });
+  if (!identity.isNew) {
+    tempPassword = undefined;
+  }
+  const userRow = { id: identity.user.id, name: identity.user.name, email: identity.user.email };
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
-    // Check if user exists globally
-    let userRow: any;
-    const existing = await client.query(`SELECT id, name, email FROM users WHERE email = $1`, [email]);
-
-    let tempPassword: string | undefined;
-
-    if (existing.rows.length > 0) {
-      userRow = existing.rows[0];
-    } else {
-      // Create new user with temp password
-      tempPassword = generateTempPassword();
-      const hash = await bcrypt.hash(tempPassword, 12);
-      const ins = await client.query(
-        `INSERT INTO users (name, email, password, role, phone, cpf, profile_completed)
-         VALUES ($1, $2, $3, 'user', $4, $5, true)
-         RETURNING id, name, email`,
-        [
-          String(params.name).trim(),
-          email,
-          hash,
-          params.phone ?? null,
-          params.cpf   ?? null,
-        ]
-      );
-      userRow = ins.rows[0];
-    }
 
     // Link to academy (or reactivate)
     await client.query(
@@ -143,16 +129,15 @@ export async function addMemberDirect(
     await client.query('COMMIT');
 
     try {
-      await grantUserProduct({
-        userId: userRow.id,
-        productKey: 'academia',
+      await grantMembership(userRow.id, 'academia', {
         source: 'academy_bootstrap',
         sourceAcademyId: academyId,
+        academyId,
         grantedByUserId: actorUserId,
         notes: 'Vínculo equipe da academia (cadastro direto)',
       });
     } catch (err: any) {
-      logger.error({ err }, '[products] grant academia (addMemberDirect)');
+      logger.error({ err }, '[membership] grant academia (addMemberDirect)');
     }
 
     return {
@@ -521,26 +506,22 @@ export async function assignOwner(
       ownerName  = q.rows[0].name;
       ownerEmail = q.rows[0].email;
     } else {
-      // Create new user
       if (!params.name || !params.email) throw new Error('name e email obrigatórios para criar novo dono.');
       tempPassword = generateTempPassword();
-      const hash = await bcrypt.hash(tempPassword, 12);
-      const ins = await client.query(
-        `INSERT INTO users (name, email, password, role, phone, cpf, profile_completed)
-         VALUES ($1, $2, $3, 'user', $4, $5, true)
-         ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
-         RETURNING id, name, email`,
-        [
-          String(params.name).trim(),
-          params.email.toLowerCase().trim(),
-          hash,
-          params.phone ?? null,
-          params.cpf   ?? null,
-        ]
-      );
-      ownerId    = ins.rows[0].id;
-      ownerName  = ins.rows[0].name;
-      ownerEmail = ins.rows[0].email;
+      const identity = await findOrCreateUserFromContext({
+        email: params.email.toLowerCase().trim(),
+        name: String(params.name).trim(),
+        cpf: params.cpf ?? null,
+        phone: params.phone ?? null,
+        password: tempPassword,
+        skipPasswordPolicy: true,
+      });
+      ownerId    = identity.user.id;
+      ownerName  = identity.user.name ?? '';
+      ownerEmail = identity.user.email;
+      if (!identity.isNew) {
+        tempPassword = undefined;
+      }
     }
 
     // Upsert academy_users with owner role
@@ -570,16 +551,15 @@ export async function assignOwner(
     await client.query('COMMIT');
 
     try {
-      await grantUserProduct({
-        userId: ownerId,
-        productKey: 'academia',
+      await grantMembership(ownerId, 'academia', {
         source: 'academy_bootstrap',
         sourceAcademyId: academyId,
+        academyId,
         grantedByUserId: actorUserId,
         notes: 'Dono da academia atribuído',
       });
     } catch (err: any) {
-      logger.error({ err }, '[products] grant academia (assignOwner)');
+      logger.error({ err }, '[membership] grant academia (assignOwner)');
     }
 
     return { ownerId, ownerName, ownerEmail, tempPassword };

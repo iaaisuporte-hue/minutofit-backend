@@ -56,8 +56,24 @@ export async function ensureProductsSchema(): Promise<void> {
       started_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       ended_at            TIMESTAMPTZ,
       metadata            JSONB NOT NULL DEFAULT '{}'::jsonb,
+      grace_until         TIMESTAMPTZ,
+      converted_from_source TEXT,
       UNIQUE (user_id, product_key)
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE user_product_memberships
+      ADD COLUMN IF NOT EXISTS grace_until TIMESTAMPTZ
+  `);
+  await pool.query(`
+    ALTER TABLE user_product_memberships
+      ADD COLUMN IF NOT EXISTS converted_from_source TEXT
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_upm_grace_until
+      ON user_product_memberships (grace_until)
+      WHERE grace_until IS NOT NULL
   `);
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_upm_user_id       ON user_product_memberships(user_id)`);

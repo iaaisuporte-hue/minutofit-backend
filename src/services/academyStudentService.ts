@@ -1,7 +1,6 @@
 import pool from '../config/database';
 import crypto from 'crypto';
 import { auditLog } from '../utils/auditLog';
-import { grantUserProduct } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
 import { findOrCreateUserFromContext } from './userIdentityService';
 import logger from '../lib/logger';
@@ -659,16 +658,15 @@ export async function enrollStudent(
 
     await client.query('COMMIT');
 
-    // Bootstrap: matrícula concede produto 'academia' automaticamente (não bloqueia)
-    void grantUserProduct({
-      userId,
-      productKey: 'academia',
+    void grantMembership(userId, 'academia', {
       source: 'academy_bootstrap',
       sourceAcademyId: academyId,
+      academyId,
       grantedByUserId: actorUserId,
       notes: `Concedido automaticamente na matrícula (academyId=${academyId})`,
+      metadata: { channel: 'academy_enrollment' },
     }).catch((err) => {
-      logger.error({ err }, '[products] bootstrap academia grant failed');
+      logger.error({ err }, '[academy] grantMembership on enroll failed');
     });
 
     const r = ins.rows[0];

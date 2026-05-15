@@ -25,7 +25,8 @@ export type AuditAction =
   | 'reception.notes_viewed'
   | 'personal.student_note.created'
   | 'personal.student_note.updated'
-  | 'personal.student_note.deleted';
+  | 'personal.student_note.deleted'
+  | 'membership.expire_graces';
 
 export interface AuditEntry {
   academyId: number | null;

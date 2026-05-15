@@ -107,11 +107,18 @@ router.post('/register', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     const message = String(error.message || 'Nao foi possivel concluir o cadastro.');
+    const code = String(error?.code || '');
     const status =
-      message === 'CPF ja cadastrado.' || message === 'Email ja cadastrado.'
+      code === 'EMAIL_ALREADY_REGISTERED' ||
+      message === 'CPF ja cadastrado.' ||
+      message === 'Email ja cadastrado.'
         ? 409
         : 400;
-    res.status(status).json({ success: false, error: message });
+    res.status(status).json({
+      success: false,
+      error: message,
+      ...(status === 409 ? { code: code || 'EMAIL_ALREADY_REGISTERED' } : {}),
+    });
   }
 });
 

@@ -5,6 +5,15 @@ import { normalizeCpf, normalizePhone, isValidCpf } from './authService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 
 export type MatchedBy = 'email' | 'cpf' | 'phone' | 'none';
+export type MatchKey = 'email' | 'cpf' | 'phone';
+
+/**
+ * Estratégia padrão de dedup: email > cpf > phone. Usada em fluxos onde o
+ * profissional (academia, personal, nutri) confirma identidade do convidado
+ * antes do envio. Não usar em signup público — ali a chave deve ser apenas
+ * `email` para evitar merge silencioso por telefone/CPF de terceiros.
+ */
+const DEFAULT_MATCH_KEYS: MatchKey[] = ['email', 'cpf', 'phone'];
 
 export interface FoundUser {
   id: number;
@@ -24,10 +33,15 @@ export interface FindOrCreateResult {
 }
 
 /**
- * Looks up an existing user by identity signals in priority order:
- *   1. email (strongest — globally unique constraint)
- *   2. cpf   (unique constraint)
- *   3. phone (NOT unique — used only as fallback hint; may return null if ambiguous)
+ * Looks up an existing user by identity signals.
+ *
+ * Default priority: email > cpf > phone (strongest first). Caller may restrict
+ * the keys via `matchBy` — useful for signup público (`matchBy: ['email']`)
+ * para evitar merge silencioso por CPF/phone de terceiros.
+ *
+ * Email é a chave primária neste momento. CPF está pronto para virar a chave
+ * principal numa fase futura (Brasil-only, validação obrigatória em todos os
+ * fluxos), mas o backend já normaliza/valida para suportar a transição.
  *
  * Returns null if no match found.
  */
@@ -35,47 +49,43 @@ export async function findUserByIdentity(input: {
   email?: string | null;
   cpf?: string | null;
   phone?: string | null;
+  matchBy?: MatchKey[];
 }): Promise<{ user: FoundUser; matchedBy: MatchedBy } | null> {
   const email = input.email ? input.email.toLowerCase().trim() : null;
   const cpf   = input.cpf   ? normalizeCpf(input.cpf)         : null;
   const phone = input.phone ? normalizePhone(input.phone)      : null;
+  const keys  = input.matchBy && input.matchBy.length > 0 ? input.matchBy : DEFAULT_MATCH_KEYS;
 
-  // 1. Match by email
-  if (email) {
-    const res = await pool.query<FoundUser>(
-      `SELECT id, email, role, name, cpf, phone, profile_completed,
-              (password IS NOT NULL) AS has_password
-       FROM users WHERE email = $1 LIMIT 1`,
-      [email]
-    );
-    if (res.rows.length > 0) {
-      return { user: res.rows[0], matchedBy: 'email' };
+  for (const key of keys) {
+    if (key === 'email' && email) {
+      const res = await pool.query<FoundUser>(
+        `SELECT id, email, role, name, cpf, phone, profile_completed,
+                (password IS NOT NULL) AS has_password
+         FROM users WHERE email = $1 LIMIT 1`,
+        [email]
+      );
+      if (res.rows.length > 0) return { user: res.rows[0], matchedBy: 'email' };
     }
-  }
 
-  // 2. Match by CPF (only if valid)
-  if (cpf && isValidCpf(cpf)) {
-    const res = await pool.query<FoundUser>(
-      `SELECT id, email, role, name, cpf, phone, profile_completed,
-              (password IS NOT NULL) AS has_password
-       FROM users WHERE cpf = $1 LIMIT 1`,
-      [cpf]
-    );
-    if (res.rows.length > 0) {
-      return { user: res.rows[0], matchedBy: 'cpf' };
+    if (key === 'cpf' && cpf && isValidCpf(cpf)) {
+      const res = await pool.query<FoundUser>(
+        `SELECT id, email, role, name, cpf, phone, profile_completed,
+                (password IS NOT NULL) AS has_password
+         FROM users WHERE cpf = $1 LIMIT 1`,
+        [cpf]
+      );
+      if (res.rows.length > 0) return { user: res.rows[0], matchedBy: 'cpf' };
     }
-  }
 
-  // 3. Match by phone — only if exactly one result (avoid false-positives)
-  if (phone && phone.length >= 10) {
-    const res = await pool.query<FoundUser>(
-      `SELECT id, email, role, name, cpf, phone, profile_completed,
-              (password IS NOT NULL) AS has_password
-       FROM users WHERE phone = $1`,
-      [phone]
-    );
-    if (res.rows.length === 1) {
-      return { user: res.rows[0], matchedBy: 'phone' };
+    if (key === 'phone' && phone && phone.length >= 10) {
+      // Telefone só dedupica quando o resultado é único (evita false-positive).
+      const res = await pool.query<FoundUser>(
+        `SELECT id, email, role, name, cpf, phone, profile_completed,
+                (password IS NOT NULL) AS has_password
+         FROM users WHERE phone = $1`,
+        [phone]
+      );
+      if (res.rows.length === 1) return { user: res.rows[0], matchedBy: 'phone' };
     }
   }
 
@@ -105,12 +115,19 @@ export async function findOrCreateUserFromContext(input: {
   password?: string | null;
   /** Skip password policy check — for academy direct-add flows with temp passwords. */
   skipPasswordPolicy?: boolean;
+  /**
+   * Estratégia de dedup. Default: email > cpf > phone. Em signup público use
+   * `['email']` para evitar merge silencioso de identidade por CPF/telefone.
+   * Preparado para reorientar para `['cpf', 'email']` quando a Fase 2 tornar
+   * CPF obrigatório em todos os fluxos.
+   */
+  matchBy?: MatchKey[];
 }): Promise<FindOrCreateResult> {
   const email = input.email.toLowerCase().trim();
   const cpf   = input.cpf   ? normalizeCpf(input.cpf)    : null;
   const phone = input.phone ? normalizePhone(input.phone) : null;
 
-  const found = await findUserByIdentity({ email, cpf, phone });
+  const found = await findUserByIdentity({ email, cpf, phone, matchBy: input.matchBy });
   if (found) {
     logger.info(
       { userId: found.user.id, matchedBy: found.matchedBy },

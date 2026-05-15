@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { ensureAcademyRoles } from '../db/academyRoles';
 import { getUserProducts, grantUserProduct } from '../db/ensureProductsSchema';
+import { grantMembership } from './membershipService';
+import { findOrCreateUserFromContext } from './userIdentityService';
 import logger from '../lib/logger';
 import { auditLog } from '../utils/auditLog';
 import { resolveActiveAcademyId } from './authService';
@@ -373,9 +375,11 @@ export async function acceptInvitation(
   const inv = await pool.query(
     `SELECT
        ai.id, ai.email, ai.accepted_at, ai.expires_at, ai.role_id, ai.academy_id,
+       ar.slug AS role_slug,
        a.display_name AS academy_name
      FROM academy_invitations ai
      JOIN academies a ON a.id = ai.academy_id
+     JOIN academy_roles ar ON ar.id = ai.role_id
      WHERE ai.token = $1`,
     [token]
   );
@@ -385,36 +389,25 @@ export async function acceptInvitation(
   if (row.accepted_at) throw new Error('Convite já aceito.');
   if (new Date(row.expires_at) < new Date()) throw new Error('Convite expirado.');
 
+  if (!params.password || !params.name) {
+    throw new Error('Nome e senha são obrigatórios para criar a conta.');
+  }
+
+  // Dedup pelo email/cpf/phone do convidado. A academia já validou identidade
+  // ao enviar o convite, então o dedup amplo é seguro.
+  const identity = await findOrCreateUserFromContext({
+    email: row.email,
+    name: String(params.name).trim(),
+    cpf: params.cpf ?? null,
+    phone: params.phone ?? null,
+    password: params.password,
+  });
+  const userId = identity.user.id;
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    let userId: number;
-    const existing = await client.query(`SELECT id FROM users WHERE email = $1`, [row.email]);
-
-    if (existing.rows.length > 0) {
-      userId = existing.rows[0].id;
-    } else {
-      if (!params.password || !params.name) {
-        throw new Error('Nome e senha são obrigatórios para criar a conta.');
-      }
-      const hash = await bcrypt.hash(params.password, 12);
-      const ins = await client.query(
-        `INSERT INTO users (name, email, password, role, phone, cpf, profile_completed)
-         VALUES ($1, $2, $3, 'user', $4, $5, true)
-         RETURNING id`,
-        [
-          String(params.name).trim(),
-          row.email,
-          hash,
-          params.phone ?? null,
-          params.cpf   ?? null,
-        ]
-      );
-      userId = ins.rows[0].id;
-    }
-
-    // Link to academy
     await client.query(
       `INSERT INTO academy_users (user_id, academy_id, role_id, status, is_active, joined_at)
        VALUES ($1, $2, $3, 'active', TRUE, NOW())
@@ -424,7 +417,6 @@ export async function acceptInvitation(
       [userId, row.academy_id, row.role_id]
     );
 
-    // Mark invitation as accepted
     await client.query(
       `UPDATE academy_invitations SET accepted_at = NOW() WHERE id = $1`,
       [row.id]
@@ -441,16 +433,23 @@ export async function acceptInvitation(
     await client.query('COMMIT');
 
     try {
-      await grantUserProduct({
-        userId,
-        productKey: 'academia',
+      await grantMembership(userId, 'academia', {
         source: 'academy_bootstrap',
         sourceAcademyId: row.academy_id,
         academyId: row.academy_id,
-        grantedByUserId: null,
-        notes: 'Vínculo equipe da academia (convite aceito)',
-        metadata: { source: 'academy_invite_accepted' },
+        notes: 'Vínculo academia (convite aceito)',
+        metadata: { channel: 'academy_invite_accepted', roleSlug: row.role_slug },
       });
+      // Convite de aluno (`academy_student`) também ganha App como bônus.
+      // Outros papéis (owner, manager, personal de academia, etc.) ficam de fora
+      // do bônus — não precisam do app pessoal para acessar a área da academia.
+      if (row.role_slug === 'academy_student') {
+        await grantMembership(userId, 'app', {
+          source: 'bonus_academy',
+          sourceAcademyId: row.academy_id,
+          metadata: { channel: 'academy_invite_accepted_bonus' },
+        });
+      }
     } catch (err: any) {
       logger.error({ err }, '[products] grant academia (acceptInvitation)');
     }

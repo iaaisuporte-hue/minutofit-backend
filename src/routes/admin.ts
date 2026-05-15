@@ -12,6 +12,8 @@ import {
   PRODUCT_KEYS,
   type ProductKey,
 } from '../db/ensureProductsSchema';
+import { findOrCreateUserFromContext } from '../services/userIdentityService';
+import { expireOverdueGraces } from '../services/membershipService';
 import { logAcademyAction } from '../services/auditService';
 import {
   createPlatformProtocol,
@@ -447,7 +449,7 @@ router.get('/dashboard/platform-health', authMiddleware, adminMiddleware, async 
 // POST /admin/professionals - Create a professional user (personal or nutri)
 router.post('/professionals', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const { name, email, role, phone, cpf, registry, specialty, bio } = req.body;
+    const { name, email, role, phone, cpf } = req.body;
 
     if (!name || !email || !role) {
       return res.status(400).json({ success: false, error: 'name, email e role sao obrigatorios.' });
@@ -459,42 +461,36 @@ router.post('/professionals', authMiddleware, adminMiddleware, async (req: Reque
 
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    // Check duplicate email
-    const existing = await pool.query('SELECT id FROM users WHERE email = $1', [normalizedEmail]);
-    if (existing.rows.length > 0) {
+    const crypto = await import('crypto');
+    const tempPassword = crypto.randomBytes(6).toString('hex');
+
+    // Roteia via serviço de identidade — dedup obrigatório (AGENTS.md).
+    const identity = await findOrCreateUserFromContext({
+      email: normalizedEmail,
+      name: String(name).trim(),
+      cpf: cpf ? String(cpf).trim() : null,
+      phone: phone ? String(phone).trim() : null,
+      password: tempPassword,
+      skipPasswordPolicy: true,
+    });
+
+    if (!identity.isNew) {
       return res.status(409).json({ success: false, error: 'E-mail já cadastrado na plataforma.' });
     }
 
-    // Generate temporary password
-    const crypto = await import('crypto');
-    const tempPassword = crypto.randomBytes(6).toString('hex'); // 12-char hex
-
-    const bcrypt = await import('bcryptjs');
-    const passwordHash = await bcrypt.hash(tempPassword, 12);
-
-    const result = await pool.query(
-      `INSERT INTO users (name, email, password_hash, role, phone, cpf, profile_completed, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-       RETURNING id, name, email, role`,
-      [
-        String(name).trim(),
-        normalizedEmail,
-        passwordHash,
-        role,
-        phone ? String(phone).trim() : null,
-        cpf ? String(cpf).trim() : null,
-      ]
+    // Promove o usuário recém-criado ao papel profissional desejado.
+    await pool.query(
+      `UPDATE users SET role = $2, profile_completed = TRUE, updated_at = NOW() WHERE id = $1`,
+      [identity.user.id, role]
     );
-
-    const user = result.rows[0];
 
     res.status(201).json({
       success: true,
       data: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
+        id: identity.user.id,
+        name: identity.user.name,
+        email: identity.user.email,
+        role,
         tempPassword,
       },
     });
@@ -819,10 +815,10 @@ router.get('/users/:userId/products', authMiddleware, adminMiddleware, async (re
     const result = await pool.query(
       `SELECT up.id, up.product_key, up.status, up.source, up.source_academy_id,
               up.granted_by_user_id, up.granted_at, up.expires_at, up.revoked_at,
-              up.notes,
+              up.notes, up.grace_until, up.converted_from_source,
               u.name AS granted_by_name,
               a.display_name AS source_academy_name
-       FROM user_products up
+       FROM user_product_memberships up
        LEFT JOIN users u ON u.id = up.granted_by_user_id
        LEFT JOIN academies a ON a.id = up.source_academy_id
        WHERE up.user_id = $1
@@ -914,6 +910,27 @@ router.post('/users/:userId/products/revoke', authMiddleware, adminMiddleware, a
     });
 
     res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/memberships/expire-graces — varre e expira graças vencidas.
+// Operação manual até o cron real entrar no ar (Fase 2 do roadmap multi-product).
+// Idempotente: rows com `source = 'grace_period'` e `grace_until < NOW()` viram `expired`.
+router.post('/memberships/expire-graces', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const expired = await expireOverdueGraces();
+    logAcademyAction({
+      academyId: null,
+      userId: req.user!.id,
+      action: 'membership.expire_graces',
+      entityType: 'membership',
+      entityId: null,
+      meta: { expired },
+      ipAddress: req.ip,
+    });
+    res.json({ success: true, data: { expired } });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

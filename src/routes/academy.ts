@@ -381,6 +381,7 @@ router.post(
         paymentMethod, mainGoal, medicalRestrictions,
         emergencyContactName, emergencyContactPhone,
         acceptedTerms, acceptedLgpd,
+        giveAppBonus,
       } = req.body;
       if (!mode || !email) {
         return res.status(400).json({ success: false, error: 'mode e email são obrigatórios.' });
@@ -393,6 +394,9 @@ router.post(
         paymentMethod, mainGoal, medicalRestrictions,
         emergencyContactName, emergencyContactPhone,
         acceptedTerms: !!acceptedTerms, acceptedLgpd: !!acceptedLgpd,
+        // Default: conceder App como bônus (true). Frontend pode enviar false
+        // para desligar (caso a academia opte por não incluir o app).
+        giveAppBonus: giveAppBonus === undefined ? true : !!giveAppBonus,
       });
       logAcademyAction({
         academyId: req.tenant!.academyId,

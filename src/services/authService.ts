@@ -5,6 +5,7 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { getUserProducts } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
+import { findOrCreateUserFromContext } from './userIdentityService';
 import {
   PARQ_FORM_VERSION,
   assertParqSignature,
@@ -196,76 +197,87 @@ export async function registerUser(
     validateHealthFlags(data.healthFlags);
   }
 
-  const hashedPassword = await bcryptjs.hash(data.password, 10);
-
-  const hf = data.healthFlags;
-
+  // Signup público usa email como única chave de dedup. CPF/phone ficam apenas
+  // como atributos do usuário — sem merge silencioso. Preparado para reorientar
+  // o `matchBy` para `['cpf', 'email']` numa fase futura quando o CPF virar
+  // chave principal de identidade.
+  let identity;
   try {
-    const result = await pool.query(
-      `INSERT INTO users (
-        email,
-        password,
-        role,
-        name,
-        cpf,
-        phone,
-        sem_historico_hipertensao,
-        sem_historico_cardiaco,
-        sem_restricao_medica_exercicio,
-        apto_para_atividade_fisica,
-        aceita_responsabilidade_informacoes,
-        profile_completed
-      )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-       RETURNING ${USER_SELECT_FIELDS}`,
+    identity = await findOrCreateUserFromContext({
+      email,
+      name,
+      cpf,
+      phone,
+      password: data.password,
+      matchBy: ['email'],
+    });
+  } catch (error: any) {
+    if (error?.code === '23505') {
+      throwFriendlyUniqueError(error);
+    }
+    throw error;
+  }
+
+  if (!identity.isNew) {
+    const err: any = new Error('Email ja cadastrado.');
+    err.code = 'EMAIL_ALREADY_REGISTERED';
+    throw err;
+  }
+
+  // Persistir health flags do PAR-Q (quando informados) e role/contexto que
+  // ainda não passam pelo serviço de identidade.
+  const hf = data.healthFlags;
+  if (hf || role !== 'user') {
+    await pool.query(
+      `UPDATE users SET
+         role = $2,
+         sem_historico_hipertensao        = COALESCE($3, sem_historico_hipertensao),
+         sem_historico_cardiaco           = COALESCE($4, sem_historico_cardiaco),
+         sem_restricao_medica_exercicio   = COALESCE($5, sem_restricao_medica_exercicio),
+         apto_para_atividade_fisica       = COALESCE($6, apto_para_atividade_fisica),
+         aceita_responsabilidade_informacoes = COALESCE($7, aceita_responsabilidade_informacoes)
+       WHERE id = $1`,
       [
-        email,
-        hashedPassword,
+        identity.user.id,
         role,
-        name,
-        cpf,
-        phone,
         hf ? hf.semHistoricoHipertensao : null,
         hf ? hf.semHistoricoCardiaco : null,
         hf ? hf.semRestricaoMedicaExercicio : null,
         hf ? hf.aptoParaAtividadeFisica : null,
         hf ? hf.aceitaResponsabilidadeInformacoes : null,
-        false,
       ]
     );
-
-    const user = mapUserRow(result.rows[0]);
-
-    // Create free tier subscription
-    await assignFreeSubscription(user.id);
-
-    // Grant APP membership (idempotent)
-    await grantMembership(user.id, 'app', {
-      metadata: { source: 'self_signup' },
-    }).catch((err) => logger.error({ err, userId: user.id }, '[auth] grantMembership app failed'));
-
-    const products = await getUserProducts(user.id);
-    const accessToken = generateAccessToken({
-      id: user.id,
-      email: user.email,
-      role: user.role,
-      profileCompleted: user.profileCompleted,
-      accessProfile: user.accessProfile,
-      products,
-    });
-
-    const refreshToken = generateRefreshToken({
-      id: user.id,
-      email: user.email
-    });
-
-    return { user, accessToken, refreshToken };
-  } catch (error: any) {
-    if (error.code === '23505') {
-      throwFriendlyUniqueError(error);
-    }
-    throw error;
   }
+
+  const refreshed = await pool.query(
+    `SELECT ${USER_SELECT_FIELDS} FROM users WHERE id = $1`,
+    [identity.user.id]
+  );
+  const user = mapUserRow(refreshed.rows[0]);
+
+  await assignFreeSubscription(user.id);
+
+  await grantMembership(user.id, 'app', {
+    source: 'direct_purchase',
+    metadata: { signup: 'public', channel: 'self_signup' },
+  }).catch((err) => logger.error({ err, userId: user.id }, '[auth] grantMembership app failed'));
+
+  const products = await getUserProducts(user.id);
+  const accessToken = generateAccessToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    profileCompleted: user.profileCompleted,
+    accessProfile: user.accessProfile,
+    products,
+  });
+
+  const refreshToken = generateRefreshToken({
+    id: user.id,
+    email: user.email,
+  });
+
+  return { user, accessToken, refreshToken };
 }
 
 export async function loginUser(
@@ -380,24 +392,40 @@ export async function loginOrCreateOAuthUser(
       userRow = result.rows[0];
 
       if (!userRow) {
-        // Create new user via OAuth (provider validates identity — no CAPTCHA needed)
+        // Create new user via OAuth — roteia via serviço de identidade para
+        // garantir dedup (matchBy:['email']) + senha aleatória (skipPolicy).
         isNewUser = true;
-        const insertResult = await pool.query(
-          `INSERT INTO users (email, password, role, name, photo_url, ${oauthField}, oauth_provider, profile_completed)
-           VALUES ($1, NULL, 'user', $2, $3, $4, $5, false)
-           RETURNING ${USER_SELECT_FIELDS}`,
-          [
-            email.toLowerCase().trim(),
-            name || email.split('@')[0],
-            photoUrl ?? null,
-            oauthId,
-            provider,
-          ]
+        const sentinelPassword = `oauth!${provider}!${oauthId}!${Date.now()}`;
+        const identity = await findOrCreateUserFromContext({
+          email: email.toLowerCase().trim(),
+          name: name || email.split('@')[0],
+          password: sentinelPassword,
+          skipPasswordPolicy: true,
+          matchBy: ['email'],
+        });
+
+        // OAuth normalmente envia senha nula no banco; sentinel acima é só pra
+        // satisfazer a politica de criação. Limpamos imediatamente e gravamos
+        // o oauth_id correspondente.
+        await pool.query(
+          `UPDATE users
+              SET password = NULL,
+                  photo_url = COALESCE($2, photo_url),
+                  ${oauthField} = $3,
+                  oauth_provider = $4
+            WHERE id = $1`,
+          [identity.user.id, photoUrl ?? null, oauthId, provider]
         );
-        userRow = insertResult.rows[0];
-        // Grant APP membership for new OAuth user
+
+        const fetched = await pool.query(
+          `SELECT ${USER_SELECT_FIELDS} FROM users WHERE id = $1`,
+          [identity.user.id]
+        );
+        userRow = fetched.rows[0];
+
         await grantMembership(userRow.id, 'app', {
-          metadata: { source: 'oauth_signup', provider },
+          source: 'direct_purchase',
+          metadata: { signup: 'oauth', provider },
         }).catch((err) => logger.error({ err, userId: userRow.id }, '[auth] grantMembership oauth failed'));
         await assignFreeSubscription(userRow.id);
       } else {

@@ -38,7 +38,11 @@ export async function ensureProductsSchema(): Promise<void> {
       status              VARCHAR(20) NOT NULL DEFAULT 'active'
                             CHECK (status IN ('active', 'paused', 'suspended', 'cancelled', 'expired')),
       source              VARCHAR(30) NOT NULL DEFAULT 'metacore'
-                            CHECK (source IN ('metacore', 'academy_bootstrap', 'direct_purchase')),
+                            CHECK (source IN (
+                              'metacore', 'academy_bootstrap', 'direct_purchase',
+                              'bonus_academy', 'bonus_personal', 'bonus_nutri',
+                              'discount_partner', 'trial', 'grace_period'
+                            )),
       source_academy_id   INTEGER REFERENCES academies(id),
       granted_by_user_id  INTEGER REFERENCES users(id),
       granted_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),

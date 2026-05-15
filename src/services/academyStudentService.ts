@@ -1,9 +1,9 @@
 import pool from '../config/database';
-import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { auditLog } from '../utils/auditLog';
 import { grantUserProduct } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
+import { findOrCreateUserFromContext } from './userIdentityService';
 import logger from '../lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -377,11 +377,19 @@ export async function addStudent(
     emergencyContactPhone?: string;
     acceptedTerms?: boolean;
     acceptedLgpd?: boolean;
+    /**
+     * Conceder o App como bônus ao criar/atualizar o aluno. Default `true`.
+     * Quando a Academia cancelar o vínculo no futuro, o App entra em
+     * `grace_period` automaticamente (ver `membershipService.cancelMembership`).
+     */
+    giveAppBonus?: boolean;
   }
 ): Promise<{ student: Partial<Student>; tempPassword?: string; inviteUrl?: string }> {
   const email = params.email.toLowerCase().trim();
   const studentRoleId = await getOwnerRoleId(academyId);
   if (!studentRoleId) throw new Error('Role academy_student não encontrado.');
+
+  const giveAppBonus = params.giveAppBonus !== false; // default true
 
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
@@ -411,41 +419,37 @@ export async function addStudent(
   // Direct
   if (!params.name) throw new Error('name é obrigatório para cadastro direto.');
 
+  // Identidade: a academia confirma identidade do aluno → permitir dedup amplo
+  // (email > cpf > phone). Senha temporária gerada quando o usuário ainda não
+  // existe; ignorada quando o aluno já tem conta no MetaCore.
+  let tempPassword: string | undefined = generateTempPassword();
+  const identity = await findOrCreateUserFromContext({
+    email,
+    name: String(params.name).trim(),
+    cpf: params.cpf ?? null,
+    phone: params.phone ?? null,
+    password: tempPassword,
+    skipPasswordPolicy: true,
+  });
+
+  if (!identity.isNew) {
+    tempPassword = undefined; // user já existia — não devolver senha temporária
+  }
+
+  const userId = identity.user.id;
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
-    let userId: number;
-    let tempPassword: string | undefined;
-
-    const existing = await client.query(`SELECT id FROM users WHERE email = $1`, [email]);
-    if (existing.rows.length > 0) {
-      userId = existing.rows[0].id;
-      // Update demographic fields on existing user (non-destructive)
-      await client.query(
-        `UPDATE users SET
-           phone      = COALESCE($2, phone),
-           cpf        = COALESCE($3, cpf),
-           birth_date = COALESCE($4::date, birth_date),
-           avatar_url = COALESCE($5, avatar_url)
-         WHERE id = $1`,
-        [userId, params.phone ?? null, params.cpf ?? null, params.birthDate ?? null, params.avatarUrl ?? null]
-      );
-    } else {
-      tempPassword = generateTempPassword();
-      const hash = await bcrypt.hash(tempPassword, 12);
-      const ins = await client.query(
-        `INSERT INTO users (name, email, password, role, phone, cpf, birth_date, avatar_url, profile_completed)
-         VALUES ($1, $2, $3, 'user', $4, $5, $6::date, $7, true)
-         RETURNING id`,
-        [
-          String(params.name).trim(), email, hash,
-          params.phone ?? null, params.cpf ?? null,
-          params.birthDate ?? null, params.avatarUrl ?? null,
-        ]
-      );
-      userId = ins.rows[0].id;
-    }
+    // Campos demográficos não tocados pelo serviço de identidade.
+    await client.query(
+      `UPDATE users SET
+         birth_date = COALESCE($2::date, birth_date),
+         avatar_url = COALESCE($3, avatar_url)
+       WHERE id = $1`,
+      [userId, params.birthDate ?? null, params.avatarUrl ?? null]
+    );
 
     // Determine initial status
     const hasEnrollment = !!params.planId;
@@ -517,10 +521,21 @@ export async function addStudent(
 
     // Grant ACADEMIA membership outside transaction (idempotent, non-critical)
     await grantMembership(userId, 'academia', {
+      source: 'academy_bootstrap',
       academyId,
       sourceAcademyId: academyId,
-      metadata: { source: 'academy_direct_add' },
+      metadata: { channel: 'academy_direct_add' },
     }).catch((err) => logger.error({ err, userId, academyId }, '[academy] grantMembership academia failed'));
+
+    // Grant APP como bônus (default ligado). Se a Academia cancelar o aluno
+    // depois, esse App cai em grace_period (30 dias) automaticamente.
+    if (giveAppBonus) {
+      await grantMembership(userId, 'app', {
+        source: 'bonus_academy',
+        sourceAcademyId: academyId,
+        metadata: { channel: 'academy_direct_add_bonus' },
+      }).catch((err) => logger.error({ err, userId, academyId }, '[academy] grantMembership app bonus failed'));
+    }
 
     return {
       student: { userId, name: params.name, email, studentStatus: initialStatus },

@@ -96,9 +96,15 @@ exports.up = (pgm) => {
   pgm.sql(`CREATE INDEX IF NOT EXISTS idx_upm_professional ON user_product_memberships(professional_id) WHERE professional_id IS NOT NULL`);
 
   // 7. Backfill memberships from academy_users (ACADEMIA product)
+  //
+  // DISTINCT ON (au.user_id): mesmo user_id pode estar ativo em N academias
+  // (academy_users tem UNIQUE (user_id, academy_id), não user_id puro).
+  // Sem o DISTINCT, o SELECT produz múltiplas linhas (user_id, 'academia')
+  // e o ON CONFLICT DO UPDATE explode com 21000 (cardinality_violation).
+  // ORDER BY mais recente DESC = backfill pega a "academia atual" do user.
   pgm.sql(`
     INSERT INTO user_product_memberships (user_id, product_key, status, source, academy_id, source_academy_id, started_at)
-    SELECT
+    SELECT DISTINCT ON (au.user_id)
       au.user_id,
       'academia',
       'active',
@@ -108,6 +114,7 @@ exports.up = (pgm) => {
       COALESCE(au.joined_at, au.created_at, NOW())
     FROM academy_users au
     WHERE au.is_active = TRUE AND au.status = 'active'
+    ORDER BY au.user_id, COALESCE(au.joined_at, au.created_at) DESC NULLS LAST
     ON CONFLICT (user_id, product_key) DO UPDATE
       SET
         academy_id        = EXCLUDED.academy_id,
@@ -116,9 +123,13 @@ exports.up = (pgm) => {
   `);
 
   // 8. Backfill memberships from personal_student_assignments (PERSONAL product)
+  //
+  // DISTINCT ON (psa.student_id): mesmo aluno pode ter sido atribuído a N personals
+  // (constraint é UNIQUE (personal_id, student_id), não student_id puro).
+  // ORDER BY created_at DESC = backfill pega o personal mais recente do aluno.
   pgm.sql(`
     INSERT INTO user_product_memberships (user_id, product_key, status, source, professional_id, academy_id, started_at)
-    SELECT
+    SELECT DISTINCT ON (psa.student_id)
       psa.student_id,
       'personal',
       'active',
@@ -128,6 +139,7 @@ exports.up = (pgm) => {
       COALESCE(psa.created_at, NOW())
     FROM personal_student_assignments psa
     WHERE psa.status = 'active'
+    ORDER BY psa.student_id, psa.created_at DESC NULLS LAST
     ON CONFLICT (user_id, product_key) DO UPDATE
       SET
         professional_id = EXCLUDED.professional_id,

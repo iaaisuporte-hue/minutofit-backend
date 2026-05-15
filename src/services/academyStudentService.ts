@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { auditLog } from '../utils/auditLog';
 import { grantUserProduct } from '../db/ensureProductsSchema';
+import { grantMembership } from './membershipService';
 import logger from '../lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -513,6 +514,14 @@ export async function addStudent(
     });
 
     await client.query('COMMIT');
+
+    // Grant ACADEMIA membership outside transaction (idempotent, non-critical)
+    await grantMembership(userId, 'academia', {
+      academyId,
+      sourceAcademyId: academyId,
+      metadata: { source: 'academy_direct_add' },
+    }).catch((err) => logger.error({ err, userId, academyId }, '[academy] grantMembership academia failed'));
+
     return {
       student: { userId, name: params.name, email, studentStatus: initialStatus },
       tempPassword,

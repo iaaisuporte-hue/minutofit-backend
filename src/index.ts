@@ -22,6 +22,7 @@ import movementRoutes from './routes/movement';
 import planRoutes from './routes/plans';
 import metabolismRoutes from './modules/metabolism/metabolic.controller';
 import academyRoutes from './routes/academy';
+import nutriRoutes from './routes/nutri';
 import { tenantResolverMiddleware } from './middleware/tenantResolver';
 import pool from './config/database';
 
@@ -270,6 +271,7 @@ app.use('/api', metabolismRoutes);
 app.use('/api/activities', activitiesRoutes);
 app.use('/api/movement', movementRoutes);
 app.use('/api/academy', academyRoutes);
+app.use('/api/nutri', nutriRoutes);
 
 // ---------------------------------------------------------------------------
 // Health check real — valida DB e presença de secrets críticos

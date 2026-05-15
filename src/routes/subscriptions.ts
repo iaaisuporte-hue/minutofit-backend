@@ -70,6 +70,13 @@ router.post('/create-checkout', authMiddleware, blockAccessProfilesMiddleware('c
       req.user!.email
     );
 
+    // Bug fix: persist preapprovalId so the webhook handler can match the payment to this subscription
+    await subscriptionService.createOrUpdateSubscriptionWithPreapproval(
+      req.user!.id,
+      tierId,
+      preapprovalId
+    );
+
     res.json({
       success: true,
       data: {

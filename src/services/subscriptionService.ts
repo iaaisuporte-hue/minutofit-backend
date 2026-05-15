@@ -143,6 +143,33 @@ export async function cancelUserSubscription(subscriptionId: number): Promise<Us
   return updateUserSubscription(subscriptionId, undefined, 'cancelled');
 }
 
+/**
+ * Upserts user_subscriptions with the MP preapproval ID so webhook handlers
+ * can match the incoming payment notification to the correct subscription row.
+ *
+ * Bug fix: previously create-checkout returned preapprovalId but never persisted it.
+ */
+export async function createOrUpdateSubscriptionWithPreapproval(
+  userId: number,
+  tierId: number,
+  preapprovalId: string
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO user_subscriptions (user_id, tier_id, status, mercado_pago_subscription_id, active_from)
+     VALUES ($1, $2, 'active', $3, NOW())
+     ON CONFLICT DO NOTHING`,
+    [userId, tierId, preapprovalId]
+  );
+  // If a row already exists for this user+tier, stamp the preapprovalId
+  await pool.query(
+    `UPDATE user_subscriptions
+     SET mercado_pago_subscription_id = $3, updated_at = NOW()
+     WHERE user_id = $1 AND tier_id = $2 AND status = 'active'
+       AND (mercado_pago_subscription_id IS NULL OR mercado_pago_subscription_id = '')`,
+    [userId, tierId, preapprovalId]
+  );
+}
+
 export async function recordPayment(
   userId: number,
   subscriptionId: number | null,

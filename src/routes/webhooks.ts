@@ -3,6 +3,7 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
 import { handleMpPreapprovalWebhook } from '../services/personalBillingService';
+import { grantMembership, cancelMembership } from '../services/membershipService';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -141,8 +142,16 @@ async function handlePaymentNotification(data: any) {
 
         if (status === 'approved') {
           await subscriptionService.updateUserSubscription(subscription.id, undefined, 'active');
+          // Sync APP membership
+          await grantMembership(subscription.user_id, 'app', {
+            planId: subscription.tier_id ?? null,
+            metadata: { source: 'mp_payment_approved', mp_preapproval_id: preapprovalId, payment_id: paymentId },
+          }).catch((err) => logger.error({ err }, '[webhook] grantMembership app failed'));
         } else if (status === 'rejected' || status === 'cancelled') {
           await subscriptionService.updateUserSubscription(subscription.id, undefined, 'expired');
+          await cancelMembership(subscription.user_id, 'app', {
+            reason: `mp_payment_${status}`,
+          }).catch((err) => logger.error({ err }, '[webhook] cancelMembership app failed'));
         }
       }
     }
@@ -189,6 +198,17 @@ async function handleSubscriptionNotification(data: any) {
       }
 
       await subscriptionService.updateUserSubscription(subscription.id, undefined, localStatus);
+
+      // Sync APP membership based on subscription status
+      if (localStatus === 'active') {
+        await grantMembership(subscription.user_id, 'app', {
+          metadata: { source: 'mp_subscription', mp_preapproval_id: preapprovalId, mp_status: status },
+        }).catch((err) => logger.error({ err }, '[webhook] grantMembership app (subscription) failed'));
+      } else if (localStatus === 'cancelled' || localStatus === 'expired') {
+        await cancelMembership(subscription.user_id, 'app', {
+          reason: `mp_subscription_${status}`,
+        }).catch((err) => logger.error({ err }, '[webhook] cancelMembership app (subscription) failed'));
+      }
     }
   } catch (error) {
     logger.error({ err: error }, 'Subscription notification error');

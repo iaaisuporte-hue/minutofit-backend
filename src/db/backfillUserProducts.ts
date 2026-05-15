@@ -1,38 +1,35 @@
 import pool from '../config/database';
 
 /**
- * Backfill de user_products para usuários existentes.
+ * Backfill de user_product_memberships para usuários existentes.
  *
  * Estratégia conservadora e idempotente:
  *  - Usuário com role='user' ou role='personal' ou role='nutri' → concede produto 'app'
  *  - Usuário com role='personal' → concede também 'personal'
  *  - Usuário com role='nutri' → concede também 'nutri'
  *  - Usuário vinculado a `academy_users` ativo → concede 'academia' (equipe ou aluno)
- *  - Alunos com matrícula ativa em `academy_enrollments` → também 'academia' (redundante mas idempotente)
- *  - Todos os usuários existentes → concede 'metabolismo' (engine metabólica é feature universal nesta base)
+ *  - Todos os usuários existentes → concede 'metabolismo' (engine metabólica é feature universal)
  *
  * ON CONFLICT (user_id, product_key) DO NOTHING — idempotente.
  * Roda uma vez no boot após ensureProductsSchema.
+ *
+ * A migration 1747250000000 executa o backfill de academia/personal mais completo;
+ * este backfill cobre o caso de usuários criados antes da migration.
  */
 export async function backfillUserProducts(): Promise<void> {
   const tableExists = await pool.query(`
     SELECT 1 FROM information_schema.tables
-    WHERE table_schema = 'public' AND table_name = 'user_products'
+    WHERE table_schema = 'public' AND table_name = 'user_product_memberships'
     LIMIT 1
   `);
   if (tableExists.rows.length === 0) {
-    console.log('[db] backfillUserProducts: user_products table not found, skipping');
+    console.log('[db] backfillUserProducts: user_product_memberships table not found, skipping');
     return;
-  }
-
-  const alreadyHasRecords = await pool.query(`SELECT 1 FROM user_products LIMIT 1`);
-  if (alreadyHasRecords.rows.length > 0) {
-    // Table already has records; run targeted inserts to cover any gaps
   }
 
   // Produto 'app' para todos os usuários não-admin
   await pool.query(`
-    INSERT INTO user_products (user_id, product_key, status, source, notes)
+    INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
     SELECT u.id, 'app', 'active', 'metacore', 'Backfill inicial — produto app para todos os usuários'
     FROM users u
     WHERE u.role IN ('user', 'personal', 'nutri')
@@ -41,7 +38,7 @@ export async function backfillUserProducts(): Promise<void> {
 
   // Produto 'personal' para personal trainers
   await pool.query(`
-    INSERT INTO user_products (user_id, product_key, status, source, notes)
+    INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
     SELECT u.id, 'personal', 'active', 'metacore', 'Backfill inicial — produto personal para personal trainers'
     FROM users u
     WHERE u.role = 'personal'
@@ -50,42 +47,31 @@ export async function backfillUserProducts(): Promise<void> {
 
   // Produto 'nutri' para nutricionistas
   await pool.query(`
-    INSERT INTO user_products (user_id, product_key, status, source, notes)
+    INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
     SELECT u.id, 'nutri', 'active', 'metacore', 'Backfill inicial — produto nutri para nutricionistas'
     FROM users u
     WHERE u.role = 'nutri'
     ON CONFLICT (user_id, product_key) DO NOTHING
   `);
 
-  // Produto 'academia' para alunos com matrícula ativa
-  await pool.query(`
-    INSERT INTO user_products (user_id, product_key, status, source, source_academy_id, notes)
-    SELECT DISTINCT ae.user_id, 'academia', 'active', 'academy_bootstrap', ae.academy_id,
-           'Backfill inicial — produto academia para alunos matriculados'
-    FROM academy_enrollments ae
-    WHERE ae.status = 'active'
-    ON CONFLICT (user_id, product_key) DO NOTHING
-  `).catch(() => {
-    // academy_enrollments may not exist yet
-  });
-
   // Produto 'metabolismo' para todos os usuários (engine é universal na base atual)
   await pool.query(`
-    INSERT INTO user_products (user_id, product_key, status, source, notes)
+    INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
     SELECT u.id, 'metabolismo', 'active', 'metacore', 'Backfill inicial — metabolismo universal'
     FROM users u
     WHERE u.role IN ('user', 'personal', 'nutri')
     ON CONFLICT (user_id, product_key) DO NOTHING
   `);
 
-  // Produto 'academia' para qualquer vínculo ativo em academy_users (equipe + aluno matriculado na base)
+  // Produto 'academia' para qualquer vínculo ativo em academy_users (equipe + aluno)
   await pool.query(`
-    INSERT INTO user_products (user_id, product_key, status, source, source_academy_id, notes)
+    INSERT INTO user_product_memberships (user_id, product_key, status, source, source_academy_id, academy_id, notes)
     SELECT DISTINCT ON (au.user_id)
       au.user_id,
       'academia',
       'active',
       'academy_bootstrap',
+      au.academy_id,
       au.academy_id,
       'Backfill — academy_users ativo'
     FROM academy_users au
@@ -93,7 +79,7 @@ export async function backfillUserProducts(): Promise<void> {
     ORDER BY au.user_id, au.academy_id
     ON CONFLICT (user_id, product_key) DO NOTHING
   `).catch(() => {
-    // academy_users may not exist yet
+    // academy_users may not exist yet on very first deploy
   });
 
   console.log('[db] backfillUserProducts: backfill concluído');

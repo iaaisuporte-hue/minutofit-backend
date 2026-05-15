@@ -4,6 +4,7 @@ import logger from '../lib/logger';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { getUserProducts } from '../db/ensureProductsSchema';
+import { grantMembership } from './membershipService';
 import {
   PARQ_FORM_VERSION,
   assertParqSignature,
@@ -238,6 +239,11 @@ export async function registerUser(
     // Create free tier subscription
     await assignFreeSubscription(user.id);
 
+    // Grant APP membership (idempotent)
+    await grantMembership(user.id, 'app', {
+      metadata: { source: 'self_signup' },
+    }).catch((err) => logger.error({ err, userId: user.id }, '[auth] grantMembership app failed'));
+
     const products = await getUserProducts(user.id);
     const accessToken = generateAccessToken({
       id: user.id,
@@ -374,13 +380,36 @@ export async function loginOrCreateOAuthUser(
       userRow = result.rows[0];
 
       if (!userRow) {
-        throw new Error('Cadastro via OAuth esta temporariamente indisponivel. Use email e senha.');
+        // Create new user via OAuth (provider validates identity — no CAPTCHA needed)
+        isNewUser = true;
+        const insertResult = await pool.query(
+          `INSERT INTO users (email, password, role, name, photo_url, ${oauthField}, oauth_provider, profile_completed)
+           VALUES ($1, NULL, 'user', $2, $3, $4, $5, false)
+           RETURNING ${USER_SELECT_FIELDS}`,
+          [
+            email.toLowerCase().trim(),
+            name || email.split('@')[0],
+            photoUrl ?? null,
+            oauthId,
+            provider,
+          ]
+        );
+        userRow = insertResult.rows[0];
+        // Grant APP membership for new OAuth user
+        await grantMembership(userRow.id, 'app', {
+          metadata: { source: 'oauth_signup', provider },
+        }).catch((err) => logger.error({ err, userId: userRow.id }, '[auth] grantMembership oauth failed'));
+        await assignFreeSubscription(userRow.id);
       } else {
         // Update existing user with OAuth ID
         await pool.query(
           `UPDATE users SET ${oauthField} = $1, oauth_provider = $2 WHERE id = $3`,
           [oauthId, provider, userRow.id]
         );
+        // Grant APP membership if not already granted (idempotent)
+        await grantMembership(userRow.id, 'app', {
+          metadata: { source: 'oauth_link', provider },
+        }).catch((err) => logger.error({ err, userId: userRow.id }, '[auth] grantMembership oauth-link failed'));
       }
     }
 

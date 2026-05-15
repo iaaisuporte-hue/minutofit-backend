@@ -446,8 +446,10 @@ export async function acceptInvitation(
         productKey: 'academia',
         source: 'academy_bootstrap',
         sourceAcademyId: row.academy_id,
+        academyId: row.academy_id,
         grantedByUserId: null,
         notes: 'Vínculo equipe da academia (convite aceito)',
+        metadata: { source: 'academy_invite_accepted' },
       });
     } catch (err: any) {
       logger.error({ err }, '[products] grant academia (acceptInvitation)');

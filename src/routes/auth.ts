@@ -3,13 +3,15 @@ import rateLimit from 'express-rate-limit';
 import { authMiddleware } from '../middleware/auth';
 import * as authService from '../services/authService';
 import * as oauthService from '../services/oauthService';
-import { generateAccessToken } from '../utils/jwt';
+import { generateAccessToken, generateRefreshToken } from '../utils/jwt';
 import { verifyRegistrationCaptcha } from '../services/captchaService';
 import { verifyRefreshToken } from '../utils/jwt';
 import pool from '../config/database';
 import { validateInvitationToken, acceptInvitation } from '../services/academyTeamService';
 import { logAcademyAction } from '../services/auditService';
 import { getUserProducts, getUserProductsWithMeta } from '../db/ensureProductsSchema';
+import { findOrCreateUserFromContext, verifyUserPassword } from '../services/userIdentityService';
+import { grantMembership } from '../services/membershipService';
 import logger from '../lib/logger';
 import {
   calcPrimarySoftStrong,
@@ -639,23 +641,36 @@ router.get('/invitations/:token', async (req: Request, res: Response) => {
   }
 });
 
-// GET /auth/direct-invite/:token — public, no auth required
+// GET /auth/direct-invite/:token — public; supports personal (default) and nutri (?type=nutri)
 router.get('/direct-invite/:token', async (req: Request, res: Response) => {
   try {
     const { token } = req.params;
+    const inviteType = req.query.type === 'nutri' ? 'nutri' : 'personal';
+
     if (!token || token.length > 64) {
       return res.status(400).json({ success: false, error: 'Token inválido.' });
     }
 
-    const result = await pool.query(
-      `SELECT pdi.id, pdi.invited_email, pdi.invited_name, pdi.status, pdi.expires_at,
-              u.name AS personal_name
-       FROM personal_direct_invites pdi
-       JOIN users u ON u.id = pdi.personal_id
-       WHERE pdi.token = $1
-       LIMIT 1`,
-      [token]
-    );
+    let result;
+    if (inviteType === 'nutri') {
+      result = await pool.query(
+        `SELECT ndi.id, ndi.invited_email, ndi.invited_name, ndi.status, ndi.expires_at,
+                u.name AS professional_name
+         FROM nutri_direct_invites ndi
+         JOIN users u ON u.id = ndi.nutri_id
+         WHERE ndi.token = $1 LIMIT 1`,
+        [token]
+      );
+    } else {
+      result = await pool.query(
+        `SELECT pdi.id, pdi.invited_email, pdi.invited_name, pdi.status, pdi.expires_at,
+                u.name AS professional_name
+         FROM personal_direct_invites pdi
+         JOIN users u ON u.id = pdi.personal_id
+         WHERE pdi.token = $1 LIMIT 1`,
+        [token]
+      );
+    }
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'Convite não encontrado.' });
@@ -667,11 +682,13 @@ router.get('/direct-invite/:token', async (req: Request, res: Response) => {
     res.json({
       success: true,
       data: {
-        personalName: row.personal_name,
+        professionalName: row.professional_name,
+        personalName: row.professional_name, // compat alias for existing clients
         invitedName: row.invited_name,
         invitedEmail: row.invited_email,
         status: row.status,
         expired,
+        type: inviteType,
       },
     });
   } catch (err: any) {
@@ -679,7 +696,10 @@ router.get('/direct-invite/:token', async (req: Request, res: Response) => {
   }
 });
 
-// POST /auth/direct-invite/:token/accept — public, creates user + assignment
+// POST /auth/direct-invite/:token/accept
+// Supports both new users (signup) and existing users (login + link).
+// When the email/CPF matches an existing account, requires the existing password.
+// Returns userExists=true so the frontend can show the appropriate UI.
 router.post('/direct-invite/:token/accept', async (req: Request, res: Response) => {
   try {
     const { token } = req.params;
@@ -687,12 +707,10 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
       return res.status(400).json({ success: false, error: 'Token inválido.' });
     }
 
-    // Fetch invite
     const inviteResult = await pool.query(
       `SELECT id, personal_id, invited_email, invited_name, status, expires_at
        FROM personal_direct_invites
-       WHERE token = $1
-       LIMIT 1`,
+       WHERE token = $1 LIMIT 1`,
       [token]
     );
 
@@ -712,64 +730,215 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
     }
 
     const { email, password, name, cpf, phone } = req.body;
-    const h = req.body.healthFlags;
-    let healthFlags: authService.HealthFlags | undefined;
-    if (h && typeof h === 'object') {
-      const candidate = {
-        semHistoricoHipertensao: h.sem_historico_hipertensao,
-        semHistoricoCardiaco: h.sem_historico_cardiaco,
-        semRestricaoMedicaExercicio: h.sem_restricao_medica_exercicio,
-        aptoParaAtividadeFisica: h.apto_para_atividade_fisica,
-        aceitaResponsabilidadeInformacoes: h.aceita_responsabilidade_informacoes,
-      };
-      if (Object.values(candidate).every((v) => typeof v === 'boolean')) {
-        healthFlags = candidate as authService.HealthFlags;
-      }
-    }
-
     const finalEmail = (typeof email === 'string' ? email : invite.invited_email || '').trim().toLowerCase();
-    const finalName  = (typeof name === 'string'  ? name  : invite.invited_name  || '').trim();
+    const finalName  = (typeof name  === 'string' ? name  : invite.invited_name  || '').trim();
 
-    if (!finalEmail || !password || !finalName || !cpf || !phone) {
-      return res.status(400).json({
-        success: false,
-        error: 'Nome, CPF, telefone, email e senha são obrigatórios.',
-      });
+    if (!finalEmail || !finalName) {
+      return res.status(400).json({ success: false, error: 'Nome e e-mail são obrigatórios.' });
+    }
+    if (!password) {
+      return res.status(400).json({ success: false, error: 'Senha obrigatória.' });
     }
 
-    // Create user (reuse registerUser which handles password policy + free subscription)
-    const { user, accessToken, refreshToken } = await authService.registerUser({
+    // Find or create user — deduplicates by email / CPF / phone
+    const { user: identityUser, isNew } = await findOrCreateUserFromContext({
       email: finalEmail,
-      password,
       name: finalName,
-      cpf,
-      phone,
-      healthFlags,
+      cpf: typeof cpf === 'string' ? cpf : null,
+      phone: typeof phone === 'string' ? phone : null,
+      password,
+    }).catch(async () => {
+      // Fallback: if findOrCreate fails (e.g. cpf conflict on different email), try email-only
+      return findOrCreateUserFromContext({ email: finalEmail, name: finalName, password });
     });
 
-    // Create assignment with academy_id = NULL (direct relationship)
+    // When the user already existed, verify password to prove ownership
+    if (!isNew) {
+      const valid = await verifyUserPassword(identityUser.id, password);
+      if (!valid) {
+        return res.status(401).json({
+          success: false,
+          error: 'Senha incorreta para a conta existente. Faça login para aceitar o convite.',
+          userExists: true,
+          email: identityUser.email,
+        });
+      }
+    } else {
+      // New user: assign free subscription (grantMembership APP is handled inside findOrCreate path)
+      await pool.query(
+        `INSERT INTO user_subscriptions (user_id, tier_id, status, active_from)
+         SELECT $1, id, 'active', NOW() FROM subscription_tiers WHERE name = 'Free'
+         ON CONFLICT DO NOTHING`,
+        [identityUser.id]
+      );
+    }
+
+    // Create personal-student assignment (academy_id = NULL → autonomous personal)
     await pool.query(
       `INSERT INTO personal_student_assignments (personal_id, student_id, status, created_at, updated_at)
        VALUES ($1, $2, 'active', NOW(), NOW())
-       ON CONFLICT (personal_id, student_id)
-       DO UPDATE SET status = 'active', updated_at = NOW()`,
-      [invite.personal_id, user.id]
+       ON CONFLICT (personal_id, student_id) DO UPDATE SET status = 'active', updated_at = NOW()`,
+      [invite.personal_id, identityUser.id]
     );
+
+    // Grant PERSONAL membership
+    await grantMembership(identityUser.id, 'personal', {
+      professionalId: invite.personal_id,
+      metadata: { source: 'direct_invite', token },
+    });
+
+    // Grant APP membership (idempotent — existing users may already have it)
+    await grantMembership(identityUser.id, 'app', {
+      metadata: { source: 'direct_invite_personal' },
+    });
 
     // Mark invite as accepted
     await pool.query(
       `UPDATE personal_direct_invites
        SET status = 'accepted', accepted_user_id = $1, accepted_at = NOW()
        WHERE id = $2`,
-      [user.id, invite.id]
+      [identityUser.id, invite.id]
     );
 
-    res.status(201).json({ success: true, data: { user, accessToken, refreshToken } });
+    // Issue tokens
+    const products = await getUserProducts(identityUser.id);
+    const { activeAcademyId, academyRoleSlug } = await authService.resolveAcademyContext(identityUser.id);
+    const effectiveProfile = (academyRoleSlug as authService.AccessProfile | undefined) ?? (identityUser as any).access_profile;
+
+    const accessToken = generateAccessToken({
+      id: identityUser.id,
+      email: identityUser.email,
+      role: identityUser.role as 'user' | 'personal' | 'nutri' | 'admin',
+      profileCompleted: identityUser.profile_completed,
+      accessProfile: effectiveProfile,
+      activeAcademyId,
+      products,
+    });
+    const refreshToken = generateRefreshToken({ id: identityUser.id, email: identityUser.email });
+
+    const statusCode = isNew ? 201 : 200;
+    res.status(statusCode).json({
+      success: true,
+      data: { user: identityUser, accessToken, refreshToken, isNew, userExists: !isNew },
+    });
   } catch (err: any) {
-    const msg = String(err.message || 'Não foi possível concluir o cadastro.');
-    const status =
-      msg === 'CPF ja cadastrado.' || msg === 'Email ja cadastrado.' ? 409 : 400;
-    res.status(status).json({ success: false, error: msg });
+    logger.error({ err }, '[auth] direct-invite accept error');
+    res.status(400).json({ success: false, error: err.message || 'Não foi possível concluir o cadastro.' });
+  }
+});
+
+// POST /auth/direct-invite-nutri/:token/accept
+// Same dedup flow as personal, but creates nutri_patient_assignments + grants NUTRI membership.
+router.post('/direct-invite-nutri/:token/accept', async (req: Request, res: Response) => {
+  try {
+    const { token } = req.params;
+    if (!token || token.length > 64) {
+      return res.status(400).json({ success: false, error: 'Token inválido.' });
+    }
+
+    const inviteResult = await pool.query(
+      `SELECT id, nutri_id, invited_email, invited_name, status, expires_at
+       FROM nutri_direct_invites WHERE token = $1 LIMIT 1`,
+      [token]
+    );
+
+    if (inviteResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Convite não encontrado.' });
+    }
+
+    const invite = inviteResult.rows[0];
+
+    if (invite.status !== 'pending') {
+      return res.status(409).json({ success: false, error: 'Este convite já foi usado ou foi revogado.' });
+    }
+
+    if (new Date(invite.expires_at) < new Date()) {
+      await pool.query(`UPDATE nutri_direct_invites SET status = 'expired' WHERE id = $1`, [invite.id]);
+      return res.status(410).json({ success: false, error: 'Este convite expirou.' });
+    }
+
+    const { email, password, name, cpf, phone } = req.body;
+    const finalEmail = (typeof email === 'string' ? email : invite.invited_email || '').trim().toLowerCase();
+    const finalName  = (typeof name  === 'string' ? name  : invite.invited_name  || '').trim();
+
+    if (!finalEmail || !finalName || !password) {
+      return res.status(400).json({ success: false, error: 'Nome, e-mail e senha são obrigatórios.' });
+    }
+
+    const { user: identityUser, isNew } = await findOrCreateUserFromContext({
+      email: finalEmail,
+      name: finalName,
+      cpf: typeof cpf === 'string' ? cpf : null,
+      phone: typeof phone === 'string' ? phone : null,
+      password,
+    }).catch(async () => findOrCreateUserFromContext({ email: finalEmail, name: finalName, password }));
+
+    if (!isNew) {
+      const valid = await verifyUserPassword(identityUser.id, password);
+      if (!valid) {
+        return res.status(401).json({
+          success: false,
+          error: 'Senha incorreta para a conta existente. Faça login para aceitar o convite.',
+          userExists: true,
+          email: identityUser.email,
+        });
+      }
+    } else {
+      await pool.query(
+        `INSERT INTO user_subscriptions (user_id, tier_id, status, active_from)
+         SELECT $1, id, 'active', NOW() FROM subscription_tiers WHERE name = 'Free'
+         ON CONFLICT DO NOTHING`,
+        [identityUser.id]
+      );
+    }
+
+    // Create nutri-patient assignment
+    await pool.query(
+      `INSERT INTO nutri_patient_assignments (nutri_id, patient_id, status, created_at, updated_at)
+       VALUES ($1, $2, 'active', NOW(), NOW())
+       ON CONFLICT (nutri_id, patient_id) DO UPDATE SET status = 'active', updated_at = NOW()`,
+      [invite.nutri_id, identityUser.id]
+    );
+
+    // Grant NUTRI + APP memberships
+    await grantMembership(identityUser.id, 'nutri', {
+      professionalId: invite.nutri_id,
+      metadata: { source: 'direct_invite', token },
+    });
+    await grantMembership(identityUser.id, 'app', {
+      metadata: { source: 'direct_invite_nutri' },
+    });
+
+    // Mark invite accepted
+    await pool.query(
+      `UPDATE nutri_direct_invites
+       SET status = 'accepted', accepted_user_id = $1, accepted_at = NOW()
+       WHERE id = $2`,
+      [identityUser.id, invite.id]
+    );
+
+    const products = await getUserProducts(identityUser.id);
+    const { activeAcademyId, academyRoleSlug } = await authService.resolveAcademyContext(identityUser.id);
+    const effectiveProfile = (academyRoleSlug as authService.AccessProfile | undefined) ?? (identityUser as any).access_profile;
+
+    const accessToken = generateAccessToken({
+      id: identityUser.id,
+      email: identityUser.email,
+      role: identityUser.role as 'user' | 'personal' | 'nutri' | 'admin',
+      profileCompleted: identityUser.profile_completed,
+      accessProfile: effectiveProfile,
+      activeAcademyId,
+      products,
+    });
+    const refreshToken = generateRefreshToken({ id: identityUser.id, email: identityUser.email });
+
+    res.status(isNew ? 201 : 200).json({
+      success: true,
+      data: { user: identityUser, accessToken, refreshToken, isNew, userExists: !isNew },
+    });
+  } catch (err: any) {
+    logger.error({ err }, '[auth] direct-invite-nutri accept error');
+    res.status(400).json({ success: false, error: err.message || 'Não foi possível concluir o cadastro.' });
   }
 });
 

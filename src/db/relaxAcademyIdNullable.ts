@@ -23,6 +23,7 @@ export async function relaxAcademyIdNullable(): Promise<void> {
     'user_gamification_stats',
     'activity_sessions',
     'movement_sessions',
+    'nutri_patient_assignments',
   ];
 
   for (const table of tables) {

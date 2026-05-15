@@ -19,6 +19,7 @@ import {
   listPlatformProtocols,
   updatePlatformProtocol,
 } from '../services/workoutProtocolService';
+import { assertStrongPassword } from '../utils/passwordPolicy';
 
 const router = Router();
 
@@ -767,6 +768,59 @@ router.post('/users/:id/reset-password', authMiddleware, adminMiddleware, async 
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// POST /admin/users/:id/set-password — admin define a senha do usuário (sem gerar aleatório)
+router.post('/users/:id/set-password', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.id);
+    if (!Number.isFinite(userId) || userId <= 0) {
+      return res.status(400).json({ success: false, error: 'userId inválido.' });
+    }
+
+    const userCheck = await pool.query('SELECT id, name, email FROM users WHERE id = $1', [userId]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+    }
+
+    const { password } = req.body as { password?: string };
+    if (!password || typeof password !== 'string') {
+      return res.status(400).json({ success: false, error: 'Campo password obrigatório.' });
+    }
+
+    try {
+      assertStrongPassword(password);
+    } catch (policyErr: unknown) {
+      const msg = policyErr instanceof Error ? policyErr.message : 'Senha inválida.';
+      return res.status(400).json({ success: false, error: msg });
+    }
+
+    const bcrypt = await import('bcryptjs');
+    const hash = await bcrypt.hash(password, 12);
+
+    await pool.query('UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2', [hash, userId]);
+
+    logAcademyAction({
+      academyId: null,
+      userId: (req.user as { id: number }).id,
+      action: 'admin.password_set',
+      entityType: 'user',
+      entityId: userId,
+      meta: { adminId: (req.user as { id: number }).id, targetUserId: userId },
+      ipAddress: req.ip,
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        userId,
+        name: userCheck.rows[0].name,
+        email: userCheck.rows[0].email,
+      },
+    });
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 

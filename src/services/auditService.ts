@@ -26,7 +26,8 @@ export type AuditAction =
   | 'personal.student_note.created'
   | 'personal.student_note.updated'
   | 'personal.student_note.deleted'
-  | 'membership.expire_graces';
+  | 'membership.expire_graces'
+  | 'admin.password_set';
 
 export interface AuditEntry {
   academyId: number | null;

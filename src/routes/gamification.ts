@@ -25,7 +25,11 @@ router.get('/summary', requireFeature('workout_history'), async (req: Request, r
 router.post(
   '/checkins',
   (req: Request, res: Response, next: NextFunction) => {
-    if (req.body?.source === 'wellbeing') return next();
+    // wellbeing e workout são sinais essenciais de aderência — não devem
+    // estar atrás do gate de Activity Tracker GPS. Só 'activity' (GPS)
+    // exige o feature 'tracker'.
+    const src = req.body?.source;
+    if (src === 'wellbeing' || src === 'workout') return next();
     return requireFeature('tracker')(req, res, next);
   },
   async (req: Request, res: Response) => {

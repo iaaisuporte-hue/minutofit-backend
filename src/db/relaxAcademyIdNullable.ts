@@ -24,6 +24,11 @@ export async function relaxAcademyIdNullable(): Promise<void> {
     'activity_sessions',
     'movement_sessions',
     'nutri_patient_assignments',
+    // Aluno vindo do Personal autônomo precisa de plano (mínimo Free) e
+    // pode pagar sem vínculo com academia. Código de aplicação já passa
+    // academy_id = null nessas tabelas; só o lock do schema bloqueava.
+    'user_subscriptions',
+    'payments',
   ];
 
   for (const table of tables) {

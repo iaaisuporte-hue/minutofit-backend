@@ -791,6 +791,17 @@ router.post(
         skipPasswordPolicy: true,
       });
 
+      // For existing users: persist phone if provided in the form and not yet set.
+      // findOrCreateUserFromContext doesn't update existing records, so without this
+      // the phone entered during direct registration would be silently ignored and
+      // the WhatsApp link on MessagesPage would stay null or use a stale value.
+      if (!isNew && phone && !user.phone) {
+        await pool.query(
+          `UPDATE users SET phone = $1 WHERE id = $2 AND phone IS NULL`,
+          [phone, user.id]
+        );
+      }
+
       // Idempotent assignment
       const existing = await pool.query(
         `SELECT id FROM personal_student_assignments WHERE personal_id = $1 AND student_id = $2`,

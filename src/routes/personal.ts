@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
-import { requireAcademyContext } from '../middleware/tenantContext';
 import { requireProduct } from '../middleware/productGate';
 import {
   getPersonalConsulting,
@@ -43,6 +42,10 @@ import {
 } from '../services/workoutProtocolService';
 import { generateWorkout } from '../services/ai/workoutAi';
 import { getMetabolicHint } from '../services/ai/metabolicHint';
+import pool from '../config/database';
+import { findOrCreateUserFromContext } from '../services/userIdentityService';
+import { grantMembership } from '../services/membershipService';
+import crypto from 'crypto';
 import {
   createRelationshipAction,
   deleteRelationshipAction,
@@ -69,7 +72,9 @@ import {
 } from '../services/personalBillingService';
 
 const router = Router();
-router.use(authMiddleware, requireProduct('personal'), requireAcademyContext);
+// requireAcademyContext removed from router level — personal autônomo (academy_id IS NULL)
+// is a valid case; individual routes resolve academyId internally with ?? null.
+router.use(authMiddleware, requireProduct('personal'));
 
 router.get('/dashboard', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
@@ -763,10 +768,6 @@ router.post(
 
 // ── Direct Student Registration ───────────────────────────────────────────────
 
-import pool from '../config/database';
-import { findOrCreateUserFromContext } from '../services/userIdentityService';
-import { grantMembership } from '../services/membershipService';
-
 router.post(
   '/students',
   roleCheckMiddleware('personal'),
@@ -783,7 +784,12 @@ router.post(
       if (!name) return res.status(400).json({ success: false, error: 'Nome é obrigatório.' });
       if (!email) return res.status(400).json({ success: false, error: 'E-mail é obrigatório.' });
 
-      const { user, isNew, matchedBy } = await findOrCreateUserFromContext({ name, email, phone, cpf });
+      const tempPassword = crypto.randomBytes(12).toString('hex');
+      const { user, isNew, matchedBy } = await findOrCreateUserFromContext({
+        name, email, phone, cpf,
+        password: tempPassword,
+        skipPasswordPolicy: true,
+      });
 
       // Idempotent assignment
       const existing = await pool.query(
@@ -816,7 +822,11 @@ router.post(
 
       res.status(201).json({
         success: true,
-        data: { student: { id: user.id, name: user.name, email: user.email }, isNew, matchedBy },
+        data: {
+          student: { id: user.id, name: user.name, email: user.email },
+          isNew,
+          matchedBy: matchedBy === 'none' ? null : matchedBy,
+        },
       });
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message || 'Failed to add student' });
@@ -825,8 +835,6 @@ router.post(
 );
 
 // ── Direct Invites (personal autônomo → aluno direto sem academia) ────────────
-
-import crypto from 'crypto';
 
 const INVITE_EXPIRY_DAYS = 14;
 

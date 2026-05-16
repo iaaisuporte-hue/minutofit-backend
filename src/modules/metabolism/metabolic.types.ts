@@ -46,6 +46,12 @@ export interface MetabolicOutput {
   recommendations: Recommendation[];
   trend7d: MetabolicTrendBlock;
   trend30d: MetabolicTrendBlock;
+  /**
+   * Narrativa contextual gerada por IA — frase curta interpretando o estado
+   * atual ("o que isso significa pra você hoje") + ação concreta sugerida.
+   * Cache 4h por usuário. `null` quando OPENAI indisponível ou rate-limited.
+   */
+  interpretation?: { hint: string; action: string } | null;
 }
 
 export interface MetabolicHistoryPoint {

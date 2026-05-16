@@ -1,4 +1,5 @@
 import { computeMetabolism } from './metabolic.engine';
+import { getMetabolismInterpretation } from './metabolic.interpretation';
 import { buildRecommendations } from './metabolic.recommendations';
 import {
   invalidateTodaySnapshot,
@@ -69,13 +70,18 @@ async function attachTrends(userId: number, base: Omit<MetabolicOutput, 'trend7d
   return { ...base, trend7d, trend30d };
 }
 
+async function attachInterpretation(userId: number, output: MetabolicOutput): Promise<MetabolicOutput> {
+  const interpretation = await getMetabolismInterpretation(userId, output);
+  return { ...output, interpretation };
+}
+
 export async function getMetabolismForUser(userId: number): Promise<MetabolicOutput> {
   const [cached, trends] = await Promise.all([loadTodaySnapshot(userId), loadScoreTrendBlocks(userId)]);
 
   if (cached) {
     const ageSeconds = (Date.now() - new Date(cached.created_at).getTime()) / 1000;
     if (ageSeconds < SNAPSHOT_CACHE_SECONDS) {
-      return {
+      const fromCache: MetabolicOutput = {
         score: cached.score,
         status: cached.status,
         trend: cached.trend,
@@ -84,6 +90,7 @@ export async function getMetabolismForUser(userId: number): Promise<MetabolicOut
         trend7d: trends.trend7d,
         trend30d: trends.trend30d,
       };
+      return attachInterpretation(userId, fromCache);
     }
   }
 
@@ -107,7 +114,8 @@ export async function getMetabolismForUser(userId: number): Promise<MetabolicOut
 
   await upsertSnapshot(userId, result.score, result.status, result.trend, result.factors, input);
 
-  return attachTrends(userId, { ...result, recommendations });
+  const withTrends = await attachTrends(userId, { ...result, recommendations });
+  return attachInterpretation(userId, withTrends);
 }
 
 export async function getMetabolismHistoryForUser(userId: number): Promise<MetabolicHistory> {

@@ -14,12 +14,19 @@ type MuscleGroup =
   | 'cardio'
   | 'mobility';
 
+export type NutritionLevel = 'poor' | 'ok' | 'good';
+export type MentalLoadLevel = 'low' | 'medium' | 'high';
+
 export type WellbeingSignals = {
   /** API / DB: energized | neutral | tired */
   feeling?: 'tired' | 'neutral' | 'energized' | null;
   sleptWell?: boolean | null;
   inPain?: boolean | null;
   stressed?: boolean | null;
+  /** Onda 4 MaaS — sinais secundários opt-in */
+  hydrationOk?: boolean | null;
+  nutritionLevel?: NutritionLevel | null;
+  mentalLoadLevel?: MentalLoadLevel | null;
   notes?: string | null;
 };
 
@@ -101,6 +108,9 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
     const sleptWell = sig?.sleptWell;
     const inPain = sig?.inPain;
     const stressed = sig?.stressed;
+    const hydrationOk = sig?.hydrationOk;
+    const nutritionLevel = sig?.nutritionLevel ?? null;
+    const mentalLoadLevel = sig?.mentalLoadLevel ?? null;
     const notesVal = sig?.notes?.trim() ? sig.notes.trim() : null;
 
     const sourceForRow: CheckinSource =
@@ -111,8 +121,10 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
     await client.query(
       `INSERT INTO user_daily_checkins (
          user_id, academy_id, date_key, source, xp_awarded,
-         feeling, slept_well, in_pain, stressed, notes
-       ) VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10)
+         feeling, slept_well, in_pain, stressed,
+         hydration_ok, nutrition_level, mental_load_level,
+         notes
+       ) VALUES ($1, $2, $3::date, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (user_id, date_key) DO UPDATE SET
          xp_awarded = user_daily_checkins.xp_awarded + EXCLUDED.xp_awarded,
          source = CASE
@@ -132,6 +144,12 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
            WHEN EXCLUDED.stressed IS NOT NULL THEN EXCLUDED.stressed
            ELSE user_daily_checkins.stressed
          END,
+         hydration_ok = CASE
+           WHEN EXCLUDED.hydration_ok IS NOT NULL THEN EXCLUDED.hydration_ok
+           ELSE user_daily_checkins.hydration_ok
+         END,
+         nutrition_level = COALESCE(EXCLUDED.nutrition_level, user_daily_checkins.nutrition_level),
+         mental_load_level = COALESCE(EXCLUDED.mental_load_level, user_daily_checkins.mental_load_level),
          notes = COALESCE(EXCLUDED.notes, user_daily_checkins.notes)`,
       [
         input.userId,
@@ -143,6 +161,9 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
         sleptWell ?? null,
         inPain ?? null,
         stressed ?? null,
+        hydrationOk ?? null,
+        nutritionLevel,
+        mentalLoadLevel,
         notesVal,
       ],
     );

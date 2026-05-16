@@ -50,6 +50,9 @@ router.post(
           s.sleptWell != null ||
           s.inPain != null ||
           s.stressed != null ||
+          s.hydrationOk != null ||
+          s.nutritionLevel != null ||
+          s.mentalLoadLevel != null ||
           (typeof s.notes === 'string' && s.notes.trim().length > 0);
         if (!hasSignal) {
           return res.status(400).json({ success: false, error: 'At least one wellbeing signal is required' });
@@ -80,11 +83,20 @@ router.post(
         } else if (feelingRaw === 'normal') {
           feeling = 'neutral';
         }
+        const nutritionRaw = rawSig.nutritionLevel;
+        const nutritionLevel =
+          nutritionRaw === 'poor' || nutritionRaw === 'ok' || nutritionRaw === 'good' ? nutritionRaw : null;
+        const mentalRaw = rawSig.mentalLoadLevel;
+        const mentalLoadLevel =
+          mentalRaw === 'low' || mentalRaw === 'medium' || mentalRaw === 'high' ? mentalRaw : null;
         signals = {
           feeling,
           sleptWell: rawSig.sleptWell != null ? Boolean(rawSig.sleptWell) : null,
           inPain: rawSig.inPain != null ? Boolean(rawSig.inPain) : null,
           stressed: rawSig.stressed != null ? Boolean(rawSig.stressed) : null,
+          hydrationOk: rawSig.hydrationOk != null ? Boolean(rawSig.hydrationOk) : null,
+          nutritionLevel,
+          mentalLoadLevel,
           notes: typeof rawSig.notes === 'string' ? rawSig.notes : null,
         };
       }

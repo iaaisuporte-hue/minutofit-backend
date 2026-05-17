@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /**
  * Cria a tabela personal_direct_invites para o fluxo de
@@ -31,5 +32,5 @@ export async function ensurePersonalDirectInvitesSchema(): Promise<void> {
       ON personal_direct_invites(token)
   `);
 
-  console.log('[db] ensurePersonalDirectInvitesSchema: done');
+  logger.info('[db] ensurePersonalDirectInvitesSchema: done');
 }

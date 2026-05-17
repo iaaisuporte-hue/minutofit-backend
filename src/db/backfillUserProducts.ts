@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /**
  * Backfill de user_product_memberships para usuários existentes.
@@ -23,7 +24,7 @@ export async function backfillUserProducts(): Promise<void> {
     LIMIT 1
   `);
   if (tableExists.rows.length === 0) {
-    console.log('[db] backfillUserProducts: user_product_memberships table not found, skipping');
+    logger.info('[db] backfillUserProducts: user_product_memberships table not found, skipping');
     return;
   }
 
@@ -82,5 +83,5 @@ export async function backfillUserProducts(): Promise<void> {
     // academy_users may not exist yet on very first deploy
   });
 
-  console.log('[db] backfillUserProducts: backfill concluído');
+  logger.info('[db] backfillUserProducts: backfill concluído');
 }

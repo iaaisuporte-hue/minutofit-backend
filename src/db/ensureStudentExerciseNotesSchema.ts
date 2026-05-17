@@ -1,5 +1,7 @@
 import pool from '../config/database';
 
+// Deprecated: tabela gerenciada pela migration 1747180000000_create_student_exercise_notes.js
+// Mantida como no-op de segurança; remover após confirmar migration aplicada em produção.
 export async function ensureStudentExerciseNotesSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS student_exercise_notes (

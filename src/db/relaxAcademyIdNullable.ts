@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /**
  * Torna academy_id nullable nas tabelas operacionais que suportam
@@ -49,8 +50,8 @@ export async function relaxAcademyIdNullable(): Promise<void> {
       continue;
     }
     await pool.query(`ALTER TABLE ${table} ALTER COLUMN academy_id DROP NOT NULL`);
-    console.log(`[db] relaxAcademyIdNullable: ${table}.academy_id → nullable`);
+    logger.info(`[db] relaxAcademyIdNullable: ${table}.academy_id → nullable`);
   }
 
-  console.log('[db] relaxAcademyIdNullable: done');
+  logger.info('[db] relaxAcademyIdNullable: done');
 }

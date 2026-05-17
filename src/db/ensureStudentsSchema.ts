@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /**
  * Idempotente — adiciona student_status a academy_users e cria
@@ -63,9 +64,9 @@ export async function ensureStudentsSchema(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_academy_enrollments_academy_user ON academy_enrollments(academy_id, user_id, status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_academy_enrollments_academy_status ON academy_enrollments(academy_id, status)`);
 
-    console.log('[db] ensureStudentsSchema: OK');
+    logger.info('[db] ensureStudentsSchema: OK');
   } catch (err) {
-    console.error('[db] ensureStudentsSchema:', err);
+    logger.error({ err }, '[db] ensureStudentsSchema failed');
     throw err;
   }
 }

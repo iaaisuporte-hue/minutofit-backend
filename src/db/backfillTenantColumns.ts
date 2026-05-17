@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 const DEFAULT_ACADEMY_SLUG = 'minutofit-direto';
 
@@ -21,7 +22,7 @@ export async function backfillTenantColumns(): Promise<void> {
   );
 
   if (result.rows.length === 0) {
-    console.warn('[db] backfillTenantColumns: academia padrão não encontrada, pulando backfill.');
+    logger.warn('[db] backfillTenantColumns: academia padrão não encontrada, pulando backfill.');
     return;
   }
 
@@ -52,13 +53,13 @@ export async function backfillTenantColumns(): Promise<void> {
         [defaultAcademyId]
       );
       if (r.rowCount && r.rowCount > 0) {
-        console.log(`[db] backfillTenantColumns: ${table} → ${r.rowCount} rows updated`);
+        logger.info(`[db] backfillTenantColumns: ${table} → ${r.rowCount} rows updated`);
         total += r.rowCount;
       }
     } catch (err: any) {
       // Column may not exist yet if phase2 wasn't run — skip gracefully
       if (err?.code === '42703') {
-        console.warn(`[db] backfillTenantColumns: ${table}.academy_id does not exist, skipping`);
+        logger.warn(`[db] backfillTenantColumns: ${table}.academy_id does not exist, skipping`);
       } else {
         throw err;
       }
@@ -66,8 +67,8 @@ export async function backfillTenantColumns(): Promise<void> {
   }
 
   if (total === 0) {
-    console.log('[db] backfillTenantColumns: nada a atualizar (todas as linhas já têm academy_id)');
+    logger.info('[db] backfillTenantColumns: nada a atualizar (todas as linhas já têm academy_id)');
   } else {
-    console.log(`[db] backfillTenantColumns: total ${total} linhas atualizadas com academy_id=${defaultAcademyId}`);
+    logger.info(`[db] backfillTenantColumns: total ${total} linhas atualizadas com academy_id=${defaultAcademyId}`);
   }
 }

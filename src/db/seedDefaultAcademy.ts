@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 import { ensureAcademyRoles, roleSlugFromUserRole } from './academyRoles';
 
 /**
@@ -27,14 +28,14 @@ export async function seedDefaultAcademy(): Promise<void> {
     let academyId: number;
     if (acResult.rows.length > 0) {
       academyId = acResult.rows[0].id;
-      console.log(`[seed] Academia padrão criada (id=${academyId})`);
+      logger.info(`[seed] Academia padrão criada (id=${academyId})`);
     } else {
       const existing = await client.query(
         `SELECT id FROM academies WHERE slug = $1`,
         [DEFAULT_ACADEMY_SLUG]
       );
       academyId = existing.rows[0].id;
-      console.log(`[seed] Academia padrão já existe (id=${academyId})`);
+      logger.info(`[seed] Academia padrão já existe (id=${academyId})`);
     }
 
     // 2. Marcar usuários admin como is_metacore_admin
@@ -44,7 +45,7 @@ export async function seedDefaultAcademy(): Promise<void> {
 
     // 3. Criar/garantir roles do sistema para esta academia
     const roleIdMap = await ensureAcademyRoles(client, academyId);
-    console.log(`[seed] ${Object.keys(roleIdMap).length} roles do sistema garantidos`);
+    logger.info(`[seed] ${Object.keys(roleIdMap).length} roles do sistema garantidos`);
 
     // 4. Migrar usuários existentes para academy_users (sem duplicar)
     const usersRes = await client.query(
@@ -75,7 +76,7 @@ export async function seedDefaultAcademy(): Promise<void> {
       linked++;
     }
 
-    console.log(`[seed] academy_users: ${linked} vinculados, ${skipped} já existiam`);
+    logger.info(`[seed] academy_users: ${linked} vinculados, ${skipped} já existiam`);
 
     await client.query('COMMIT');
   } catch (err) {

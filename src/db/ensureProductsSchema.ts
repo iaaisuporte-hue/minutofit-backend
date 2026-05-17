@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 export const PRODUCT_KEYS = ['app', 'personal', 'nutri', 'academia', 'metabolismo'] as const;
 export type ProductKey = (typeof PRODUCT_KEYS)[number];
@@ -90,7 +91,7 @@ export async function ensureProductsSchema(): Promise<void> {
     );
   }
 
-  console.log('[db] ensureProductsSchema: products + user_product_memberships tables ready, catalog seeded');
+  logger.info('[db] ensureProductsSchema: products + user_product_memberships tables ready, catalog seeded');
 }
 
 /**

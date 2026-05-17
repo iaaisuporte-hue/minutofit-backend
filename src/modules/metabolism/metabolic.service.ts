@@ -22,7 +22,7 @@ function trendBlockFromAvgs(cur: number | null, prev: number | null): MetabolicT
   return { delta, direction: delta > 0 ? 'up' : 'down' };
 }
 
-async function loadScoreTrendBlocks(userId: number): Promise<{ trend7d: MetabolicTrendBlock; trend30d: MetabolicTrendBlock }> {
+async function loadScoreTrendBlocks(userId: number, academyId: number | null = null): Promise<{ trend7d: MetabolicTrendBlock; trend30d: MetabolicTrendBlock }> {
   const r = await pool.query<{
     cur7: string | null;
     prev7: string | null;
@@ -33,7 +33,9 @@ async function loadScoreTrendBlocks(userId: number): Promise<{ trend7d: Metaboli
     `WITH series AS (
        SELECT snapshot_date::date AS d, score::float8 AS score
        FROM user_metabolism_snapshots
-       WHERE user_id = $1 AND snapshot_date >= CURRENT_DATE - INTERVAL '70 days'
+       WHERE user_id = $1
+         AND ($2::int IS NULL OR academy_id = $2)
+         AND snapshot_date >= CURRENT_DATE - INTERVAL '70 days'
      ),
      c7 AS (SELECT AVG(score) AS a FROM series WHERE d > CURRENT_DATE - INTERVAL '7 days'),
      p7 AS (
@@ -49,7 +51,7 @@ async function loadScoreTrendBlocks(userId: number): Promise<{ trend7d: Metaboli
      SELECT (SELECT a FROM c7) AS cur7, (SELECT a FROM p7) AS prev7,
             (SELECT a FROM c30) AS cur30, (SELECT a FROM p30) AS prev30,
             (SELECT n FROM cnt) AS n`,
-    [userId],
+    [userId, academyId],
   );
   const row = r.rows[0];
   const n = row ? Number(row.n ?? 0) : 0;
@@ -65,8 +67,8 @@ async function loadScoreTrendBlocks(userId: number): Promise<{ trend7d: Metaboli
   };
 }
 
-async function attachTrends(userId: number, base: Omit<MetabolicOutput, 'trend7d' | 'trend30d'>): Promise<MetabolicOutput> {
-  const { trend7d, trend30d } = await loadScoreTrendBlocks(userId);
+async function attachTrends(userId: number, base: Omit<MetabolicOutput, 'trend7d' | 'trend30d'>, academyId: number | null = null): Promise<MetabolicOutput> {
+  const { trend7d, trend30d } = await loadScoreTrendBlocks(userId, academyId);
   return { ...base, trend7d, trend30d };
 }
 
@@ -75,8 +77,8 @@ async function attachInterpretation(userId: number, output: MetabolicOutput): Pr
   return { ...output, interpretation };
 }
 
-export async function getMetabolismForUser(userId: number): Promise<MetabolicOutput> {
-  const [cached, trends] = await Promise.all([loadTodaySnapshot(userId), loadScoreTrendBlocks(userId)]);
+export async function getMetabolismForUser(userId: number, academyId: number | null = null): Promise<MetabolicOutput> {
+  const [cached, trends] = await Promise.all([loadTodaySnapshot(userId), loadScoreTrendBlocks(userId, academyId)]);
 
   if (cached) {
     const ageSeconds = (Date.now() - new Date(cached.created_at).getTime()) / 1000;
@@ -114,7 +116,7 @@ export async function getMetabolismForUser(userId: number): Promise<MetabolicOut
 
   await upsertSnapshot(userId, result.score, result.status, result.trend, result.factors, input);
 
-  const withTrends = await attachTrends(userId, { ...result, recommendations });
+  const withTrends = await attachTrends(userId, { ...result, recommendations }, academyId);
   return attachInterpretation(userId, withTrends);
 }
 

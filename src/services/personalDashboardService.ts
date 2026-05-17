@@ -208,7 +208,7 @@ type MetabolismRow = {
   baseline_score: number | null;
 };
 
-async function loadCarteiraMetabolism(studentIds: number[]): Promise<Map<number, MetabolismRow>> {
+async function loadCarteiraMetabolism(studentIds: number[], academyId: number | null): Promise<Map<number, MetabolismRow>> {
   const map = new Map<number, MetabolismRow>();
   if (studentIds.length === 0) return map;
 
@@ -221,6 +221,7 @@ async function loadCarteiraMetabolism(studentIds: number[]): Promise<Map<number,
          snapshot_date AS latest_date
        FROM user_metabolism_snapshots
        WHERE user_id = ANY($1::int[])
+         AND ($2::int IS NULL OR academy_id = $2)
        ORDER BY user_id, snapshot_date DESC
      ),
      baseline AS (
@@ -229,6 +230,7 @@ async function loadCarteiraMetabolism(studentIds: number[]): Promise<Map<number,
          score AS baseline_score
        FROM user_metabolism_snapshots
        WHERE user_id = ANY($1::int[])
+         AND ($2::int IS NULL OR academy_id = $2)
          AND snapshot_date <= CURRENT_DATE - INTERVAL '7 days'
        ORDER BY user_id, snapshot_date DESC
      )
@@ -239,7 +241,7 @@ async function loadCarteiraMetabolism(studentIds: number[]): Promise<Map<number,
        b.baseline_score
      FROM latest l
      LEFT JOIN baseline b ON b.user_id = l.user_id`,
-    [studentIds]
+    [studentIds, academyId]
   );
 
   for (const row of result.rows) {
@@ -558,7 +560,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     };
   });
 
-  const metabolismMap = await loadCarteiraMetabolism(baseStudents.map((s) => s.numericId));
+  const metabolismMap = await loadCarteiraMetabolism(baseStudents.map((s) => s.numericId), academyId ?? null);
 
   const students: DashboardStudent[] = baseStudents.map((s) => {
     const m = metabolismMap.get(s.numericId);
@@ -820,7 +822,7 @@ export async function getPersonalStudentSnapshot(
          LIMIT 1`,
         [personalId, studentId, academyId ?? null]
       ),
-      getMetabolismForUser(studentId),
+      getMetabolismForUser(studentId, academyId ?? null),
       getMetabolismHistoryForUser(studentId),
       pool.query(
         `SELECT muscle_group, COUNT(*)::int AS count

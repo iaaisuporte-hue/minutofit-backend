@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /**
  * Fase 2 — Adiciona academy_id (nullable) em todas as tabelas operacionais
@@ -61,5 +62,5 @@ export async function ensureTenantColumnsPhase2(): Promise<void> {
       ON personal_student_assignments(academy_id)
   `);
 
-  console.log('[db] ensureTenantColumnsPhase2: academy_id columns + indexes created');
+  logger.info('[db] ensureTenantColumnsPhase2: academy_id columns + indexes created');
 }

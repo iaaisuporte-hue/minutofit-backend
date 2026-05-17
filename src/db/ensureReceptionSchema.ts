@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /**
  * Schema operacional da Recepção.
@@ -85,9 +86,9 @@ export async function ensureReceptionSchema(): Promise<void> {
         ON academy_visitors(academy_id, created_at DESC)
     `);
 
-    console.log('[db] ensureReceptionSchema: OK');
+    logger.info('[db] ensureReceptionSchema: OK');
   } catch (err) {
-    console.error('[db] ensureReceptionSchema:', err);
+    logger.error({ err }, '[db] ensureReceptionSchema failed');
     throw err;
   }
 }

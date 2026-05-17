@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 
 /**
  * Marca academy_id como NOT NULL nas tabelas operacionais.
@@ -41,7 +42,7 @@ export async function ensureTenantColumnsPhase2Lock(): Promise<void> {
     );
 
     if (check.rows.length === 0) {
-      console.warn(`[db] ensureTenantColumnsPhase2Lock: ${table}.academy_id column not found, skipping`);
+      logger.warn(`[db] ensureTenantColumnsPhase2Lock: ${table}.academy_id column not found, skipping`);
       continue;
     }
 
@@ -56,7 +57,8 @@ export async function ensureTenantColumnsPhase2Lock(): Promise<void> {
     );
     const nullCount = Number(nullCheck.rows[0].cnt);
     if (nullCount > 0) {
-      console.error(
+      logger.error(
+        { table, nullCount },
         `[db] ensureTenantColumnsPhase2Lock: ${table} still has ${nullCount} NULL academy_id rows. ` +
         `Run backfillTenantColumns first.`
       );
@@ -64,8 +66,8 @@ export async function ensureTenantColumnsPhase2Lock(): Promise<void> {
     }
 
     await pool.query(`ALTER TABLE ${table} ALTER COLUMN academy_id SET NOT NULL`);
-    console.log(`[db] ensureTenantColumnsPhase2Lock: ${table}.academy_id → NOT NULL`);
+    logger.info(`[db] ensureTenantColumnsPhase2Lock: ${table}.academy_id → NOT NULL`);
   }
 
-  console.log('[db] ensureTenantColumnsPhase2Lock: done');
+  logger.info('[db] ensureTenantColumnsPhase2Lock: done');
 }

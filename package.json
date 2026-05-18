@@ -21,7 +21,8 @@
     "migrate:status": "node-pg-migrate status",
     "migrate:create": "node-pg-migrate create",
     "test": "jest --passWithNoTests",
-    "lint": "eslint src --ext .ts"
+    "lint": "eslint src --ext .ts",
+    "script:backfill-protocols": "tsx src/scripts/backfillProtocolFromPlans.ts"
   },
   "dependencies": {
     "@sentry/node": "^10.53.1",

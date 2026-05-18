@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import type { PoolClient } from 'pg';
 
 export type WorkoutPlanItemPayload = {
   exerciseId: string;
@@ -16,6 +17,12 @@ export type WorkoutPlanDay = {
   index: number;
   name: string;
   focus: string | null;
+  items: WorkoutPlanItemPayload[];
+};
+
+type WorkoutProtocolDayInput = {
+  name: string;
+  focus?: string | null;
   items: WorkoutPlanItemPayload[];
 };
 
@@ -98,6 +105,75 @@ export function validateWorkoutItems(rawItems: unknown[]): WorkoutPlanItemPayloa
   return valid;
 }
 
+
+function buildProtocolItemsFromDays(days: WorkoutProtocolDayInput[]): WorkoutPlanItemPayload[] {
+  const firstNonEmpty = days.find((day) => day.items.length > 0);
+  return firstNonEmpty?.items ?? [];
+}
+
+async function assertProtocolVisibleToPersonal(
+  client: PoolClient,
+  personalId: number,
+  academyId: number | null,
+  protocolId: number
+): Promise<void> {
+  const result = await client.query(
+    `SELECT 1
+     FROM workout_protocols
+     WHERE id = $1
+       AND (
+         (scope = 'platform' AND academy_id IS NULL)
+         OR (scope = 'academy' AND academy_id = $3)
+         OR (scope = 'personal' AND owner_personal_id = $2 AND ($3::int IS NULL AND academy_id IS NULL OR academy_id = $3))
+       )
+     LIMIT 1`,
+    [protocolId, personalId, academyId]
+  );
+  if (!result.rows.length) {
+    const err = new Error('Protocol not found');
+    (err as { code?: string }).code = 'PROTOCOL_NOT_FOUND';
+    throw err;
+  }
+}
+
+async function createPersonalProtocolSnapshot(
+  client: PoolClient,
+  personalId: number,
+  academyId: number | null,
+  input: {
+    title: string;
+    weekPreset: string;
+    selectedGroup: string | null;
+    days: WorkoutProtocolDayInput[];
+  }
+): Promise<number> {
+  const days = input.days.map((day, idx) => ({
+    index: idx + 1,
+    name: sanitizeString(day.name, 120) || `Dia ${idx + 1}`,
+    focus: day.focus ? sanitizeString(day.focus, 120) : null,
+    items: day.items,
+  }));
+  const items = buildProtocolItemsFromDays(days);
+  if (!items.length) throw new Error('At least one valid exercise item is required');
+
+  const result = await client.query(
+    `INSERT INTO workout_protocols
+       (scope, academy_id, owner_personal_id, title, description, tags, week_preset, selected_group, payload_json, days_json, updated_at)
+     VALUES ('personal', $1, $2, $3, NULL, '{}'::jsonb, $4, $5, $6::jsonb, $7::jsonb, NOW())
+     RETURNING id`,
+    [
+      academyId,
+      personalId,
+      input.title,
+      input.weekPreset,
+      input.selectedGroup,
+      JSON.stringify(items),
+      JSON.stringify(days),
+    ]
+  );
+  return Number(result.rows[0].id);
+}
+
 export async function assertStudentAssignedToPersonal(personalId: number, studentId: number): Promise<boolean> {
   const result = await pool.query(
     `SELECT 1
@@ -142,6 +218,7 @@ function shapeRow(row: Record<string, any>): any {
     personal_id: row.personal_id,
     student_id: row.student_id,
     academy_id: row.academy_id ?? null,
+    source_protocol_id: row.source_protocol_id ?? null,
     title: row.title,
     week_preset: row.week_preset,
     selected_group: row.selected_group,
@@ -159,6 +236,7 @@ const SELECT_WITH_DAYS = `
     p.personal_id,
     p.student_id,
     p.academy_id,
+    p.source_protocol_id,
     p.title,
     p.week_preset,
     p.selected_group,
@@ -192,12 +270,13 @@ export async function createPersonalWorkoutPlanWithDays(
     title: string;
     weekPreset: string;
     days: Array<{ name: string; focus?: string | null; items: unknown[] }>;
+    sourceProtocolId?: number | null;
   }
 ) {
   const ok = await assertStudentAssignedToPersonal(personalId, studentId);
   if (!ok) {
     const err = new Error('Student is not assigned to this personal trainer');
-    (err as any).code = 'ASSIGNMENT_REQUIRED';
+    (err as { code?: string }).code = 'ASSIGNMENT_REQUIRED';
     throw err;
   }
 
@@ -208,16 +287,6 @@ export async function createPersonalWorkoutPlanWithDays(
   try {
     await client.query('BEGIN');
 
-    const parentResult = await client.query(
-      `INSERT INTO personal_workout_plans
-         (personal_id, student_id, academy_id, title, week_preset, selected_group, payload_json, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, '[]'::jsonb, CURRENT_TIMESTAMP)
-       RETURNING id, personal_id, student_id, academy_id, title, week_preset, selected_group, payload_json, created_at, updated_at`,
-      [personalId, studentId, academyId, title, weekPreset, null]
-    );
-    const parent = parentResult.rows[0];
-    const planId = parent.id;
-
     const days: WorkoutPlanDay[] = [];
     for (let i = 0; i < input.days.length; i++) {
       const d = input.days[i];
@@ -225,15 +294,40 @@ export async function createPersonalWorkoutPlanWithDays(
       const dayFocus = d.focus ? sanitizeString(d.focus, 120) : null;
       const rawItems = Array.isArray(d.items) ? d.items : [];
       const items = validateWorkoutItems(rawItems);
+      days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
+    }
 
+    const requestedProtocolId = Number(input.sourceProtocolId);
+    const sourceProtocolId = Number.isFinite(requestedProtocolId) && requestedProtocolId > 0
+      ? requestedProtocolId
+      : await createPersonalProtocolSnapshot(client, personalId, academyId, {
+          title,
+          weekPreset,
+          selectedGroup: null,
+          days,
+        });
+
+    if (Number.isFinite(requestedProtocolId) && requestedProtocolId > 0) {
+      await assertProtocolVisibleToPersonal(client, personalId, academyId, sourceProtocolId);
+    }
+
+    const parentResult = await client.query(
+      `INSERT INTO personal_workout_plans
+         (personal_id, student_id, academy_id, source_protocol_id, title, week_preset, selected_group, payload_json, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, '[]'::jsonb, CURRENT_TIMESTAMP)
+       RETURNING id, personal_id, student_id, academy_id, source_protocol_id, title, week_preset, selected_group, payload_json, created_at, updated_at`,
+      [personalId, studentId, academyId, sourceProtocolId, title, weekPreset, null]
+    );
+    const parent = parentResult.rows[0];
+    const planId = parent.id;
+
+    for (const day of days) {
       await client.query(
         `INSERT INTO personal_workout_plan_days
            (plan_id, day_index, name, focus, payload_json, updated_at)
          VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP)`,
-        [planId, i + 1, dayName, dayFocus, JSON.stringify(items)]
+        [planId, day.index, day.name, day.focus, JSON.stringify(day.items)]
       );
-
-      days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
     }
 
     await client.query('COMMIT');
@@ -260,12 +354,13 @@ export async function createPersonalWorkoutPlan(
     weekPreset: string;
     selectedGroup: string | null;
     items: WorkoutPlanItemPayload[];
+    sourceProtocolId?: number | null;
   }
 ) {
   const ok = await assertStudentAssignedToPersonal(personalId, studentId);
   if (!ok) {
     const err = new Error('Student is not assigned to this personal trainer');
-    (err as any).code = 'ASSIGNMENT_REQUIRED';
+    (err as { code?: string }).code = 'ASSIGNMENT_REQUIRED';
     throw err;
   }
 
@@ -279,13 +374,27 @@ export async function createPersonalWorkoutPlan(
   try {
     await client.query('BEGIN');
 
+    const requestedProtocolId = Number(input.sourceProtocolId);
+    const sourceProtocolId = Number.isFinite(requestedProtocolId) && requestedProtocolId > 0
+      ? requestedProtocolId
+      : await createPersonalProtocolSnapshot(client, personalId, academyId, {
+          title,
+          weekPreset,
+          selectedGroup,
+          days: [{ name: 'Único', focus: selectedGroup, items }],
+        });
+
+    if (Number.isFinite(requestedProtocolId) && requestedProtocolId > 0) {
+      await assertProtocolVisibleToPersonal(client, personalId, academyId, sourceProtocolId);
+    }
+
     const insert = await client.query(
       `INSERT INTO personal_workout_plans (
-         personal_id, student_id, academy_id, title, week_preset, selected_group, payload_json, updated_at
+         personal_id, student_id, academy_id, source_protocol_id, title, week_preset, selected_group, payload_json, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, CURRENT_TIMESTAMP)
-       RETURNING id, personal_id, student_id, academy_id, title, week_preset, selected_group, payload_json, created_at, updated_at`,
-      [personalId, studentId, academyId, title, weekPreset, selectedGroup, JSON.stringify(items)]
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, CURRENT_TIMESTAMP)
+       RETURNING id, personal_id, student_id, academy_id, source_protocol_id, title, week_preset, selected_group, payload_json, created_at, updated_at`,
+      [personalId, studentId, academyId, sourceProtocolId, title, weekPreset, selectedGroup, JSON.stringify(items)]
     );
     const parent = insert.rows[0];
 

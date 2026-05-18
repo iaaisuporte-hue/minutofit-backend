@@ -32,8 +32,10 @@ import {
 } from '../services/workoutReviewsService';
 import {
   createWorkoutProtocol,
+  deleteProtocolUsage,
   deleteWorkoutProtocol,
   getWorkoutProtocolById,
+  listProtocolUsages,
   listWorkoutProtocolsForPersonal,
   setProtocolFavorite,
   suggestProtocolsForStudent,
@@ -368,6 +370,45 @@ router.get('/protocols', roleCheckMiddleware('personal'), async (req: Request, r
   }
 });
 
+
+router.get('/protocols/:protocolId/usages', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    const protocolId = Number(req.params.protocolId);
+    if (!Number.isFinite(protocolId)) {
+      return res.status(400).json({ success: false, error: 'Invalid protocol id' });
+    }
+    const data = await listProtocolUsages(req.user!.id, academyId, protocolId);
+    res.json({ success: true, data });
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, error: 'Protocol not found' });
+    }
+    res.status(500).json({ success: false, error: error.message || 'Failed to load protocol usages' });
+  }
+});
+
+router.delete('/protocols/:protocolId/usages/:planId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    const protocolId = Number(req.params.protocolId);
+    const planId = Number(req.params.planId);
+    if (!Number.isFinite(protocolId) || !Number.isFinite(planId)) {
+      return res.status(400).json({ success: false, error: 'Invalid protocol or plan id' });
+    }
+    const deleted = await deleteProtocolUsage(req.user!.id, academyId, protocolId, planId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, error: 'Workout plan not found' });
+    }
+    res.json({ success: true, data: { deleted: true } });
+  } catch (error: any) {
+    if (error?.code === 'NOT_FOUND') {
+      return res.status(404).json({ success: false, error: 'Protocol not found' });
+    }
+    res.status(500).json({ success: false, error: error.message || 'Failed to remove workout plan' });
+  }
+});
+
 router.get('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
@@ -414,6 +455,7 @@ router.post('/protocols', roleCheckMiddleware('personal'), async (req: Request, 
       weekPreset,
       selectedGroup,
       items,
+      days: Array.isArray(body.days) ? body.days : undefined,
     });
     res.status(201).json({ success: true, data: row });
   } catch (error: any) {
@@ -567,6 +609,7 @@ router.post(
       const title = typeof body.title === 'string' ? body.title : '';
       const weekPreset = typeof body.weekPreset === 'string' ? body.weekPreset : String(body.weekPreset ?? '5');
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const sourceProtocolId = body.sourceProtocolId == null ? null : Number(body.sourceProtocolId);
 
       let row: any;
 
@@ -576,6 +619,7 @@ router.post(
           title,
           weekPreset,
           days: body.days,
+          sourceProtocolId: Number.isFinite(sourceProtocolId) ? sourceProtocolId : null,
         });
       } else {
         // Legacy single-list save
@@ -589,6 +633,7 @@ router.post(
           weekPreset,
           selectedGroup,
           items,
+          sourceProtocolId: Number.isFinite(sourceProtocolId) ? sourceProtocolId : null,
         });
       }
 
@@ -599,6 +644,9 @@ router.post(
       }
       if (error?.code === 'INVALID_EXERCISES') {
         return res.status(400).json({ success: false, error: error.message, details: error.details });
+      }
+      if (error?.code === 'PROTOCOL_NOT_FOUND') {
+        return res.status(404).json({ success: false, error: 'Protocol not found' });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to save workout plan' });
     }

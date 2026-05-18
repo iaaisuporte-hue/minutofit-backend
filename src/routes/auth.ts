@@ -13,6 +13,7 @@ import { getUserProducts, getUserProductsWithMeta } from '../db/ensureProductsSc
 import { findOrCreateUserFromContext, verifyUserPassword } from '../services/userIdentityService';
 import { grantMembership } from '../services/membershipService';
 import logger from '../lib/logger';
+import { createMetabolicCheckin, normalizeMetabolicCheckinInput } from '../services/metabolicCheckinService';
 import {
   calcPrimarySoftStrong,
   calcPrimaryGlow,
@@ -399,7 +400,7 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
 // PATCH /auth/complete-profile - Complete user profile (for new OAuth users)
 router.patch('/complete-profile', authMiddleware, async (req: Request, res: Response) => {
   try {
-    const { name, photoUrl, fitnessGoal, experienceLevel, heightCm, weightKg, dietaryRestrictions } = req.body;
+    const { name, photoUrl, fitnessGoal, experienceLevel, heightCm, weightKg, waistCm, dietaryRestrictions } = req.body;
 
     if (!name || !fitnessGoal || !experienceLevel || heightCm === undefined || weightKg === undefined) {
       return res.status(400).json({
@@ -407,6 +408,12 @@ router.patch('/complete-profile', authMiddleware, async (req: Request, res: Resp
         error: 'name, fitnessGoal, experienceLevel, heightCm, and weightKg are required'
       });
     }
+
+    normalizeMetabolicCheckinInput({
+      weightKg,
+      waistCm,
+      source: 'onboarding',
+    });
 
     const user = await authService.completeUserProfile(req.user!.id, {
       name,
@@ -416,6 +423,12 @@ router.patch('/complete-profile', authMiddleware, async (req: Request, res: Resp
       heightCm,
       weightKg,
       dietaryRestrictions
+    });
+
+    await createMetabolicCheckin(req.user!.id, req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null, {
+      weightKg,
+      waistCm,
+      source: 'onboarding',
     });
 
     res.json({

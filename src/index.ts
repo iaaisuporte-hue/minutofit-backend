@@ -24,6 +24,7 @@ import metabolismRoutes from './modules/metabolism/metabolic.controller';
 import academyRoutes from './routes/academy';
 import nutriRoutes from './routes/nutri';
 import userRoutes from './routes/user';
+import metabolicCheckinRoutes from './routes/metabolicCheckins';
 import { tenantResolverMiddleware } from './middleware/tenantResolver';
 import pool from './config/database';
 
@@ -274,6 +275,7 @@ app.use('/api/movement', movementRoutes);
 app.use('/api/academy', academyRoutes);
 app.use('/api/nutri', nutriRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/metabolic-checkins', metabolicCheckinRoutes);
 
 // ---------------------------------------------------------------------------
 // Health check real — valida DB e presença de secrets críticos

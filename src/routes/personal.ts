@@ -17,6 +17,7 @@ import { logAcademyAction } from '../services/auditService';
 import {
   createPersonalWorkoutPlan,
   createPersonalWorkoutPlanWithDays,
+  updatePersonalWorkoutPlanWithDays,
   listPersonalWorkoutPlans,
   listWorkoutPlansForStudent,
 } from '../services/personalWorkoutPlanService';
@@ -691,6 +692,40 @@ router.post(
         return res.status(404).json({ success: false, error: 'Protocol not found' });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to save workout plan' });
+    }
+  }
+);
+
+router.patch(
+  '/students/:studentId/workout-plans/:planId',
+  roleCheckMiddleware('personal', 'admin'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      const planId = Number(req.params.planId);
+      if (!Number.isFinite(studentId) || !Number.isFinite(planId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student or plan id' });
+      }
+      const body = req.body || {};
+      const title = typeof body.title === 'string' ? body.title : '';
+      const weekPreset = typeof body.weekPreset === 'string' ? body.weekPreset : String(body.weekPreset ?? '5');
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const days = Array.isArray(body.days) ? body.days : [];
+
+      const row = await updatePersonalWorkoutPlanWithDays(req.user!.id, planId, studentId, academyId, {
+        title,
+        weekPreset,
+        days,
+      });
+      res.json({ success: true, data: row });
+    } catch (error: any) {
+      if (error?.code === 'PLAN_NOT_FOUND') {
+        return res.status(404).json({ success: false, error: 'Plan not found or access denied' });
+      }
+      if (error?.code === 'INVALID_EXERCISES') {
+        return res.status(400).json({ success: false, error: error.message, details: error.details });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Failed to update workout plan' });
     }
   }
 );

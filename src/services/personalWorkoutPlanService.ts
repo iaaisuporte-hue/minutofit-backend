@@ -538,6 +538,92 @@ export async function createPersonalWorkoutPlan(
   }
 }
 
+/**
+ * Updates an existing multi-day workout plan (replaces days entirely).
+ * Verifies plan belongs to this personal + student before updating.
+ */
+export async function updatePersonalWorkoutPlanWithDays(
+  personalId: number,
+  planId: number,
+  studentId: number,
+  academyId: number | null,
+  input: {
+    title: string;
+    weekPreset: string;
+    days: Array<{ name: string; focus?: string | null; items: unknown[] }>;
+  }
+) {
+  const title = String(input.title || '').trim() || 'Treino';
+  const weekPreset = String(input.weekPreset || '5').slice(0, 32);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Ownership check — plan must belong to this personal + student
+    const own = await client.query(
+      `SELECT id FROM personal_workout_plans
+       WHERE id = $1 AND personal_id = $2 AND student_id = $3
+       LIMIT 1`,
+      [planId, personalId, studentId]
+    );
+    if (!own.rows.length) {
+      const err = new Error('Plan not found or access denied');
+      (err as { code?: string }).code = 'PLAN_NOT_FOUND';
+      throw err;
+    }
+
+    const days: WorkoutPlanDay[] = [];
+    for (let i = 0; i < input.days.length; i++) {
+      const d = input.days[i];
+      const dayName = sanitizeString(d.name, 120) || `Dia ${i + 1}`;
+      const dayFocus = d.focus ? sanitizeString(d.focus, 120) : null;
+      const rawItems = Array.isArray(d.items) ? d.items : [];
+      const items = validateWorkoutItems(rawItems);
+      const biSetErrors = validateBiSetPairs(items);
+      if (biSetErrors.length > 0) {
+        const err = new Error('Bi-set inválido no plano');
+        (err as any).code = 'INVALID_EXERCISES';
+        (err as any).details = biSetErrors.map((e) => `day[${i + 1}]: ${e}`);
+        throw err;
+      }
+      days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
+    }
+
+    // Update parent
+    await client.query(
+      `UPDATE personal_workout_plans
+       SET title = $1, week_preset = $2, updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [title, weekPreset, planId]
+    );
+
+    // Replace days
+    await client.query(`DELETE FROM personal_workout_plan_days WHERE plan_id = $1`, [planId]);
+    for (const day of days) {
+      await client.query(
+        `INSERT INTO personal_workout_plan_days
+           (plan_id, day_index, name, focus, payload_json, updated_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, CURRENT_TIMESTAMP)`,
+        [planId, day.index, day.name, day.focus, JSON.stringify(day.items)]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    const result = await pool.query(
+      `${SELECT_WITH_DAYS} WHERE p.id = $1 GROUP BY p.id`,
+      [planId]
+    );
+    return shapeRow(result.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 export async function listPersonalWorkoutPlans(personalId: number, studentId: number, limit = 50) {
   const ok = await assertStudentAssignedToPersonal(personalId, studentId);
   if (!ok) {

@@ -33,19 +33,19 @@ REGRAS CRÍTICAS:
 - Se não encontrar exercício adequado no catálogo, omita (não crie nome fictício).
 - Respeite o grupo muscular do dia — não misture grupos.
 
-TÉCNICAS AVANÇADAS (use quando pedido ou pertinente):
-- Drop set: inclua "note":"drop set — reduza 20% na última série, sem descanso"
-- Rest and pause: inclua "note":"rest-pause — pausa 15s após falha, 2-3 reps extras"
-- Supersérie: inclua "note":"supersérie com [nome do exercício parceiro]"
-- Bi-set: inclua "note":"bi-set com [nome do exercício parceiro]"
+TÉCNICAS AVANÇADAS (use o campo "technique" estruturado quando pedido ou pertinente):
+- Drop set: "technique": { "type": "drop_set", "drops": 1, "dropPercent": 30 }
+- Rest-pause: "technique": { "type": "rest_pause", "pauseSeconds": 15, "miniSets": 2 }
+- Bi-set: empregar EM PAR — dois exercícios no MESMO dia com o MESMO "technique.biSetGroupId" (UUID v4 que você gera). Cada um leva: "technique": { "type": "bi_set", "biSetGroupId": "<uuid>" }
+- Nada de drop set / rest-pause descritos como texto livre em "note" — use "technique". "note" fica reservado para observações de execução (cues, amplitude).
 
 ESTRUTURA DO JSON DE RESPOSTA (retorne SOMENTE este JSON):
-{"title":string,"weekPreset":"3"|"4"|"5"|"6","split":"ABC"|"ABCD"|"ABCDE"|"AB"|"full_body","days":[{"name":string,"focus":string,"exercises":[{"exercise_id":string,"name":string,"sets":string,"reps":string,"rest":string,"note":string|null}]}]}
+{"title":string,"weekPreset":"3"|"4"|"5"|"6","split":"ABC"|"ABCD"|"ABCDE"|"AB"|"full_body","days":[{"name":string,"focus":string,"exercises":[{"exercise_id":string,"name":string,"sets":string,"reps":string,"rest":string,"note":string|null,"technique":{"type":"drop_set"|"rest_pause"|"bi_set","drops"?:number,"dropPercent"?:number,"pauseSeconds"?:number,"miniSets"?:number,"biSetGroupId"?:string}|null}]}]}
 
 - "exercise_id": UUID do exercício do catálogo fornecido — campo OBRIGATÓRIO.
 - "name": nome do exercício (mesmo do catálogo).
 - "weekPreset": número de dias por semana. "split": ABC/ABCD/ABCDE/AB/full_body.
-- Cada dia: 4 a 7 exercícios. "sets":"4", "reps":"8-12", "rest":"60s". "note":null se sem técnica especial.
+- Cada dia: 4 a 7 exercícios. "sets":"4", "reps":"8-12", "rest":"60s". "note":null se sem observação. "technique":null se sem técnica avançada.
 - Apenas JSON. Nenhum texto fora do JSON.`;
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,17 @@
 import pool from '../config/database';
 import type { PoolClient } from 'pg';
 
+export type TechniqueType = 'none' | 'drop_set' | 'rest_pause' | 'bi_set';
+
+export type TechniqueConfig = {
+  type: TechniqueType;
+  drops?: number;
+  dropPercent?: number;
+  pauseSeconds?: number;
+  miniSets?: number;
+  biSetGroupId?: string;
+};
+
 export type WorkoutPlanItemPayload = {
   exerciseId: string;
   name: string;
@@ -10,6 +21,7 @@ export type WorkoutPlanItemPayload = {
   rpe?: string;
   cadence?: string;
   restPause?: boolean;
+  technique?: TechniqueConfig;
   notes?: string;
 };
 
@@ -27,6 +39,72 @@ type WorkoutProtocolDayInput = {
 };
 
 const UUID_V4_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const TECHNIQUE_TYPES: ReadonlySet<TechniqueType> = new Set([
+  'none',
+  'drop_set',
+  'rest_pause',
+  'bi_set',
+]);
+
+function clampNumber(value: unknown, min: number, max: number): number | null {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  if (n < min || n > max) return null;
+  return Math.round(n);
+}
+
+export type SanitizeTechniqueResult =
+  | { ok: true; technique: TechniqueConfig | undefined }
+  | { ok: false; reason: string };
+
+export function sanitizeTechniqueConfig(raw: unknown): SanitizeTechniqueResult {
+  if (raw == null) return { ok: true, technique: undefined };
+  if (typeof raw !== 'object') return { ok: false, reason: 'technique deve ser objeto' };
+  const r = raw as Record<string, unknown>;
+  const type = typeof r.type === 'string' ? (r.type as TechniqueType) : 'none';
+  if (!TECHNIQUE_TYPES.has(type)) {
+    return { ok: false, reason: `technique.type inválido: "${type}"` };
+  }
+  if (type === 'none') return { ok: true, technique: undefined };
+
+  const technique: TechniqueConfig = { type };
+
+  if (type === 'drop_set') {
+    if (r.drops !== undefined) {
+      const drops = clampNumber(r.drops, 1, 3);
+      if (drops === null) return { ok: false, reason: 'technique.drops deve estar entre 1 e 3' };
+      technique.drops = drops;
+    }
+    if (r.dropPercent !== undefined) {
+      const pct = clampNumber(r.dropPercent, 10, 50);
+      if (pct === null) return { ok: false, reason: 'technique.dropPercent deve estar entre 10 e 50' };
+      technique.dropPercent = pct;
+    }
+  }
+
+  if (type === 'rest_pause') {
+    if (r.pauseSeconds !== undefined) {
+      const pause = clampNumber(r.pauseSeconds, 10, 30);
+      if (pause === null) return { ok: false, reason: 'technique.pauseSeconds deve estar entre 10 e 30' };
+      technique.pauseSeconds = pause;
+    }
+    if (r.miniSets !== undefined) {
+      const mini = clampNumber(r.miniSets, 1, 4);
+      if (mini === null) return { ok: false, reason: 'technique.miniSets deve estar entre 1 e 4' };
+      technique.miniSets = mini;
+    }
+  }
+
+  if (type === 'bi_set') {
+    if (typeof r.biSetGroupId !== 'string' || !UUID_V4_RE.test(r.biSetGroupId)) {
+      return { ok: false, reason: 'technique.biSetGroupId deve ser UUID v4' };
+    }
+    technique.biSetGroupId = r.biSetGroupId;
+  }
+
+  return { ok: true, technique };
+}
 
 export function isValidExerciseId(value: unknown): value is string {
   return typeof value === 'string' && UUID_V4_RE.test(value);
@@ -76,10 +154,37 @@ export function sanitizeWorkoutPlanItem(raw: unknown): SanitizeItemResult {
 
   if (r.restPause === true) item.restPause = true;
 
+  const techniqueResult = sanitizeTechniqueConfig(r.technique);
+  if (!techniqueResult.ok) {
+    return { ok: false, reason: techniqueResult.reason };
+  }
+  if (techniqueResult.technique) {
+    item.technique = techniqueResult.technique;
+  } else if (item.restPause === true && r.technique === undefined) {
+    item.technique = { type: 'rest_pause' };
+  }
+
   const notes = sanitizeString(r.notes, 500);
   if (notes) item.notes = notes;
 
   return { ok: true, item };
+}
+
+export function validateBiSetPairs(items: WorkoutPlanItemPayload[]): string[] {
+  const groupCounts = new Map<string, number>();
+  for (const it of items) {
+    if (it.technique?.type === 'bi_set' && it.technique.biSetGroupId) {
+      const id = it.technique.biSetGroupId;
+      groupCounts.set(id, (groupCounts.get(id) ?? 0) + 1);
+    }
+  }
+  const errors: string[] = [];
+  groupCounts.forEach((count, id) => {
+    if (count !== 2) {
+      errors.push(`bi-set group ${id} tem ${count} exercício(s); deve ter exatamente 2 no mesmo dia`);
+    }
+  });
+  return errors;
 }
 
 export function validateWorkoutItems(rawItems: unknown[]): WorkoutPlanItemPayload[] {
@@ -294,6 +399,13 @@ export async function createPersonalWorkoutPlanWithDays(
       const dayFocus = d.focus ? sanitizeString(d.focus, 120) : null;
       const rawItems = Array.isArray(d.items) ? d.items : [];
       const items = validateWorkoutItems(rawItems);
+      const biSetErrors = validateBiSetPairs(items);
+      if (biSetErrors.length > 0) {
+        const err = new Error('Bi-set inválido no plano');
+        (err as any).code = 'INVALID_EXERCISES';
+        (err as any).details = biSetErrors.map((e) => `day[${i + 1}]: ${e}`);
+        throw err;
+      }
       days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
     }
 
@@ -369,6 +481,13 @@ export async function createPersonalWorkoutPlan(
   const selectedGroup = input.selectedGroup ? String(input.selectedGroup).slice(0, 64) : null;
   const rawItems = Array.isArray(input.items) ? input.items : [];
   const items = validateWorkoutItems(rawItems);
+  const biSetErrors = validateBiSetPairs(items);
+  if (biSetErrors.length > 0) {
+    const err = new Error('Bi-set inválido no plano');
+    (err as any).code = 'INVALID_EXERCISES';
+    (err as any).details = biSetErrors;
+    throw err;
+  }
 
   const client = await pool.connect();
   try {

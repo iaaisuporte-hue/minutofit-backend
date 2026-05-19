@@ -7,6 +7,7 @@
 import { aiCall, TOKEN_BUDGET } from '../../lib/ai/openai';
 import { WORKOUT_SYSTEM_PROMPT } from './prompts';
 import { getExerciseCatalogForAI, findExerciseByName } from '../exerciseLibraryService';
+import { sanitizeTechniqueConfig, type TechniqueConfig } from '../personalWorkoutPlanService';
 import logger from '../../lib/logger';
 
 // ---------------------------------------------------------------------------
@@ -20,6 +21,7 @@ export type GeneratedExercise = {
   reps: string;
   rest: string;
   note?: string | null;
+  technique?: TechniqueConfig | null;
 };
 
 export type GeneratedDay = {
@@ -70,6 +72,11 @@ async function resolveExercises(
   for (const ex of exercises) {
     const exerciseId = String(ex.exercise_id ?? '');
     const name = String(ex.name ?? '');
+    const techniqueResult = sanitizeTechniqueConfig(ex.technique);
+    const technique = techniqueResult.ok ? techniqueResult.technique ?? null : null;
+    if (!techniqueResult.ok) {
+      logger.warn({ exerciseId, name, reason: techniqueResult.reason }, '[AI] technique inválida — descartada');
+    }
 
     if (UUID_RE.test(exerciseId) && validIds.has(exerciseId)) {
       resolved.push({
@@ -79,6 +86,7 @@ async function resolveExercises(
         reps: String(ex.reps ?? '10-12'),
         rest: String(ex.rest ?? '60s'),
         note: ex.note != null ? String(ex.note) : null,
+        technique,
       });
       continue;
     }
@@ -93,6 +101,7 @@ async function resolveExercises(
         reps: String(ex.reps ?? '10-12'),
         rest: String(ex.rest ?? '60s'),
         note: ex.note != null ? String(ex.note) : null,
+        technique,
       });
       logger.warn({ exerciseId, name, resolvedId: match.id }, '[AI] exercise_id inválido — resolvido por nome');
     } else {

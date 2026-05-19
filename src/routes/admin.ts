@@ -1066,7 +1066,7 @@ router.patch(
  * DELETE /admin/users/:id
  *
  * Soft-deletes a user:
- *  - Anonymizes PII (name, email, phone, cpf, password_hash) and sets deleted_at
+ *  - Anonymizes PII (name, email, phone, cpf, password) and sets deleted_at
  *  - Hard-deletes relational / behavioral rows (subscriptions, memberships,
  *    assignments, checkins, logs, gamification, chat)
  *  - Preserves "physical" content (workout plans, reviews, exercise notes)
@@ -1103,13 +1103,13 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, async (req: Request
       // 1. Anonymize PII + mark as deleted (keeps the row for FK integrity on workout plans etc.)
       await client.query(
         `UPDATE users
-         SET name          = 'Usuário Removido',
-             email         = $2,
-             password_hash = '',
-             phone         = NULL,
-             cpf           = NULL,
-             deleted_at    = NOW(),
-             updated_at    = NOW()
+         SET name       = 'Usuário Removido',
+             email      = $2,
+             password   = '',
+             phone      = NULL,
+             cpf        = NULL,
+             deleted_at = NOW(),
+             updated_at = NOW()
          WHERE id = $1`,
         [targetId, `deleted_${targetId}@metacore.internal`]
       );

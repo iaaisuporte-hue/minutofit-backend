@@ -1106,12 +1106,12 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, async (req: Request
          SET name       = 'Usuário Removido',
              email      = $2,
              password   = '',
-             phone      = NULL,
-             cpf        = NULL,
+             phone      = $3,
+             cpf        = $3,
              deleted_at = NOW(),
              updated_at = NOW()
          WHERE id = $1`,
-        [targetId, `deleted_${targetId}@metacore.internal`]
+        [targetId, `deleted_${targetId}@metacore.internal`, `DEL${String(targetId).padStart(8, '0')}`]
       );
 
       // 2. Relational / behavioral data — hard delete

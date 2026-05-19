@@ -1062,6 +1062,85 @@ router.patch(
   }
 );
 
+/**
+ * DELETE /admin/users/:id
+ *
+ * Soft-deletes a user:
+ *  - Anonymizes PII (name, email, phone, cpf, password_hash) and sets deleted_at
+ *  - Hard-deletes relational / behavioral rows (subscriptions, memberships,
+ *    assignments, checkins, logs, gamification, chat)
+ *  - Preserves "physical" content (workout plans, reviews, exercise notes)
+ *    which still carry the now-anonymized student_id for historical reference
+ *
+ * Guards: cannot delete self, cannot delete another admin.
+ */
+router.delete('/users/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const targetId = Number(req.params.id);
+    if (!Number.isFinite(targetId)) {
+      return res.status(400).json({ success: false, error: 'Invalid user id' });
+    }
+    if (targetId === req.user!.id) {
+      return res.status(400).json({ success: false, error: 'Não é possível excluir a própria conta.' });
+    }
+
+    const userRes = await pool.query(`SELECT id, role FROM users WHERE id = $1 LIMIT 1`, [targetId]);
+    if (!userRes.rows.length) {
+      return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
+    }
+    const target = userRes.rows[0];
+    if (target.role === 'admin') {
+      return res.status(403).json({ success: false, error: 'Não é possível excluir outro admin.' });
+    }
+
+    // Ensure deleted_at column exists (idempotent DDL outside transaction)
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ`);
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1. Anonymize PII + mark as deleted (keeps the row for FK integrity on workout plans etc.)
+      await client.query(
+        `UPDATE users
+         SET name          = 'Usuário Removido',
+             email         = $2,
+             password_hash = '',
+             phone         = NULL,
+             cpf           = NULL,
+             deleted_at    = NOW(),
+             updated_at    = NOW()
+         WHERE id = $1`,
+        [targetId, `deleted_${targetId}@metacore.internal`]
+      );
+
+      // 2. Relational / behavioral data — hard delete
+      await client.query(`DELETE FROM user_subscriptions            WHERE user_id = $1`, [targetId]);
+      await client.query(`DELETE FROM user_product_memberships      WHERE user_id = $1`, [targetId]);
+      await client.query(`DELETE FROM personal_student_assignments  WHERE student_id = $1`, [targetId]);
+      await client.query(`DELETE FROM nutri_patient_assignments     WHERE patient_id = $1`, [targetId]);
+      await client.query(`DELETE FROM user_gamification_stats       WHERE user_id = $1`, [targetId]);
+      await client.query(`DELETE FROM user_daily_checkins           WHERE user_id = $1`, [targetId]);
+      await client.query(`DELETE FROM user_workout_logs             WHERE user_id = $1`, [targetId]);
+      await client.query(`DELETE FROM user_activity_logs            WHERE user_id = $1`, [targetId]);
+      await client.query(`DELETE FROM personal_direct_invites       WHERE accepted_user_id = $1`, [targetId]);
+      await client.query(`DELETE FROM personal_relationship_actions WHERE student_id = $1`, [targetId]);
+      // Chat: conversations cascade to messages
+      await client.query(`DELETE FROM chat_conversations WHERE student_id = $1 OR personal_id = $1`, [targetId]);
+
+      await client.query('COMMIT');
+      return res.json({ success: true, data: { deleted: true, userId: targetId } });
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 router.delete(
   '/workout-protocols/platform/:protocolId',
   authMiddleware,

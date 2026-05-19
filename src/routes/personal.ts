@@ -923,6 +923,13 @@ router.post(
             WHERE id = $1`,
           [user.id]
         );
+        // Assign Free subscription tier — same as the invite-accept flow
+        await pool.query(
+          `INSERT INTO user_subscriptions (user_id, tier_id, status, active_from)
+           SELECT $1, id, 'active', NOW() FROM subscription_tiers WHERE name = 'Free'
+           ON CONFLICT DO NOTHING`,
+          [user.id]
+        );
       }
 
       // For existing users: persist phone if provided in the form and not yet set.

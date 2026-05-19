@@ -42,6 +42,7 @@ type DashboardStudent = {
   metabolismDelta7d: number | null;
   latestSleptWell: boolean | null;
   lastTechnicalNoteAt: string | null;
+  assignedAtISO: string | null;
 };
 
 type DashboardAlert = {
@@ -122,8 +123,19 @@ function daysUntilDate(isoDate: string) {
   return Math.floor((value - todayUTC) / (1000 * 60 * 60 * 24));
 }
 
-function resolveRisk(input: { lastWorkoutISO: string | null; workouts7d: number; adherencePct: number }): DashboardRisk {
-  const inactivityDays = daysSince(input.lastWorkoutISO);
+function resolveRisk(input: {
+  lastWorkoutISO: string | null;
+  assignedAtISO?: string | null;
+  workouts7d: number;
+  adherencePct: number;
+}): DashboardRisk {
+  const inactivityDays = input.lastWorkoutISO
+    ? daysSince(input.lastWorkoutISO)
+    : daysSince(input.assignedAtISO ?? null);
+
+  if (!input.lastWorkoutISO && input.workouts7d === 0 && inactivityDays < 5) {
+    return 'ok';
+  }
 
   if (inactivityDays >= 10 || input.workouts7d === 0 || input.adherencePct < 15) {
     return 'critico';
@@ -136,8 +148,12 @@ function resolveRisk(input: { lastWorkoutISO: string | null; workouts7d: number;
   return 'ok';
 }
 
-function latestTouchpointDays(lastWorkoutISO: string | null, lastCheckinISO: string | null) {
-  return Math.min(daysSince(lastWorkoutISO), daysSince(lastCheckinISO));
+function latestTouchpointDays(
+  lastWorkoutISO: string | null,
+  lastCheckinISO: string | null,
+  assignedAtISO?: string | null
+) {
+  return Math.min(daysSince(lastWorkoutISO), daysSince(lastCheckinISO), daysSince(assignedAtISO ?? null));
 }
 
 function resolveEngagementStatus(input: {
@@ -147,8 +163,9 @@ function resolveEngagementStatus(input: {
   workouts7d: number;
   lastWorkoutISO: string | null;
   lastCheckinISO: string | null;
+  assignedAtISO?: string | null;
 }): DashboardEngagementStatus {
-  const touchpointGap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO);
+  const touchpointGap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO, input.assignedAtISO);
 
   if (input.risk === 'critico' && touchpointGap >= 10) return 'at_risk';
   if (input.risk === 'critico' && touchpointGap >= 5) return 'fading';
@@ -180,11 +197,12 @@ function computeRiskScore(input: {
   latestSleptWell: boolean | null;
   lastWorkoutISO: string | null;
   lastCheckinISO: string | null;
+  assignedAtISO?: string | null;
 }): number {
   let score = 100 - input.engagementScore;
   if (input.metabolismDelta7d !== null && input.metabolismDelta7d <= -15) score += 15;
   if (input.latestSleptWell === false) score += 10;
-  const touchpointGap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO);
+  const touchpointGap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO, input.assignedAtISO);
   if (touchpointGap >= 10) score += 10;
   return Math.round(clamp(score, 0, 100));
 }
@@ -297,21 +315,31 @@ function buildIntelligentAlerts(students: DashboardStudent[]): DashboardAlert[] 
     });
   }
 
+  // Considera o tempo desde a atribuição também — aluno recém-cadastrado
+  // sem treino/check-in não está "sumindo", está só começando.
   const silentDisappear = [...students]
-    .filter((student) => latestTouchpointDays(student.lastWorkoutISO, student.lastCheckinISO) >= 5)
+    .filter(
+      (student) =>
+        latestTouchpointDays(student.lastWorkoutISO, student.lastCheckinISO, student.assignedAtISO) >= 5
+    )
     .sort(
       (a, b) =>
-        latestTouchpointDays(b.lastWorkoutISO, b.lastCheckinISO) -
-        latestTouchpointDays(a.lastWorkoutISO, a.lastCheckinISO)
+        latestTouchpointDays(b.lastWorkoutISO, b.lastCheckinISO, b.assignedAtISO) -
+        latestTouchpointDays(a.lastWorkoutISO, a.lastCheckinISO, a.assignedAtISO)
     )[0];
   if (silentDisappear) {
+    const gapDays = latestTouchpointDays(
+      silentDisappear.lastWorkoutISO,
+      silentDisappear.lastCheckinISO,
+      silentDisappear.assignedAtISO
+    );
+    const everEngaged = silentDisappear.lastWorkoutISO || silentDisappear.lastCheckinISO;
     alerts.push({
       type: 'silent_disappear',
       title: `${silentDisappear.name} está sumindo`,
-      description: `Sem treino ou check-in recente há ${latestTouchpointDays(
-        silentDisappear.lastWorkoutISO,
-        silentDisappear.lastCheckinISO
-      )} dias.`,
+      description: everEngaged
+        ? `Sem treino ou check-in recente há ${gapDays} dias.`
+        : `Cadastrado há ${gapDays} dias e ainda não fez nenhum treino ou check-in.`,
       studentId: silentDisappear.id,
       studentName: silentDisappear.name,
     });
@@ -439,6 +467,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
         u.name,
         u.fitness_goal,
         psa.notes,
+        psa.created_at AS assigned_at,
         st.name AS subscription_tier,
         COALESCE(gs.current_streak, 0) AS current_streak,
         (
@@ -524,8 +553,10 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     const adherencePct = clamp(Math.round((workouts30d / target30d) * 100), 0, 100);
     const lastWorkoutISO = row.last_workout_at ? new Date(row.last_workout_at).toISOString() : null;
     const lastCheckinISO = row.last_checkin_date ? new Date(row.last_checkin_date).toISOString() : null;
+    const assignedAtISO = row.assigned_at ? new Date(row.assigned_at).toISOString() : null;
     const risk = resolveRisk({
       lastWorkoutISO,
+      assignedAtISO,
       workouts7d: Number(row.workouts_7d || 0),
       adherencePct,
     });
@@ -550,8 +581,10 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
         workouts7d: Number(row.workouts_7d || 0),
         lastWorkoutISO,
         lastCheckinISO,
+        assignedAtISO,
       }),
       lastCheckinISO,
+      assignedAtISO,
       checkins7d: Number(row.checkins_7d || 0),
       latestSleptWell: row.latest_slept_well === null || row.latest_slept_well === undefined ? null : Boolean(row.latest_slept_well),
       lastTechnicalNoteAt: row.last_technical_note_at
@@ -580,6 +613,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       latestSleptWell: s.latestSleptWell,
       lastWorkoutISO: s.lastWorkoutISO,
       lastCheckinISO: s.lastCheckinISO,
+      assignedAtISO: s.assignedAtISO,
     });
     const { numericId: _omit, ...rest } = s;
     void _omit;

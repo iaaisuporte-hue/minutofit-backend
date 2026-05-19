@@ -1,6 +1,5 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { authMiddleware } from '../middleware/auth';
-import { requireAcademyContext } from '../middleware/tenantContext';
 import { requireProduct } from '../middleware/productGate';
 import {
   getGamificationSummary,
@@ -10,7 +9,9 @@ import {
 import { requireFeature } from '../middleware/featureGate';
 
 const router = Router();
-router.use(authMiddleware, requireProduct('app'), requireAcademyContext);
+// requireAcademyContext removido: standalone user tem gamification (XP, streak)
+// armazenado por user_id. getGamificationSummary aceita academyId null.
+router.use(authMiddleware, requireProduct('app'));
 
 router.get('/summary', requireFeature('workout_history'), async (req: Request, res: Response) => {
   try {

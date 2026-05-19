@@ -1,12 +1,13 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { requireAcademyContext } from '../middleware/tenantContext';
 import { requireProduct } from '../middleware/productGate';
 import logger from '../lib/logger';
 
 const router = Router();
-router.use(authMiddleware, requireProduct('app'), requireAcademyContext);
+// requireAcademyContext removido: standalone user pode usar Movement Lab.
+// GET filtra por user_id sem tenant; POST stamp academy_id=NULL.
+router.use(authMiddleware, requireProduct('app'));
 
 // POST /api/movement/sessions — save a completed movement lab session
 router.post('/sessions', async (req: Request, res: Response) => {

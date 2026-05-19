@@ -2,10 +2,12 @@
  * Backfill assigned workout plans into personal protocols and link them via
  * personal_workout_plans.source_protocol_id.
  *
- * Usage: npm run script:backfill-protocols
+ * Reusable as a function (called from boot via ensureProtocolBackfill)
+ * AND as a CLI script (npm run script:backfill-protocols).
  */
 
-import pool from '../config/database';
+import type { Pool } from 'pg';
+import defaultPool from '../config/database';
 import logger from '../lib/logger';
 
 type PlanDay = {
@@ -18,8 +20,8 @@ type PlanDay = {
 function normalizeDays(row: Record<string, unknown>): PlanDay[] {
   const rawDays = Array.isArray(row.days) ? row.days : [];
   const days = rawDays
-    .filter((day) => day && day.index != null)
-    .map((day, idx) => ({
+    .filter((day: any) => day && day.index != null)
+    .map((day: any, idx: number) => ({
       index: Number(day.index) || idx + 1,
       name: String(day.name || `Dia ${idx + 1}`),
       focus: day.focus == null ? null : String(day.focus),
@@ -35,9 +37,17 @@ function normalizeDays(row: Record<string, unknown>): PlanDay[] {
   }];
 }
 
-async function main() {
-  logger.info('[backfill:protocols] Iniciando vínculo fichas ↔ protocolos...');
+export type BackfillResult = {
+  scanned: number;
+  linked: number;
+  created: number;
+};
 
+/**
+ * Pure function — receives a pool, does not close it.
+ * Safe to call from boot chain (pool stays open) and from CLI (close pool after).
+ */
+export async function backfillProtocolFromPlans(pool: Pool = defaultPool): Promise<BackfillResult> {
   const rows = await pool.query(
     `SELECT p.id,
             p.personal_id,
@@ -116,12 +126,21 @@ async function main() {
     );
   }
 
-  logger.info({ scanned: rows.rowCount, linked, created }, '[backfill:protocols] Concluído');
-  await pool.end();
+  return { scanned: rows.rowCount ?? 0, linked, created };
 }
 
-main().catch(async (err) => {
-  logger.error({ err }, '[backfill:protocols] Falha fatal');
-  await pool.end().catch(() => undefined);
-  process.exit(1);
-});
+// CLI entrypoint — only runs when executed directly (npm run script:backfill-protocols)
+if (require.main === module) {
+  void (async () => {
+    logger.info('[backfill:protocols] Iniciando vínculo fichas ↔ protocolos...');
+    try {
+      const result = await backfillProtocolFromPlans();
+      logger.info(result, '[backfill:protocols] Concluído');
+    } catch (err) {
+      logger.error({ err }, '[backfill:protocols] Falha fatal');
+      process.exitCode = 1;
+    } finally {
+      await defaultPool.end().catch(() => undefined);
+    }
+  })();
+}

@@ -53,6 +53,7 @@ import { relaxAcademyIdNullable } from './db/relaxAcademyIdNullable';
 import { ensurePersonalDirectInvitesSchema } from './db/ensurePersonalDirectInvitesSchema';
 import { ensureStudentExerciseNotesSchema } from './db/ensureStudentExerciseNotesSchema';
 import { ensureWorkoutProtocolsSchema } from './db/ensureWorkoutProtocolsSchema';
+import { ensureProtocolBackfill } from './db/ensureProtocolBackfill';
 import { ensureExercisesSchema } from './db/ensureExercisesSchema';
 import { seedExercisesIfEmpty } from './db/seedExercisesIfEmpty';
 import { ensureProductsSchema } from './db/ensureProductsSchema';
@@ -105,6 +106,7 @@ async function runBootChain(): Promise<void> {
     ['ensurePersonalDirectInvitesSchema', ensurePersonalDirectInvitesSchema],
     ['ensureStudentExerciseNotesSchema', ensureStudentExerciseNotesSchema],
     ['ensureWorkoutProtocolsSchema', ensureWorkoutProtocolsSchema],
+    ['ensureProtocolBackfill', ensureProtocolBackfill],
     ['ensureExercisesSchema', ensureExercisesSchema],
     ['seedExercisesIfEmpty', seedExercisesIfEmpty],
     ['ensureProductsSchema', ensureProductsSchema],

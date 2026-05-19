@@ -1,13 +1,15 @@
 import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
-import { requireAcademyContext } from '../middleware/tenantContext';
 import { requireProduct } from '../middleware/productGate';
 import { withTenant, TENANT_PLACEHOLDER } from '../db/tenantQuery';
 import logger from '../lib/logger';
 
 const router = Router();
-router.use(authMiddleware, requireProduct('app'), requireAcademyContext);
+// requireAcademyContext removido do router-level: usuários standalone (sem academia)
+// usam o app legitimamente. Handlers de leitura caem em fluxo sem tenant; handlers
+// de criação stamp academy_id=NULL.
+router.use(authMiddleware, requireProduct('app'));
 
 // POST /api/activities — save a completed activity session
 router.post('/', async (req: Request, res: Response) => {

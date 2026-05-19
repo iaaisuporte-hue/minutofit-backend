@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
-import { requireAcademyContext } from '../middleware/tenantContext';
 import {
   ensureChatConversation,
   listChatConversations,
@@ -13,7 +12,10 @@ import { chatStreamSubscribe } from '../services/chatStream';
 import { recordMessageSentAction } from '../services/personalRetentionService';
 
 const router = Router();
-router.use(authMiddleware, requireAcademyContext);
+// requireAcademyContext removido: standalone user (sem academia, sem personal/nutri)
+// pode chamar /conversations e recebe []. Operações de envio validam o par
+// user-personal no service layer.
+router.use(authMiddleware);
 
 router.get(
   '/conversations',

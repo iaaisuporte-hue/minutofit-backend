@@ -26,6 +26,7 @@ export type AuditAction =
   | 'personal.student_note.created'
   | 'personal.student_note.updated'
   | 'personal.student_note.deleted'
+  | 'personal.student.removed'
   | 'membership.expire_graces'
   | 'admin.password_set';
 

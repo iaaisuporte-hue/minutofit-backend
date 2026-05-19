@@ -302,6 +302,48 @@ router.delete(
   }
 );
 
+router.delete(
+  '/students/:studentId',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+
+      const result = await pool.query(
+        `DELETE FROM personal_student_assignments
+         WHERE personal_id = $1 AND student_id = $2
+         RETURNING id`,
+        [personalId, studentId]
+      );
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ success: false, error: 'Aluno não encontrado na sua carteira.' });
+      }
+
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      if (academyId != null) {
+        logAcademyAction({
+          academyId,
+          userId: personalId,
+          action: 'personal.student.removed',
+          entityType: 'personal_student_assignment',
+          entityId: studentId,
+          meta: { studentId },
+          ipAddress: req.ip,
+        });
+      }
+
+      res.json({ success: true, data: { removed: true } });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to remove student' });
+    }
+  }
+);
+
 router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'Geração com IA não configurada neste ambiente.' });

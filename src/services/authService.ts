@@ -59,6 +59,7 @@ export interface User {
   parqAnyYes?: boolean;
   /** Triagem de saude + onboarding de treino + PAR-Q assinado (apenas papel user). */
   studentComplianceComplete?: boolean;
+  mustChangePassword?: boolean;
 }
 
 const USER_SELECT_FIELDS = `
@@ -89,7 +90,8 @@ const USER_SELECT_FIELDS = `
   parq_form_version,
   parq_signed_at,
   parq_signature_data,
-  parq_any_yes
+  parq_any_yes,
+  COALESCE(must_change_password, false) AS must_change_password
 `;
 
 export function normalizeCpf(cpf: string): string {
@@ -359,6 +361,44 @@ export async function loginUser(
   });
 
   return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken };
+}
+
+export async function changeOwnPassword(
+  userId: number,
+  currentPassword: string,
+  newPassword: string
+): Promise<User> {
+  const result = await pool.query(
+    `SELECT password FROM users WHERE id = $1 LIMIT 1`,
+    [userId]
+  );
+
+  if (result.rows.length === 0 || !result.rows[0].password) {
+    throw new Error("Nao foi possivel validar sua senha atual.");
+  }
+
+  const passwordMatch = await bcryptjs.compare(currentPassword, result.rows[0].password);
+  if (!passwordMatch) {
+    throw new Error("Senha atual incorreta.");
+  }
+
+  assertStrongPassword(newPassword);
+
+  if (currentPassword === newPassword) {
+    throw new Error("A nova senha deve ser diferente da senha temporaria.");
+  }
+
+  const hashedPassword = await bcryptjs.hash(newPassword, 10);
+  const updated = await pool.query(
+    `UPDATE users
+        SET password = $1,
+            must_change_password = FALSE
+      WHERE id = $2
+      RETURNING ${USER_SELECT_FIELDS}`,
+    [hashedPassword, userId]
+  );
+
+  return mapUserRow(updated.rows[0]);
 }
 
 export async function loginOrCreateOAuthUser(
@@ -856,6 +896,7 @@ function mapUserRow(row: any): User {
         }
       : undefined,
     profileCompleted: row.profile_completed || false,
+    mustChangePassword: row.must_change_password === true,
     accessProfile: row.access_profile || undefined,
     oauthGoogleId: row.oauth_google_id,
     oauthAppleId: row.oauth_apple_id,

@@ -832,12 +832,21 @@ router.post(
       if (!name) return res.status(400).json({ success: false, error: 'Nome é obrigatório.' });
       if (!email) return res.status(400).json({ success: false, error: 'E-mail é obrigatório.' });
 
-      const tempPassword = crypto.randomBytes(12).toString('hex');
+      const tempPassword = 'Mf!' + crypto.randomBytes(6).toString('base64url') + 'A1';
       const { user, isNew, matchedBy } = await findOrCreateUserFromContext({
         name, email, phone, cpf,
         password: tempPassword,
         skipPasswordPolicy: true,
       });
+
+      if (isNew) {
+        await pool.query(
+          `UPDATE users
+              SET must_change_password = TRUE
+            WHERE id = $1`,
+          [user.id]
+        );
+      }
 
       // For existing users: persist phone if provided in the form and not yet set.
       // findOrCreateUserFromContext doesn't update existing records, so without this
@@ -885,6 +894,8 @@ router.post(
           student: { id: user.id, name: user.name, email: user.email },
           isNew,
           matchedBy: matchedBy === 'none' ? null : matchedBy,
+          tempPassword: isNew ? tempPassword : undefined,
+          mustChangePassword: isNew,
         },
       });
     } catch (error: any) {

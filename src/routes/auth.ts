@@ -397,6 +397,26 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
   }
 });
 
+router.post("/change-password", authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const currentPassword = String(req.body?.currentPassword || "");
+    const newPassword = String(req.body?.newPassword || "");
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: "Senha atual e nova senha sao obrigatorias." });
+    }
+
+    const user = await authService.changeOwnPassword(req.user!.id, currentPassword, newPassword);
+
+    res.json({ success: true, data: { user } });
+  } catch (error: any) {
+    res.status(400).json({
+      success: false,
+      error: String(error?.message || "Nao foi possivel alterar a senha."),
+    });
+  }
+});
+
 // PATCH /auth/complete-profile - Complete user profile (for new OAuth users)
 router.patch('/complete-profile', authMiddleware, async (req: Request, res: Response) => {
   try {

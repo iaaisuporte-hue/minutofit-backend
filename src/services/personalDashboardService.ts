@@ -18,6 +18,33 @@ export async function invalidatePersonalDashboardCache(personalId: number, acade
   } catch { /* non-blocking */ }
 }
 
+/**
+ * Invalida o cache do dashboard de TODOS os personais que acompanham um aluno.
+ * Chamado pelos hot-paths que mudam o estado refletido no dashboard:
+ * INSERT em user_workout_logs, user_daily_checkins, etc.
+ *
+ * Non-blocking — falha em silêncio para não travar o write principal.
+ */
+export async function invalidatePersonalDashboardForStudent(studentId: number): Promise<void> {
+  const redis = getRedisClient();
+  if (!redis) return;
+  try {
+    const result = await pool.query<{ personal_id: number; academy_id: number | null }>(
+      `SELECT personal_id, academy_id
+         FROM personal_student_assignments
+        WHERE student_id = $1
+          AND (status IS NULL OR status = 'active')`,
+      [studentId],
+    );
+    if (result.rows.length === 0) return;
+    await Promise.all(
+      result.rows.map((row) =>
+        redis.del(personalDashboardCacheKey(row.personal_id, row.academy_id)).catch(() => undefined),
+      ),
+    );
+  } catch { /* non-blocking */ }
+}
+
 type DashboardRisk = 'ok' | 'alerta' | 'critico';
 type DashboardPlan = 'basic' | 'silver' | 'gold' | 'black';
 type DashboardGoal = 'emagrecimento' | 'hipertrofia' | 'condicionamento';

@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import { invalidateMetabolismSnapshot } from '../modules/metabolism/metabolic.service';
+import { invalidatePersonalDashboardForStudent } from './personalDashboardService';
 import logger from '../lib/logger';
 
 type CheckinSource = 'workout' | 'activity' | 'wellbeing';
@@ -211,6 +212,13 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
 
     void invalidateMetabolismSnapshot(input.userId).catch((err) =>
       logger.error({ err }, '[metabolism] invalidate snapshot error'),
+    );
+
+    // Invalida o cache do dashboard de qualquer personal que acompanhe este
+    // aluno — workout/checkin novos mudam métricas refletidas no dashboard
+    // (workouts_7d, last_workout_at, current_streak, score de engajamento).
+    void invalidatePersonalDashboardForStudent(input.userId).catch((err) =>
+      logger.error({ err }, '[personal_dashboard] invalidate cache error'),
     );
 
     return await getGamificationSummary(input.userId, hadRow, academyId);

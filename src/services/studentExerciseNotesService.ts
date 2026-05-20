@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
+import { invalidatePersonalDashboardCache } from './personalDashboardService';
 
 export const NOTE_KINDS = [
   'technique',
@@ -241,6 +242,10 @@ export async function createStudentExerciseNote(
       recordedAt,
     ]
   );
+
+  // Invalida cache do dashboard do personal — chip "Sem nota técnica há X sem"
+  // depende de last_technical_note_at e fica defasado por até 60s sem isso.
+  void invalidatePersonalDashboardCache(personalId, academyId ?? null);
 
   return mapRow(result.rows[0] as Record<string, unknown>);
 }

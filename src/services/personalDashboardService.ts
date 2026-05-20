@@ -2,6 +2,21 @@ import pool from '../config/database';
 import { getMetabolismForUser, getMetabolismHistoryForUser } from '../modules/metabolism/metabolic.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { fetchTechnicalSnapshotData } from './studentExerciseNotesService';
+import { getRedisClient } from '../lib/redisClient';
+
+const DASHBOARD_CACHE_TTL = 60; // seconds
+
+export function personalDashboardCacheKey(personalId: number, academyId: number | null | undefined): string {
+  return `personal_dashboard:${personalId}:${academyId ?? 'null'}`;
+}
+
+export async function invalidatePersonalDashboardCache(personalId: number, academyId: number | null): Promise<void> {
+  const redis = getRedisClient();
+  if (!redis) return;
+  try {
+    await redis.del(personalDashboardCacheKey(personalId, academyId));
+  } catch { /* non-blocking */ }
+}
 
 type DashboardRisk = 'ok' | 'alerta' | 'critico';
 type DashboardPlan = 'basic' | 'silver' | 'gold' | 'black';
@@ -461,6 +476,16 @@ function daysSinceLastWorkout(iso: string | null): number {
 }
 
 export async function getPersonalDashboard(personalId: number, academyId?: number | null) {
+  const redis = getRedisClient();
+  const cacheKey = personalDashboardCacheKey(personalId, academyId);
+
+  if (redis) {
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) return JSON.parse(cached);
+    } catch { /* cache miss → compute */ }
+  }
+
   const result = await pool.query(
     `SELECT
         u.id,
@@ -669,7 +694,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
 
   const insights = computeRetentionInsights(students);
 
-  return {
+  const dashboard = {
     summary: {
       totalStudents,
       total7d,
@@ -690,6 +715,14 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     students,
     generatedAt: new Date().toISOString(),
   };
+
+  if (redis) {
+    try {
+      await redis.setex(cacheKey, DASHBOARD_CACHE_TTL, JSON.stringify(dashboard));
+    } catch { /* non-blocking */ }
+  }
+
+  return dashboard;
 }
 
 export async function getPersonalStudentSnapshot(

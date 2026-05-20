@@ -15,6 +15,7 @@ export type CreateActionInput = {
   payloadJson?: Record<string, unknown>;
   source?: string;
   dueAt?: string | null;
+  linkedSignalId?: string | null;
 };
 
 export type TimelineItem = {
@@ -45,8 +46,8 @@ export async function createRelationshipAction(
 
   const result = await pool.query(
     `INSERT INTO personal_relationship_actions
-       (personal_id, student_id, academy_id, action_type, payload_json, source, due_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (personal_id, student_id, academy_id, action_type, payload_json, source, due_at, linked_signal_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       personalId,
@@ -56,6 +57,7 @@ export async function createRelationshipAction(
       JSON.stringify(input.payloadJson ?? {}),
       input.source ?? 'manual',
       input.dueAt ?? null,
+      input.linkedSignalId ?? null,
     ]
   );
   return result.rows[0];
@@ -121,7 +123,8 @@ export async function listRelationshipTimeline(
         'dueAt', pra.due_at,
         'resolvedAt', pra.resolved_at,
         'source', pra.source,
-        'payload', pra.payload_json
+        'payload', pra.payload_json,
+        'linkedSignalId', pra.linked_signal_id
       )                                     AS meta
     FROM personal_relationship_actions pra
     WHERE pra.personal_id = $1

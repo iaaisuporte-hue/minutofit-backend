@@ -1104,7 +1104,7 @@ router.post(
       const personalId = req.user!.id;
       const studentId = Number(req.params.studentId);
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-      const { actionType, payloadJson, source, dueAt } = req.body;
+      const { actionType, payloadJson, source, dueAt, linkedSignalId } = req.body;
 
       if (!actionType) return res.status(400).json({ success: false, error: 'actionType required' });
 
@@ -1113,6 +1113,7 @@ router.post(
         payloadJson,
         source,
         dueAt,
+        linkedSignalId,
       });
       res.status(201).json({ success: true, data: action });
     } catch (error: any) {

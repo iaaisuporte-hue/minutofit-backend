@@ -3,6 +3,17 @@ import { getMetabolismForUser, getMetabolismHistoryForUser } from '../modules/me
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { fetchTechnicalSnapshotData } from './studentExerciseNotesService';
 import { getRedisClient } from '../lib/redisClient';
+import type {
+  PersonalDashboardPlan,
+  PersonalDashboardRisk,
+  PersonalDashboardGoal,
+  PersonalDashboardEngagementStatus,
+  PersonalDashboardAlertType,
+  PersonalDashboardStudent,
+  PersonalDashboardAlert,
+  PersonalMetabolicBand,
+  PersonalMetabolicTrend,
+} from '../shared/types/personal-dashboard';
 
 const DASHBOARD_CACHE_TTL = 60; // seconds
 
@@ -45,63 +56,13 @@ export async function invalidatePersonalDashboardForStudent(studentId: number): 
   } catch { /* non-blocking */ }
 }
 
-type DashboardRisk = 'ok' | 'alerta' | 'critico';
-type DashboardPlan = 'basic' | 'silver' | 'gold' | 'black';
-type DashboardGoal = 'emagrecimento' | 'hipertrofia' | 'condicionamento';
-type DashboardEngagementStatus = 'evolving' | 'on_track' | 'attention' | 'fading' | 'at_risk';
-type DashboardAlertType =
-  | 'attention_load'
-  | 'cluster_low_sleep'
-  | 'full_adherence'
-  | 'silent_disappear'
-  | 'overtraining'
-  | 'metabolic_decline'
-  | 'recovery_gap';
-type MetabolicBand = 'low' | 'moderate' | 'high' | 'unknown';
-type MetabolicTrend = 'up' | 'down' | 'stable' | 'unknown';
-
-type DashboardStudent = {
-  id: string;
-  name: string;
-  plan: DashboardPlan;
-  workouts7d: number;
-  workouts30d: number;
-  streakDays: number;
-  lastWorkoutISO: string | null;
-  adherencePct: number;
-  adherenceScore: number;
-  engagementScore: number;
-  riskScore: number;
-  risk: DashboardRisk;
-  goal: DashboardGoal;
-  notes: string | null;
-  engagementStatus: DashboardEngagementStatus;
-  lastCheckinISO: string | null;
-  checkins7d: number;
-  metabolismScore: number | null;
-  metabolismBand: MetabolicBand;
-  metabolismTrend: MetabolicTrend;
-  metabolismDelta7d: number | null;
-  latestSleptWell: boolean | null;
-  lastTechnicalNoteAt: string | null;
-  assignedAtISO: string | null;
-};
-
-type DashboardAlert = {
-  type: DashboardAlertType;
-  title: string;
-  description: string;
-  studentId: string | null;
-  studentName: string | null;
-};
-
 type ConsultingStatus = 'urgent' | 'warning' | 'on_track';
 type ConsultingNextAction = 'refresh_today' | 'prepare_update' | 'review_adherence' | 'keep_progression';
 
 type ConsultingStudent = {
   id: string;
   name: string;
-  plan: DashboardPlan;
+  plan: PersonalDashboardPlan;
   planExpiresAt: string;
   lastWorkoutUpdateAt: string | null;
   workoutsDoneInCurrentPlan: number;
@@ -114,19 +75,19 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-function mapPlan(subscriptionTier?: string | null): DashboardPlan {
+function mapPlan(subscriptionTier?: string | null): PersonalDashboardPlan {
   if (subscriptionTier === 'Premium') return 'black';
   if (subscriptionTier === 'Pro') return 'silver';
   return 'basic';
 }
 
-function mapGoal(goal?: string | null): DashboardGoal {
+function mapGoal(goal?: string | null): PersonalDashboardGoal {
   if (goal === 'hypertrophy') return 'hipertrofia';
   if (goal === 'conditioning') return 'condicionamento';
   return 'emagrecimento';
 }
 
-function targetWorkoutsPerMonth(plan: DashboardPlan) {
+function targetWorkoutsPerMonth(plan: PersonalDashboardPlan) {
   if (plan === 'black') return 10;
   if (plan === 'gold') return 9;
   if (plan === 'silver') return 8;
@@ -170,7 +131,7 @@ function resolveRisk(input: {
   assignedAtISO?: string | null;
   workouts7d: number;
   adherencePct: number;
-}): DashboardRisk {
+}): PersonalDashboardRisk {
   const inactivityDays = input.lastWorkoutISO
     ? daysSince(input.lastWorkoutISO)
     : daysSince(input.assignedAtISO ?? null);
@@ -199,14 +160,14 @@ function latestTouchpointDays(
 }
 
 function resolveEngagementStatus(input: {
-  risk: DashboardRisk;
+  risk: PersonalDashboardRisk;
   adherencePct: number;
   streakDays: number;
   workouts7d: number;
   lastWorkoutISO: string | null;
   lastCheckinISO: string | null;
   assignedAtISO?: string | null;
-}): DashboardEngagementStatus {
+}): PersonalDashboardEngagementStatus {
   const touchpointGap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO, input.assignedAtISO);
 
   if (input.risk === 'critico' && touchpointGap >= 10) return 'at_risk';
@@ -249,14 +210,14 @@ function computeRiskScore(input: {
   return Math.round(clamp(score, 0, 100));
 }
 
-function bandFromScore(score: number | null): MetabolicBand {
+function bandFromScore(score: number | null): PersonalMetabolicBand {
   if (score === null) return 'unknown';
   if (score >= 70) return 'high';
   if (score >= 45) return 'moderate';
   return 'low';
 }
 
-function normalizeTrend(trend: unknown): MetabolicTrend {
+function normalizeTrend(trend: unknown): PersonalMetabolicTrend {
   if (trend === 'up' || trend === 'down' || trend === 'stable') return trend;
   return 'unknown';
 }
@@ -316,8 +277,8 @@ async function loadCarteiraMetabolism(studentIds: number[], academyId: number | 
   return map;
 }
 
-function buildIntelligentAlerts(students: DashboardStudent[]): DashboardAlert[] {
-  const alerts: DashboardAlert[] = [];
+function buildIntelligentAlerts(students: PersonalDashboardStudent[]): PersonalDashboardAlert[] {
+  const alerts: PersonalDashboardAlert[] = [];
 
   const attentionLoad = students.filter(
     (student) => student.engagementStatus === 'attention' || student.engagementStatus === 'fading' || student.engagementStatus === 'at_risk'
@@ -445,7 +406,7 @@ type RetentionInsight = {
   studentId: string | null;
 };
 
-function computeRetentionInsights(students: DashboardStudent[]): RetentionInsight[] {
+function computeRetentionInsights(students: PersonalDashboardStudent[]): RetentionInsight[] {
   if (students.length === 0) return [];
   const insights: RetentionInsight[] = [];
 
@@ -647,7 +608,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
 
   const metabolismMap = await loadCarteiraMetabolism(baseStudents.map((s) => s.numericId), academyId ?? null);
 
-  const students: DashboardStudent[] = baseStudents.map((s) => {
+  const students: PersonalDashboardStudent[] = baseStudents.map((s) => {
     const m = metabolismMap.get(s.numericId);
     const latestScore = m?.latest_score ?? null;
     const baselineScore = m?.baseline_score ?? null;
@@ -693,7 +654,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
   const needsFollowUp = [...students]
     .filter((student) => student.engagementStatus !== 'on_track' && student.engagementStatus !== 'evolving')
     .sort((a, b) => {
-      const weight: Record<DashboardEngagementStatus, number> = {
+      const weight: Record<PersonalDashboardEngagementStatus, number> = {
         at_risk: 0,
         fading: 1,
         attention: 2,

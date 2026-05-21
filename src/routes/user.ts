@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { getProfessionalContextForStudent } from '../services/professionalContextService';
+import pool from '../config/database';
 
 const router = Router();
 
@@ -12,6 +13,38 @@ router.get('/professional-context', authMiddleware, async (req: Request, res: Re
   } catch (err) {
     console.error('[user/professional-context]', err);
     res.status(500).json({ success: false, error: 'Failed to load professional context' });
+  }
+});
+
+router.get('/workout-history', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const days = Math.min(90, Math.max(7, Number(req.query.days) || 30));
+
+    const result = await pool.query<{
+      workout_id: string;
+      title: string;
+      muscle_groups: string[];
+      completed_at: string;
+    }>(
+      `SELECT workout_id, title, muscle_groups, completed_at
+       FROM user_workout_logs
+       WHERE user_id = $1 AND completed_at >= NOW() - ($2 || ' days')::interval
+       ORDER BY completed_at ASC`,
+      [userId, days],
+    );
+
+    const entries = result.rows.map((row) => ({
+      workoutId: row.workout_id,
+      title: row.title,
+      muscleGroups: row.muscle_groups ?? [],
+      date: row.completed_at,
+    }));
+
+    res.json(entries);
+  } catch (err) {
+    console.error('[user/workout-history]', err);
+    res.status(500).json({ success: false, error: 'Failed to load workout history' });
   }
 });
 

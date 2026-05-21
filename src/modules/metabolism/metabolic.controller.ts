@@ -26,7 +26,8 @@ router.get('/me/metabolism/history', authMiddleware, async (req: Request, res: R
       return res.status(401).json({ error: 'Authentication required' });
     }
 
-    const data = await getMetabolismHistoryForUser(req.user.id);
+    const days = Math.min(90, Math.max(7, Number(req.query.days) || 14));
+    const data = await getMetabolismHistoryForUser(req.user.id, days);
 
     return res.json(data);
   } catch (error) {

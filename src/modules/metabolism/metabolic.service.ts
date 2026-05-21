@@ -120,8 +120,8 @@ export async function getMetabolismForUser(userId: number, academyId: number | n
   return attachInterpretation(userId, withTrends);
 }
 
-export async function getMetabolismHistoryForUser(userId: number): Promise<MetabolicHistory> {
-  return loadSnapshots(userId, 14);
+export async function getMetabolismHistoryForUser(userId: number, days = 14): Promise<MetabolicHistory> {
+  return loadSnapshots(userId, days);
 }
 
 export async function invalidateMetabolismSnapshot(userId: number): Promise<void> {

@@ -772,7 +772,7 @@ router.get(
     const { academyId } = req.tenant!;
 
     const [membersRes, academyRes, brandingRes, retentionRes, atRiskRes, professionalRes,
-           metabolismRes, topPersonalsRes, adoptionRes] = await Promise.all([
+           metabolismRes, topPersonalsRes, adoptionRes, commercialRes] = await Promise.all([
       pool.query(
         `SELECT ar.slug, COUNT(*) AS count
          FROM academy_users au
@@ -835,6 +835,7 @@ router.get(
            u.id,
            u.name,
            u.email,
+           u.phone,
            udc.last_checkin,
            uwl.last_workout,
            GREATEST(
@@ -949,6 +950,63 @@ router.get(
            AND au.status      = 'active'`,
         [academyId]
       ),
+      // M7: Commercial signals — upgrade candidates, no plan, external personal
+      pool.query(
+        `WITH base AS (
+           SELECT au.user_id
+           FROM academy_users au
+           JOIN users u ON u.id = au.user_id
+           WHERE au.academy_id = $1
+             AND au.is_active = TRUE AND au.status = 'active'
+             AND u.role = 'user'
+         ),
+         signals AS (
+           SELECT
+             b.user_id,
+             udc.last_checkin,
+             EXTRACT(EPOCH FROM NOW() - ae.start_date) / 86400 AS enrolled_days,
+             EXISTS (
+               SELECT 1 FROM user_product_memberships upm
+               WHERE upm.user_id = b.user_id
+                 AND upm.product_key = 'app' AND upm.status = 'active'
+             ) AS has_app,
+             EXISTS (
+               SELECT 1 FROM personal_workout_plans pwp
+               WHERE pwp.student_id = b.user_id AND pwp.is_active = TRUE
+             ) AS has_plan,
+             EXISTS (
+               SELECT 1 FROM personal_student_assignments psa
+               WHERE psa.student_id = b.user_id AND psa.status = 'active'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM academy_users pau
+                   WHERE pau.user_id = psa.personal_id
+                     AND pau.academy_id = $1 AND pau.is_active = TRUE
+                 )
+             ) AS has_external_personal
+           FROM base b
+           LEFT JOIN (
+             SELECT user_id, MAX(created_at) AS last_checkin
+             FROM user_daily_checkins
+             WHERE academy_id = $1
+             GROUP BY user_id
+           ) udc ON udc.user_id = b.user_id
+           LEFT JOIN LATERAL (
+             SELECT start_date FROM academy_enrollments
+             WHERE user_id = b.user_id AND academy_id = $1 AND status = 'active'
+             ORDER BY start_date ASC LIMIT 1
+           ) ae ON TRUE
+         )
+         SELECT
+           COUNT(*) FILTER (
+             WHERE last_checkin >= NOW() - INTERVAL '30 days' AND NOT has_app
+           )::integer AS upgrade_candidates,
+           COUNT(*) FILTER (
+             WHERE enrolled_days >= 30 AND NOT has_plan
+           )::integer AS no_workout_plan,
+           COUNT(*) FILTER (WHERE has_external_personal)::integer AS external_personal
+         FROM signals`,
+        [academyId]
+      ).catch(() => ({ rows: [{ upgrade_candidates: 0, no_workout_plan: 0, external_personal: 0 }] })),
     ]);
 
     const membersByRole: Record<string, number> = {};
@@ -969,6 +1027,7 @@ router.get(
       id:           row.id,
       name:         row.name || row.email || `Aluno ${row.id}`,
       email:        row.email,
+      phone:        row.phone ?? null,
       lastCheckin:  row.last_checkin  ? new Date(row.last_checkin).toISOString()  : null,
       lastWorkout:  row.last_workout  ? new Date(row.last_workout).toISOString()  : null,
       daysInactive: Number(row.days_inactive),
@@ -997,6 +1056,13 @@ router.get(
       netGrowth: Number(adoptRow.new_enrollments ?? 0) - Number(adoptRow.cancellations ?? 0),
     };
 
+    const commRow = commercialRes.rows[0] ?? {};
+    const commercialSignals = {
+      upgradeCandidates: Number(commRow.upgrade_candidates ?? 0),
+      noWorkoutPlan:     Number(commRow.no_workout_plan    ?? 0),
+      externalPersonal:  Number(commRow.external_personal  ?? 0),
+    };
+
     res.json({
       success: true,
       data: {
@@ -1010,6 +1076,7 @@ router.get(
         averageMetabolismScore,
         topPersonals,
         adoption,
+        commercialSignals,
       },
     });
   } catch (err: any) {

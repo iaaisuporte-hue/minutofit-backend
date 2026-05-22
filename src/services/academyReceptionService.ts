@@ -974,7 +974,7 @@ export async function getReceptionStudentContext(
     ),
     pool.query<{ x: boolean }>(
       `SELECT EXISTS (
-         SELECT 1 FROM user_products
+         SELECT 1 FROM user_product_memberships
          WHERE user_id = $1 AND product_key = 'metabolismo' AND status = 'active'
        ) AS x`,
       [studentUserId]

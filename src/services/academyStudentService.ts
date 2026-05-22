@@ -31,6 +31,9 @@ export interface Student {
   activePlan: { id: number; name: string; monthlyPrice: number; startDate: string } | null;
   hasUsedLab?: boolean;
   hasUsedTracker?: boolean;
+  hasApp?: boolean;
+  hasPersonal?: boolean;
+  hasNutri?: boolean;
 }
 
 export interface Enrollment {
@@ -102,6 +105,9 @@ function mapStudent(row: any): Student {
       : null,
     hasUsedLab:     Boolean(row.has_used_lab),
     hasUsedTracker: Boolean(row.has_used_tracker),
+    hasApp:         Boolean(row.has_app),
+    hasPersonal:    Boolean(row.has_personal),
+    hasNutri:       Boolean(row.has_nutri),
   };
 }
 
@@ -206,7 +212,19 @@ export async function listStudents(
            SELECT 1 FROM activity_sessions acs
            WHERE acs.user_id = u.id
              AND (acs.academy_id IS NULL OR acs.academy_id = au.academy_id)
-         ) AS has_used_tracker
+         ) AS has_used_tracker,
+         EXISTS (
+           SELECT 1 FROM user_product_memberships upm
+           WHERE upm.user_id = u.id AND upm.product_key = 'app' AND upm.status = 'active'
+         ) AS has_app,
+         EXISTS (
+           SELECT 1 FROM user_product_memberships upm
+           WHERE upm.user_id = u.id AND upm.product_key = 'personal' AND upm.status = 'active'
+         ) AS has_personal,
+         EXISTS (
+           SELECT 1 FROM user_product_memberships upm
+           WHERE upm.user_id = u.id AND upm.product_key = 'nutri' AND upm.status = 'active'
+         ) AS has_nutri
        ${BASE_QUERY}
        ORDER BY u.name
        LIMIT $${vals.length + 1} OFFSET $${vals.length + 2}`,
@@ -254,9 +272,11 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
     workouts30d: number;
     checkins30d: number;
     adherence30dPct: number | null;
+    adherence7dPct: number | null;
   };
+  memberships: { hasApp: boolean; hasPersonal: boolean; hasNutri: boolean };
 }> {
-  const [studentRes, enrollRes, auditRes, activityRes] = await Promise.all([
+  const [studentRes, enrollRes, auditRes, activityRes, membershipsRes] = await Promise.all([
     pool.query(
       `SELECT
          u.id AS user_id, u.name, u.email, u.phone, u.cpf, u.birth_date, u.avatar_url,
@@ -305,7 +325,18 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
          (SELECT COUNT(*)          FROM user_workout_logs
           WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '30 days') AS workouts_30d,
          (SELECT COUNT(*)          FROM user_daily_checkins
-          WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '30 days') AS checkins_30d`,
+          WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '30 days') AS checkins_30d,
+         (SELECT COUNT(DISTINCT date_key) FROM user_daily_checkins
+          WHERE user_id = $1 AND date_key >= (CURRENT_DATE - INTERVAL '6 days')::date) AS checkins_7d`,
+      [userId]
+    ),
+    pool.query(
+      `SELECT
+         MAX(CASE WHEN product_key = 'app'      AND status = 'active' THEN 1 ELSE 0 END)::int AS has_app,
+         MAX(CASE WHEN product_key = 'personal' AND status = 'active' THEN 1 ELSE 0 END)::int AS has_personal,
+         MAX(CASE WHEN product_key = 'nutri'    AND status = 'active' THEN 1 ELSE 0 END)::int AS has_nutri
+       FROM user_product_memberships
+       WHERE user_id = $1`,
       [userId]
     ),
   ]);
@@ -339,18 +370,27 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
   }));
 
   const ar = activityRes.rows[0] ?? {};
-  const workouts30d = Number(ar.workouts_30d ?? 0);
-  const checkins30d = Number(ar.checkins_30d ?? 0);
+  const workouts30d  = Number(ar.workouts_30d  ?? 0);
+  const checkins30d  = Number(ar.checkins_30d  ?? 0);
+  const checkins7d   = Number(ar.checkins_7d   ?? 0);
   const activity = {
-    lastWorkout:     ar.last_workout  ? new Date(ar.last_workout).toISOString()  : null,
-    lastCheckin:     ar.last_checkin  ? new Date(ar.last_checkin).toISOString()  : null,
+    lastWorkout:     ar.last_workout ? new Date(ar.last_workout).toISOString() : null,
+    lastCheckin:     ar.last_checkin ? new Date(ar.last_checkin).toISOString() : null,
     workouts30d,
     checkins30d,
     // Target: ~3 workouts/week = 12/month; capped at 100%
     adherence30dPct: workouts30d > 0 ? Math.min(Math.round((workouts30d / 12) * 100), 100) : null,
+    adherence7dPct:  Math.min(100, Math.round((checkins7d / 7) * 100)),
   };
 
-  return { ...student, enrollments, auditHistory, activity };
+  const mr = membershipsRes.rows[0] ?? {};
+  const memberships = {
+    hasApp:      Boolean(Number(mr.has_app)),
+    hasPersonal: Boolean(Number(mr.has_personal)),
+    hasNutri:    Boolean(Number(mr.has_nutri)),
+  };
+
+  return { ...student, enrollments, auditHistory, activity, memberships };
 }
 
 // ─── Add student ──────────────────────────────────────────────────────────────

@@ -41,7 +41,7 @@ import {
   type ReceptionPanelApiKey,
 } from '../services/academyReceptionService';
 import { receptionStreamSubscribe } from '../services/receptionStream';
-import { validateBrandingColor, contrastRatio } from '../utils/contrastValidator';
+import { validateBrandingColor } from '../utils/contrastValidator';
 import { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } from '../utils/colorContrast';
 import { sanitizeBrandingText } from '../utils/htmlSanitize';
 import pool from '../config/database';
@@ -645,28 +645,32 @@ router.post(
     try {
       const targetId = Number(req.params.userId);
 
-      // Apenas aluno (papel academy_student) — evita reset em staff/outros vínculos na mesma academia
-      const memberCheck = await pool.query(
-        `SELECT 1 FROM academy_users au
-         JOIN academy_roles ar ON ar.id = au.role_id
-         WHERE au.user_id = $1 AND au.academy_id = $2
-           AND au.is_active = TRUE AND au.status = 'active'
-           AND ar.slug = 'academy_student'
-         LIMIT 1`,
-        [targetId, req.tenant!.academyId]
-      );
-      if (memberCheck.rows.length === 0) {
-        return res.status(404).json({ success: false, error: 'Aluno não encontrado nesta academia.' });
-      }
-
       // Generate a readable temporary password: word + 4-digit number
       const words = ['Treino', 'Forca', 'Saude', 'Ativo', 'Fit', 'Move'];
       const word  = words[Math.floor(Math.random() * words.length)];
       const num   = String(Math.floor(1000 + Math.random() * 9000));
       const tempPassword = `${word}${num}`;
-
       const hashed = await bcryptjs.hash(tempPassword, 10);
-      await pool.query(`UPDATE users SET password = $1 WHERE id = $2`, [hashed, targetId]);
+
+      // CTE atômica: valida vínculo ativo (academy_student) e atualiza senha no mesmo statement.
+      // Se o aluno foi removido entre validação e update, RETURNING retorna 0 linhas → 404.
+      const resetResult = await pool.query(
+        `WITH ok AS (
+           SELECT au.user_id
+           FROM academy_users au
+           JOIN academy_roles ar ON ar.id = au.role_id
+           WHERE au.user_id = $1 AND au.academy_id = $2
+             AND au.is_active = TRUE AND au.status = 'active'
+             AND ar.slug = 'academy_student'
+         )
+         UPDATE users SET password = $3, must_change_password = TRUE
+          WHERE id IN (SELECT user_id FROM ok)
+         RETURNING id`,
+        [targetId, req.tenant!.academyId, hashed]
+      );
+      if (resetResult.rows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Aluno não encontrado nesta academia.' });
+      }
 
       logAcademyAction({
         academyId: req.tenant!.academyId,

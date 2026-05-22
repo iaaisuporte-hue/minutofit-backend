@@ -185,6 +185,7 @@ async function getStudentForAccess(academyId: number, userId: number): Promise<R
        JOIN chat_messages cm ON cm.conversation_id = cc.id
        JOIN users usr ON usr.id = cm.sender_id
        WHERE cc.student_id = u.id
+         AND cc.academy_id = au.academy_id
          AND cm.sender_role IN ('personal', 'admin')
        ORDER BY cm.created_at DESC
        LIMIT 1
@@ -263,6 +264,7 @@ export async function searchReceptionStudents(
        JOIN chat_messages cm ON cm.conversation_id = cc.id
        JOIN users usr ON usr.id = cm.sender_id
        WHERE cc.student_id = u.id
+         AND cc.academy_id = au.academy_id
          AND cm.sender_role IN ('personal', 'admin')
        ORDER BY cm.created_at DESC
        LIMIT 1
@@ -983,19 +985,21 @@ export async function getReceptionStudentContext(
        JOIN chat_messages cm ON cm.conversation_id = cc.id
        JOIN users usr ON usr.id = cm.sender_id
        WHERE cc.student_id = $1
+         AND cc.academy_id = $2
          AND cm.sender_role IN ('personal', 'admin')
        ORDER BY cm.created_at DESC
        LIMIT 15`,
-      [studentUserId]
+      [studentUserId, academyId]
     ),
     pool.query<{ c: string }>(
       `SELECT COUNT(*)::text AS c
        FROM chat_conversations cc
        JOIN chat_messages cm ON cm.conversation_id = cc.id
        WHERE cc.student_id = $1
+         AND cc.academy_id = $2
          AND cm.sender_role IN ('personal', 'admin')
          AND cm.created_at > COALESCE(cc.last_read_at_by_student, to_timestamp(0))`,
-      [studentUserId]
+      [studentUserId, academyId]
     ),
     pool.query<{ last_at: Date | null }>(
       `SELECT MAX(created_at) AS last_at

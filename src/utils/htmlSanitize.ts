@@ -5,18 +5,20 @@
  * that must never be rendered as innerHTML.
  */
 
-/** Remove all HTML/SVG tags and decode basic entities. */
+/**
+ * Remove all HTML/SVG tags and dangerous patterns.
+ * Does NOT decode HTML entities — output is plain text for JSX text nodes.
+ * Decoding entities AFTER stripping creates a bypass: &lt;script&gt; survives
+ * the tag strip and becomes <script> after decode. Since welcome_message
+ * renders via React JSX {expression} (auto-escaped), entity literals in
+ * the output render as visible text, which is correct and safe.
+ */
 export function stripHtml(input: unknown): string {
   if (typeof input !== 'string') return '';
   return input
-    .replace(/<[^>]*>/g, '')       // strip tags
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#x27;/gi, "'")
-    .replace(/javascript:/gi, '')  // extra guard
-    .replace(/on\w+\s*=/gi, '')    // strip event attrs residue
+    .replace(/<[^>]*>/g, '')       // strip literal tags
+    .replace(/javascript:/gi, '')  // extra guard against decoded bypasses
+    .replace(/on\w+\s*=/gi, '')    // strip event attr residue
     .trim();
 }
 

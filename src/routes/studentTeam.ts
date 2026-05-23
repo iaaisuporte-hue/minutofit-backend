@@ -27,7 +27,7 @@ router.use(authMiddleware);
 // ── Student endpoints ─────────────────────────────────────────────────────
 
 /** Busca profissional por email ou código para exibir preview antes de solicitar */
-router.get('/resolve-professional', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.get('/resolve-professional', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   const { identifier, role } = req.query as { identifier?: string; role?: string };
   if (!identifier || !role || !['personal', 'nutri'].includes(role)) {
     return res.status(400).json({ error: 'identifier and role (personal|nutri) required' });
@@ -42,7 +42,7 @@ router.get('/resolve-professional', roleCheckMiddleware('student'), async (req: 
 });
 
 /** Aluno cria solicitação de vínculo */
-router.post('/professional-requests', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.post('/professional-requests', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   const studentId = req.user!.id;
 
   // Bloquear aluno de academia de contratar externo
@@ -88,7 +88,7 @@ router.post('/professional-requests', roleCheckMiddleware('student'), async (req
 });
 
 /** Aluno lista suas solicitações enviadas */
-router.get('/professional-requests', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.get('/professional-requests', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   try {
     const requests = await listOutgoingRequests(req.user!.id);
     return res.json({ success: true, data: requests });
@@ -98,7 +98,7 @@ router.get('/professional-requests', roleCheckMiddleware('student'), async (req:
 });
 
 /** Aluno cancela solicitação pendente */
-router.delete('/professional-requests/:id', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.delete('/professional-requests/:id', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   try {
     await cancelConnectionRequest({
       requestId: req.params.id,
@@ -113,7 +113,7 @@ router.delete('/professional-requests/:id', roleCheckMiddleware('student'), asyn
 });
 
 /** Aluno revoga vínculo ativo com um profissional */
-router.delete('/connections/:professionalId', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.delete('/connections/:professionalId', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   const { role } = req.query as { role?: string };
   if (!role || !['personal', 'nutri'].includes(role)) {
     return res.status(400).json({ error: 'role query param required (personal|nutri)' });
@@ -133,7 +133,7 @@ router.delete('/connections/:professionalId', roleCheckMiddleware('student'), as
 });
 
 /** Aluno lista consentimentos com um profissional */
-router.get('/consents/:professionalId', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.get('/consents/:professionalId', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   const { role } = req.query as { role?: string };
   if (!role || !['personal', 'nutri'].includes(role)) {
     return res.status(400).json({ error: 'role required (personal|nutri)' });
@@ -151,7 +151,7 @@ router.get('/consents/:professionalId', roleCheckMiddleware('student'), async (r
 });
 
 /** Aluno revoga um escopo específico */
-router.patch('/consents/:professionalId/revoke', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.patch('/consents/:professionalId/revoke', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   const { role, scope } = req.body as { role?: ProfessionalRole; scope?: ConsentScope };
   if (!role || !scope) {
     return res.status(400).json({ error: 'role and scope required' });
@@ -165,7 +165,7 @@ router.patch('/consents/:professionalId/revoke', roleCheckMiddleware('student'),
 });
 
 /** Aluno consulta trilha de auditoria dos próprios dados */
-router.get('/audit/me', roleCheckMiddleware('student'), async (req: Request, res: Response) => {
+router.get('/audit/me', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   try {
     const trail = await getAuditTrailForUser(req.user!.id, 50);
     return res.json({ success: true, data: trail });
@@ -221,6 +221,7 @@ router.post('/incoming-requests/:id/accept', async (req: Request, res: Response)
     await acceptConnectionRequest({
       requestId: req.params.id,
       professionalId: req.user!.id,
+      professionalRole: role as ProfessionalRole,
       ip: req.ip,
     });
     return res.json({ success: true });
@@ -240,6 +241,7 @@ router.post('/incoming-requests/:id/reject', async (req: Request, res: Response)
     await rejectConnectionRequest({
       requestId: req.params.id,
       professionalId: req.user!.id,
+      professionalRole: role as ProfessionalRole,
       rejectionReason: req.body.reason,
       ip: req.ip,
     });

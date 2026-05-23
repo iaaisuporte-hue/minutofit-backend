@@ -112,20 +112,22 @@ export async function createConnectionRequest(opts: {
 export async function acceptConnectionRequest(opts: {
   requestId: string;
   professionalId: number;
+  professionalRole: ProfessionalRole;
   ip?: string;
 }): Promise<void> {
-  const { requestId, professionalId, ip } = opts;
+  const { requestId, professionalId, professionalRole, ip } = opts;
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
 
+    // Casa professional_role: personal só aceita request de personal, nutri só de nutri
     const { rows } = await client.query(
       `UPDATE student_professional_requests
        SET status = 'accepted', responded_at = NOW()
-       WHERE id = $1 AND professional_id = $2 AND status = 'pending'
+       WHERE id = $1 AND professional_id = $2 AND professional_role = $3 AND status = 'pending'
        RETURNING *`,
-      [requestId, professionalId]
+      [requestId, professionalId, professionalRole]
     );
     if (!rows[0]) throw Object.assign(new Error('not_found_or_not_pending'), { status: 404 });
     const req = rows[0];
@@ -173,17 +175,18 @@ export async function acceptConnectionRequest(opts: {
 export async function rejectConnectionRequest(opts: {
   requestId: string;
   professionalId: number;
+  professionalRole: ProfessionalRole;
   rejectionReason?: string;
   ip?: string;
 }): Promise<void> {
-  const { requestId, professionalId, rejectionReason, ip } = opts;
+  const { requestId, professionalId, professionalRole, rejectionReason, ip } = opts;
 
   const { rows } = await pool.query(
     `UPDATE student_professional_requests
-     SET status = 'rejected', responded_at = NOW(), rejection_reason = $3
-     WHERE id = $1 AND professional_id = $2 AND status = 'pending'
+     SET status = 'rejected', responded_at = NOW(), rejection_reason = $4
+     WHERE id = $1 AND professional_id = $2 AND professional_role = $3 AND status = 'pending'
      RETURNING student_id`,
-    [requestId, professionalId, rejectionReason ?? null]
+    [requestId, professionalId, professionalRole, rejectionReason ?? null]
   );
   if (!rows[0]) throw Object.assign(new Error('not_found_or_not_pending'), { status: 404 });
 
@@ -319,12 +322,14 @@ export async function resolveProfessionalByIdentifier(
   role: ProfessionalRole
 ): Promise<{ id: number; name: string; professionalCode: string | null } | null> {
   const dbRole = role === 'personal' ? 'personal' : 'nutri';
+  // Normaliza email para lowercase (índice de email é case-sensitive em algumas instâncias)
+  const normalizedIdentifier = identifier.includes('@') ? identifier.toLowerCase() : identifier;
   const { rows } = await pool.query(
     `SELECT id, name, professional_code FROM users
-     WHERE (email = $1 OR professional_code = $1)
-       AND role = $2 AND active = true
+     WHERE (LOWER(email) = $1 OR professional_code = $1)
+       AND role = $2
      LIMIT 1`,
-    [identifier, dbRole]
+    [normalizedIdentifier, dbRole]
   );
   if (!rows[0]) return null;
   return { id: rows[0].id, name: rows[0].name, professionalCode: rows[0].professional_code };

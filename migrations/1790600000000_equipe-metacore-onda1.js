@@ -146,6 +146,58 @@ exports.up = (pgm) => {
     CREATE INDEX IF NOT EXISTS idx_daa_actor_created
       ON data_access_audit(actor_id, created_at DESC)
   `);
+
+  // ── Backfill: professional_code para profissionais existentes ────────────
+  // Código de 8 chars: 4 letras maiúsculas do nome + 4 chars do id base36.
+  pgm.sql(`
+    UPDATE users
+    SET professional_code = UPPER(
+      REGEXP_REPLACE(
+        SUBSTRING(REGEXP_REPLACE(COALESCE(name,'PRO'),'[^a-zA-Z]','','g') FROM 1 FOR 4),
+        '$', LPAD(TO_HEX(id), 4, '0')
+      )
+    )
+    WHERE role IN ('personal','nutri') AND professional_code IS NULL
+  `);
+
+  // ── Backfill: granted consents para vínculos legados ─────────────────────
+  // Vínculos criados antes desta migration (initiated_by='professional')
+  // recebem consent granted nos escopos default para não quebrar fluxo legado.
+  // Aluno pode revogar granularmente depois.
+  pgm.sql(`
+    INSERT INTO user_data_consents (user_id, professional_id, professional_role, scope, status)
+    SELECT
+      psa.student_id,
+      psa.personal_id,
+      'personal',
+      s.scope,
+      'granted'
+    FROM personal_student_assignments psa
+    CROSS JOIN (
+      VALUES ('profile'), ('workouts'), ('daily_checkins'),
+             ('metabolic'), ('sleep'), ('body_metrics'),
+             ('parq_anamnese'), ('activity_logs'), ('chat_history')
+    ) AS s(scope)
+    WHERE psa.status = 'active'
+    ON CONFLICT (user_id, professional_id, professional_role, scope) DO NOTHING
+  `);
+  pgm.sql(`
+    INSERT INTO user_data_consents (user_id, professional_id, professional_role, scope, status)
+    SELECT
+      npa.patient_id,
+      npa.nutri_id,
+      'nutri',
+      s.scope,
+      'granted'
+    FROM nutri_patient_assignments npa
+    CROSS JOIN (
+      VALUES ('profile'), ('nutrition'), ('daily_checkins'),
+             ('metabolic'), ('body_metrics'), ('parq_anamnese'),
+             ('chat_history')
+    ) AS s(scope)
+    WHERE npa.status = 'active'
+    ON CONFLICT (user_id, professional_id, professional_role, scope) DO NOTHING
+  `);
 };
 
 exports.down = (pgm) => {

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
+import { requireActiveConsent } from '../middleware/requireActiveConsent';
 import {
   getPersonalConsulting,
   getPersonalDashboard,
@@ -102,6 +103,7 @@ router.get('/consulting/students', roleCheckMiddleware('personal'), async (req: 
 router.get(
   '/students/:studentId/snapshot',
   roleCheckMiddleware('personal'),
+  requireActiveConsent('profile'),
   async (req: Request, res: Response) => {
     try {
       const studentId = Number(req.params.studentId);
@@ -124,6 +126,7 @@ router.get(
 router.get(
   '/students/:studentId/activities',
   roleCheckMiddleware('personal'),
+  requireActiveConsent('activity_logs'),
   async (req: Request, res: Response) => {
     try {
       const studentId = Number(req.params.studentId);

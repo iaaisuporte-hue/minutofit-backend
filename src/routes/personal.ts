@@ -21,6 +21,7 @@ import {
   updatePersonalWorkoutPlanWithDays,
   listPersonalWorkoutPlans,
   listWorkoutPlansForStudent,
+  reactivateWorkoutPlan,
 } from '../services/personalWorkoutPlanService';
 import {
   approveWorkoutReview,
@@ -729,6 +730,31 @@ router.patch(
         return res.status(400).json({ success: false, error: error.message, details: error.details });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to update workout plan' });
+    }
+  }
+);
+
+/**
+ * Personal reativa uma ficha que o aluno havia abandonado.
+ * Volta a aparecer na listagem do aluno.
+ */
+router.post(
+  '/students/:studentId/workout-plans/:planId/reactivate',
+  roleCheckMiddleware('personal', 'admin'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      const planId = Number(req.params.planId);
+      if (!Number.isFinite(studentId) || !Number.isFinite(planId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student or plan id' });
+      }
+      const ok = await reactivateWorkoutPlan(req.user!.id, studentId, planId);
+      if (!ok) {
+        return res.status(404).json({ success: false, error: 'Plan not found, not yours, or not abandoned' });
+      }
+      res.json({ success: true, data: { reactivated: true } });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to reactivate plan' });
     }
   }
 );

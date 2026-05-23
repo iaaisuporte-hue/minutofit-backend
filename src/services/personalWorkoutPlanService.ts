@@ -331,6 +331,7 @@ function shapeRow(row: Record<string, any>): any {
     days,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    abandoned_at: row.abandoned_at ?? null,
   };
 }
 
@@ -348,6 +349,7 @@ const SELECT_WITH_DAYS = `
     p.payload_json,
     p.created_at,
     p.updated_at,
+    p.abandoned_at,
     COALESCE(
       json_agg(
         json_build_object(
@@ -649,9 +651,10 @@ export async function listPersonalWorkoutPlans(personalId: number, studentId: nu
 export async function listWorkoutPlansForStudent(studentId: number, limit = 20) {
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
 
+  // Aluno NÃO vê fichas abandonadas — só o personal vê (e pode reativar)
   const result = await pool.query(
     `${SELECT_WITH_DAYS}
-     WHERE p.student_id = $1
+     WHERE p.student_id = $1 AND p.abandoned_at IS NULL
      GROUP BY p.id
      ORDER BY p.updated_at DESC
      LIMIT $2`,
@@ -659,4 +662,37 @@ export async function listWorkoutPlansForStudent(studentId: number, limit = 20) 
   );
 
   return result.rows.map(shapeRow);
+}
+
+/**
+ * Aluno abandona uma ficha. A ficha não é apagada (apenas o personal pode
+ * apagar) — fica oculta na listagem do aluno até o personal reativar.
+ */
+export async function abandonWorkoutPlan(studentId: number, planId: number): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE personal_workout_plans
+     SET abandoned_at = NOW(), updated_at = NOW()
+     WHERE id = $1 AND student_id = $2 AND abandoned_at IS NULL
+     RETURNING id`,
+    [planId, studentId]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * Personal reativa uma ficha abandonada pelo aluno.
+ */
+export async function reactivateWorkoutPlan(
+  personalId: number,
+  studentId: number,
+  planId: number
+): Promise<boolean> {
+  const result = await pool.query(
+    `UPDATE personal_workout_plans
+     SET abandoned_at = NULL, updated_at = NOW()
+     WHERE id = $1 AND personal_id = $2 AND student_id = $3 AND abandoned_at IS NOT NULL
+     RETURNING id`,
+    [planId, personalId, studentId]
+  );
+  return (result.rowCount ?? 0) > 0;
 }

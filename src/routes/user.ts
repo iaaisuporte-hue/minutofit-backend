@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { getProfessionalContextForStudent } from '../services/professionalContextService';
+import { abandonWorkoutPlan } from '../services/personalWorkoutPlanService';
 import pool from '../config/database';
 
 const router = Router();
@@ -45,6 +46,28 @@ router.get('/workout-history', authMiddleware, async (req: Request, res: Respons
   } catch (err) {
     console.error('[user/workout-history]', err);
     res.status(500).json({ success: false, error: 'Failed to load workout history' });
+  }
+});
+
+/**
+ * Aluno abandona uma ficha — fica oculta na sua listagem mas continua
+ * existindo. Só o personal pode reativar ou excluir.
+ */
+router.post('/workout-plans/:planId/abandon', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const studentId = req.user!.id;
+    const planId = Number(req.params.planId);
+    if (!Number.isFinite(planId)) {
+      return res.status(400).json({ success: false, error: 'Invalid plan id' });
+    }
+    const ok = await abandonWorkoutPlan(studentId, planId);
+    if (!ok) {
+      return res.status(404).json({ success: false, error: 'Plan not found, not yours, or already abandoned' });
+    }
+    return res.json({ success: true, data: { abandoned: true } });
+  } catch (err: any) {
+    console.error('[user/workout-plans/abandon]', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to abandon plan' });
   }
 });
 

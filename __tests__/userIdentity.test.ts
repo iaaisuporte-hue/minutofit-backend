@@ -23,7 +23,8 @@ jest.mock('../src/utils/passwordPolicy', () => ({
 import pool from '../src/config/database';
 import { findUserByIdentity, findOrCreateUserFromContext } from '../src/services/userIdentityService';
 
-const mockPool = pool as jest.Mocked<typeof pool>;
+// `pg.Pool.query` tem overloads que confundem `jest.Mocked` (parâmetro vira `never`).
+const mockPool = pool as unknown as { query: jest.Mock };
 
 const mockUser = {
   id: 42,
@@ -37,7 +38,7 @@ const mockUser = {
 };
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  jest.resetAllMocks();
 });
 
 describe('findUserByIdentity', () => {
@@ -64,11 +65,10 @@ describe('findUserByIdentity', () => {
     expect(mockPool.query).toHaveBeenCalledTimes(2);
   });
 
-  test('falls through to phone when email and cpf not found', async () => {
-    mockPool.query
-      .mockResolvedValueOnce({ rows: [] })     // email miss
-      .mockResolvedValueOnce({ rows: [] })     // cpf miss
-      .mockResolvedValueOnce({ rows: [mockUser] }); // phone match (exactly 1)
+  test('matches by phone when only phone is provided', async () => {
+    // `findUserByIdentity` só executa a query do campo provido. Como passamos
+    // apenas `phone`, o serviço pula email/cpf — basta mockar 1 resposta.
+    mockPool.query.mockResolvedValueOnce({ rows: [mockUser] });
 
     const result = await findUserByIdentity({ phone: '11987654321' });
     expect(result).not.toBeNull();
@@ -122,10 +122,10 @@ describe('findOrCreateUserFromContext', () => {
 
   test('creates new user with isNew=true when no match found', async () => {
     const newUser = { ...mockUser, id: 99, email: 'new@example.com' };
+    // Input só tem email → findUserByIdentity faz 1 query (email). Depois INSERT.
     mockPool.query
-      .mockResolvedValueOnce({ rows: [] })     // email miss
-      .mockResolvedValueOnce({ rows: [] })     // cpf miss
-      .mockResolvedValueOnce({ rows: [newUser] }); // INSERT RETURNING
+      .mockResolvedValueOnce({ rows: [] })          // email miss
+      .mockResolvedValueOnce({ rows: [newUser] });  // INSERT RETURNING
 
     const result = await findOrCreateUserFromContext({
       email: 'new@example.com',
@@ -139,9 +139,8 @@ describe('findOrCreateUserFromContext', () => {
   });
 
   test('throws when password missing for new user', async () => {
-    mockPool.query
-      .mockResolvedValueOnce({ rows: [] }) // email miss
-      .mockResolvedValueOnce({ rows: [] }); // cpf miss
+    // Só email no input → 1 query no findUserByIdentity (miss).
+    mockPool.query.mockResolvedValueOnce({ rows: [] });
 
     await expect(
       findOrCreateUserFromContext({ email: 'new@example.com', name: 'Test' })

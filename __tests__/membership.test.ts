@@ -18,10 +18,11 @@ jest.mock('../src/lib/logger', () => ({
 import pool from '../src/config/database';
 import { grantMembership, cancelMembership, pauseMembership, getActiveMemberships } from '../src/services/membershipService';
 
-const mockPool = pool as jest.Mocked<typeof pool>;
+// `pg.Pool.query` tem overloads que confundem `jest.Mocked` (parâmetro vira `never`).
+const mockPool = pool as unknown as { query: jest.Mock };
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  jest.resetAllMocks();
 });
 
 describe('grantMembership', () => {
@@ -69,16 +70,28 @@ describe('cancelMembership', () => {
     expect(result).toBe(false);
   });
 
-  test('does not issue additional queries that could touch other products', async () => {
-    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+  test('only touches own product + App-bonus grace hook (no cascade to siblings)', async () => {
+    // Cancelar Academia/Personal/Nutri dispara `enterGraceForAppBonus` →
+    // 2 queries esperadas: (1) UPDATE para cancelar; (2) UPDATE no App como
+    // bônus para período de graça. NUNCA cancela o App nem outros produtos.
+    mockPool.query
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 })   // cancel academia
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // enterGraceForAppBonus
 
     await cancelMembership(5, 'academia');
 
-    // Only one UPDATE query; no cascading deletes or updates
-    expect(mockPool.query).toHaveBeenCalledTimes(1);
-    const sql = (mockPool.query as jest.Mock).mock.calls[0][0] as string;
-    expect(sql).toContain('UPDATE user_product_memberships');
-    expect(sql).toContain("status = 'cancelled'");
+    expect(mockPool.query).toHaveBeenCalledTimes(2);
+
+    const calls = (mockPool.query as jest.Mock).mock.calls;
+    const sql0 = calls[0][0] as string;
+    expect(sql0).toContain('UPDATE user_product_memberships');
+    expect(sql0).toContain("status             = 'cancelled'");
+
+    const sql1 = calls[1][0] as string;
+    expect(sql1).toContain('UPDATE user_product_memberships');
+    expect(sql1).toContain("source                = 'grace_period'");
+    // O hook só ESTENDE acesso ao App — NUNCA cancela o App nem outros produtos.
+    expect(sql1).not.toContain("status = 'cancelled'");
   });
 });
 

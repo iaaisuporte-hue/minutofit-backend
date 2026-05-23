@@ -27,7 +27,10 @@ import pool from '../src/config/database';
 import { findUserByIdentity, findOrCreateUserFromContext } from '../src/services/userIdentityService';
 import { grantMembership, cancelMembership } from '../src/services/membershipService';
 
-const mockPool = pool as jest.Mocked<typeof pool>;
+// `pg.Pool.query` tem overloads que confundem `jest.Mocked` (acaba inferindo
+// `never` no parâmetro do mock). Castamos para um shape simples que mantém
+// a API do jest sem perder type-safety útil no resto do arquivo.
+const mockPool = pool as unknown as { query: jest.Mock };
 
 const existingUser = {
   id: 10,
@@ -41,7 +44,7 @@ const existingUser = {
 };
 
 beforeEach(() => {
-  jest.clearAllMocks();
+  jest.resetAllMocks();
 });
 
 describe('Personal invite flow — email already exists (dedup)', () => {
@@ -67,10 +70,11 @@ describe('Personal invite flow — email already exists (dedup)', () => {
 describe('Personal invite flow — new user', () => {
   test('findOrCreate creates new user when no match', async () => {
     const newUser = { ...existingUser, id: 99, email: 'novo@example.com' };
+    // Input só com email → findUserByIdentity faz 1 query (email miss),
+    // depois INSERT RETURNING (1 query).
     mockPool.query
-      .mockResolvedValueOnce({ rows: [] })     // email miss
-      .mockResolvedValueOnce({ rows: [] })     // cpf miss (if valid)
-      .mockResolvedValueOnce({ rows: [newUser] }); // INSERT RETURNING
+      .mockResolvedValueOnce({ rows: [] })          // email miss
+      .mockResolvedValueOnce({ rows: [newUser] });  // INSERT RETURNING
 
     const result = await findOrCreateUserFromContext({
       email: newUser.email,

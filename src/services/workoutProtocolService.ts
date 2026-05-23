@@ -340,15 +340,56 @@ export async function updateWorkoutProtocol(
 }
 
 export async function deleteWorkoutProtocol(personalId: number, academyId: number | null, protocolId: number): Promise<boolean> {
-  const result = await pool.query(
-    `DELETE FROM workout_protocols
-     WHERE id = $1
-       AND owner_personal_id = $2
-       AND ($3::int IS NULL AND academy_id IS NULL OR academy_id = $3)
-       AND scope <> 'platform'`,
-    [protocolId, personalId, academyId]
-  );
-  return (result.rowCount ?? 0) > 0;
+  // Cascata explícita: ao remover o protocolo da biblioteca, removemos TAMBÉM
+  // as fichas (`personal_workout_plans`) vinculadas a ele. Sem isso, o aluno
+  // continua vendo a ficha como ativa mesmo depois do personal "excluir" o plano
+  // (a FK source_protocol_id é ON DELETE SET NULL — preserva o id mas não a ficha).
+  // user_workout_logs é independente (workout_id VARCHAR) — histórico de execução é preservado.
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // 1. Confirma posse do protocolo (e que não é platform)
+    const ownership = await client.query(
+      `SELECT 1 FROM workout_protocols
+       WHERE id = $1
+         AND owner_personal_id = $2
+         AND ($3::int IS NULL AND academy_id IS NULL OR academy_id = $3)
+         AND scope <> 'platform'
+       LIMIT 1`,
+      [protocolId, personalId, academyId]
+    );
+    if (!ownership.rows.length) {
+      await client.query('ROLLBACK');
+      return false;
+    }
+
+    // 2. Remove fichas atribuídas que apontam para esse protocolo
+    await client.query(
+      `DELETE FROM personal_workout_plans
+       WHERE source_protocol_id = $1
+         AND personal_id = $2`,
+      [protocolId, personalId]
+    );
+
+    // 3. Remove o protocolo
+    const result = await client.query(
+      `DELETE FROM workout_protocols
+       WHERE id = $1
+         AND owner_personal_id = $2
+         AND ($3::int IS NULL AND academy_id IS NULL OR academy_id = $3)
+         AND scope <> 'platform'`,
+      [protocolId, personalId, academyId]
+    );
+
+    await client.query('COMMIT');
+    return (result.rowCount ?? 0) > 0;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function setProtocolFavorite(personalId: number, protocolId: number, favorite: boolean): Promise<void> {

@@ -1142,4 +1142,107 @@ router.delete(
   }
 );
 
+// ──────────────────────────────────────────────────────────────────────────
+// Workout plans (admin troubleshoot)
+// Permite ao admin listar/excluir fichas (personal_workout_plans) — usado para
+// limpar fichas órfãs depois que o protocolo de origem foi removido da biblioteca
+// antes do fix de cascata atômica entrar em produção.
+// ──────────────────────────────────────────────────────────────────────────
+
+router.get(
+  '/users/:userId/workout-plans',
+  authMiddleware,
+  adminMiddleware,
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.params.userId);
+      if (!Number.isFinite(userId)) {
+        return res.status(400).json({ success: false, error: 'Invalid user id' });
+      }
+      const result = await pool.query(
+        `SELECT p.id, p.title, p.personal_id, p.student_id, p.source_protocol_id,
+                p.created_at, p.updated_at,
+                pu.email AS personal_email, pu.name AS personal_name,
+                su.email AS student_email, su.name AS student_name
+         FROM personal_workout_plans p
+         LEFT JOIN users pu ON pu.id = p.personal_id
+         LEFT JOIN users su ON su.id = p.student_id
+         WHERE p.student_id = $1 OR p.personal_id = $1
+         ORDER BY p.created_at DESC`,
+        [userId]
+      );
+      return res.json({
+        success: true,
+        data: result.rows.map((r) => ({
+          id: r.id,
+          title: r.title,
+          personalId: r.personal_id,
+          personalEmail: r.personal_email,
+          personalName: r.personal_name,
+          studentId: r.student_id,
+          studentEmail: r.student_email,
+          studentName: r.student_name,
+          sourceProtocolId: r.source_protocol_id,
+          isOrphan: r.source_protocol_id === null,
+          createdAt: r.created_at,
+          updatedAt: r.updated_at,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+router.delete(
+  '/workout-plans/:planId',
+  authMiddleware,
+  adminMiddleware,
+  async (req: Request, res: Response) => {
+    try {
+      const planId = Number(req.params.planId);
+      if (!Number.isFinite(planId)) {
+        return res.status(400).json({ success: false, error: 'Invalid plan id' });
+      }
+      const result = await pool.query(
+        `DELETE FROM personal_workout_plans WHERE id = $1 RETURNING id, title, student_id`,
+        [planId]
+      );
+      if (!result.rows[0]) {
+        return res.status(404).json({ success: false, error: 'Plan not found' });
+      }
+      return res.json({ success: true, data: { deleted: true, plan: result.rows[0] } });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+/** Bulk cleanup: deleta todas as fichas órfãs (source_protocol_id IS NULL)
+ *  criadas há mais de 1 hora (margem de segurança contra deletes recém-criados). */
+router.post(
+  '/workout-plans/cleanup-orphans',
+  authMiddleware,
+  adminMiddleware,
+  async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query(
+        `DELETE FROM personal_workout_plans
+         WHERE source_protocol_id IS NULL
+           AND created_at < NOW() - INTERVAL '1 hour'
+         RETURNING id, title, student_id, personal_id`
+      );
+      return res.json({
+        success: true,
+        data: {
+          deletedCount: result.rowCount,
+          plans: result.rows,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
 export default router;

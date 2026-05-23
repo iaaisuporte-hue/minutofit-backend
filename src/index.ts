@@ -54,7 +54,8 @@ import { relaxAcademyIdNullable } from './db/relaxAcademyIdNullable';
 import { ensurePersonalDirectInvitesSchema } from './db/ensurePersonalDirectInvitesSchema';
 import { ensureStudentExerciseNotesSchema } from './db/ensureStudentExerciseNotesSchema';
 import { ensureWorkoutProtocolsSchema } from './db/ensureWorkoutProtocolsSchema';
-import { ensureProtocolBackfill } from './db/ensureProtocolBackfill';
+// ensureProtocolBackfill mantido apenas como CLI (script:backfill-protocols).
+// Removido do boot para não ressuscitar fichas órfãs como protocolos.
 import { ensureExercisesSchema } from './db/ensureExercisesSchema';
 import { seedExercisesIfEmpty } from './db/seedExercisesIfEmpty';
 import { ensureProductsSchema } from './db/ensureProductsSchema';
@@ -107,7 +108,9 @@ async function runBootChain(): Promise<void> {
     ['ensurePersonalDirectInvitesSchema', ensurePersonalDirectInvitesSchema],
     ['ensureStudentExerciseNotesSchema', ensureStudentExerciseNotesSchema],
     ['ensureWorkoutProtocolsSchema', ensureWorkoutProtocolsSchema],
-    ['ensureProtocolBackfill', ensureProtocolBackfill],
+    // ensureProtocolBackfill removido do boot (mai/2026): recriava protocolos
+    // a partir de fichas órfãs no banco, conflitando com a intenção do personal
+    // de ter excluído o protocolo. CLI ainda disponível via `npm run script:backfill-protocols`.
     ['ensureExercisesSchema', ensureExercisesSchema],
     ['seedExercisesIfEmpty', seedExercisesIfEmpty],
     ['ensureProductsSchema', ensureProductsSchema],

@@ -1,0 +1,69 @@
+import pool from '../config/database';
+import logger from '../lib/logger';
+
+export type DataAccessEventType =
+  | 'request.created'
+  | 'request.accepted'
+  | 'request.rejected'
+  | 'request.cancelled'
+  | 'request.expired'
+  | 'consent.granted'
+  | 'consent.revoked'
+  | 'connection.revoked';
+
+export interface DataAccessAuditEntry {
+  actorId: number;
+  subjectUserId: number;
+  eventType: DataAccessEventType;
+  eventPayload?: Record<string, unknown>;
+  ip?: string;
+}
+
+export async function logDataAccessEvent(
+  entry: DataAccessAuditEntry,
+  client?: { query: (sql: string, params?: unknown[]) => Promise<unknown> }
+): Promise<void> {
+  const q = client ?? pool;
+  try {
+    await q.query(
+      `INSERT INTO data_access_audit (actor_id, subject_user_id, event_type, event_payload, ip)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        entry.actorId,
+        entry.subjectUserId,
+        entry.eventType,
+        JSON.stringify(entry.eventPayload ?? {}),
+        entry.ip ?? null,
+      ]
+    );
+  } catch (err) {
+    logger.error({ err, entry }, '[dataAccessAudit] failed to write audit entry');
+  }
+}
+
+export async function getAuditTrailForUser(
+  subjectUserId: number,
+  limit = 50
+): Promise<Array<{
+  id: string;
+  actorId: number;
+  eventType: string;
+  eventPayload: Record<string, unknown>;
+  createdAt: string;
+}>> {
+  const { rows } = await pool.query(
+    `SELECT id, actor_id, event_type, event_payload, created_at
+     FROM data_access_audit
+     WHERE subject_user_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [subjectUserId, limit]
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    actorId: r.actor_id,
+    eventType: r.event_type,
+    eventPayload: r.event_payload,
+    createdAt: r.created_at,
+  }));
+}

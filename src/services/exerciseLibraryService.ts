@@ -131,7 +131,7 @@ export async function searchExercises(opts: {
   limit?: number;
   offset?: number;
 } = {}): Promise<ExerciseSummary[]> {
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 1000);
   const offset = Math.max(opts.offset ?? 0, 0);
 
   const params: unknown[] = [];

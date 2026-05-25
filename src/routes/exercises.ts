@@ -28,7 +28,7 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
     const bodyPart = typeof req.query.bodyPart === 'string' ? req.query.bodyPart : undefined;
     const equipment = typeof req.query.equipment === 'string' ? req.query.equipment : undefined;
-    const limit = req.query.limit ? Math.min(Number(req.query.limit) || 50, 200) : 50;
+    const limit = req.query.limit ? Math.min(Number(req.query.limit) || 50, 1000) : 50;
     const offset = req.query.offset ? Math.max(Number(req.query.offset) || 0, 0) : 0;
 
     const tagsRaw = req.query.tags;

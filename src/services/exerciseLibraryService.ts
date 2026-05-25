@@ -138,8 +138,17 @@ export async function searchExercises(opts: {
   const conditions: string[] = [];
 
   if (opts.q?.trim()) {
-    params.push(`%${opts.q.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ')}%`);
-    conditions.push(`e.normalized_name ILIKE $${params.length}`);
+    const normalizedQuery = opts.q.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const rawQuery = opts.q.trim().toLowerCase();
+    params.push(`%${normalizedQuery}%`, `%${rawQuery}%`);
+    conditions.push(`(
+      e.normalized_name ILIKE $${params.length - 1}
+      OR EXISTS (
+        SELECT 1 FROM unnest(e.tags) AS tag
+        WHERE LOWER(tag) ILIKE $${params.length - 1}
+           OR LOWER(tag) ILIKE $${params.length}
+      )
+    )`);
   }
   if (opts.bodyPart?.trim()) {
     params.push(opts.bodyPart.trim().toLowerCase());

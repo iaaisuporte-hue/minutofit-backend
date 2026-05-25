@@ -11,6 +11,10 @@ import path from 'path';
 import fs from 'fs';
 import { Pool } from 'pg';
 import { EXERCISES_SEED, type ExerciseSeed } from '../seeds/exercisesLibrary.seed';
+import {
+  COMMON_GYM_EXERCISES_SEED,
+  COMMON_GYM_EXERCISE_ALIASES,
+} from '../seeds/commonGymExerciseCoverage.seed';
 import logger from '../lib/logger';
 
 const FREE_DB_BASE_URL =
@@ -62,6 +66,30 @@ function normalizeExerciseName(name: string): string {
     .replace(/[^a-z0-9\s]/g, '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function normalizeTag(tag: string): string {
+  return tag
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function withCommonGymAliases(seed: ExerciseSeed): ExerciseSeed {
+  const aliases = COMMON_GYM_EXERCISE_ALIASES[seed.name] ?? [];
+  if (!aliases.length) return seed;
+
+  const mergedTags = new Set<string>();
+  for (const tag of [...seed.tags, ...aliases]) {
+    if (tag.trim()) mergedTags.add(tag.toLowerCase());
+    const normalizedTag = normalizeTag(tag);
+    if (normalizedTag) mergedTags.add(normalizedTag);
+  }
+
+  return { ...seed, tags: [...mergedTags] };
 }
 
 async function upsertExercise(
@@ -144,12 +172,13 @@ export async function runExercisesSeed(pool: Pool): Promise<RunSeedResult> {
   logger.info('[seed:exercises] Iniciando seed da biblioteca MetaCore...');
 
   const freeDbMap = buildFreeDbImageMap();
+  const seeds = [...EXERCISES_SEED.map(withCommonGymAliases), ...COMMON_GYM_EXERCISES_SEED];
   let created = 0;
   let updated = 0;
   let mediaInserted = 0;
   let errors = 0;
 
-  for (const seed of EXERCISES_SEED) {
+  for (const seed of seeds) {
     try {
       const { id, created: wasCreated } = await upsertExercise(pool, seed);
       if (wasCreated) {
@@ -196,7 +225,7 @@ export async function runExercisesSeed(pool: Pool): Promise<RunSeedResult> {
     }
   }
 
-  const result: RunSeedResult = { total: EXERCISES_SEED.length, created, updated, mediaInserted, errors };
+  const result: RunSeedResult = { total: seeds.length, created, updated, mediaInserted, errors };
   logger.info(result, '[seed:exercises] Seed concluído');
   return result;
 }

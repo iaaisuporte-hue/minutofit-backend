@@ -1199,22 +1199,6 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'metacore',
-    name: 'Leg Press 45°',
-    freeDbId: 'Leg_Press',
-    bodyPart: 'perna',
-    targetMuscle: 'Quadríceps',
-    secondaryMuscles: ['Glúteo', 'Isquiotibiais'],
-    equipment: 'máquina',
-    tags: ['academia', 'perna', 'compostos'],
-    instructions: [
-      'Sente na máquina e posicione os pés na plataforma na largura dos ombros.',
-      'Retire os travas e abaixe a plataforma controladamente até ~90° nos joelhos.',
-      'Empurre de volta sem travar os joelhos.',
-    ],
-    tips: ['Pés altos = mais glúteo; pés baixos = mais quadríceps.'],
-  },
-  {
-    source: 'metacore',
     name: 'Cadeira Adutora',
     freeDbId: 'Adductor',
     bodyPart: 'perna',

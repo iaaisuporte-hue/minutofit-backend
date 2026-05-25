@@ -45,6 +45,7 @@ import { validateBrandingColor } from '../utils/contrastValidator';
 import { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } from '../utils/colorContrast';
 import { sanitizeBrandingText } from '../utils/htmlSanitize';
 import pool from '../config/database';
+import { getAcademyNetworkPolicy, upsertAcademyNetworkPolicy } from '../services/professionalNetworkService';
 
 const ALLOWED_LOGO_ORIGINS = ['s3.amazonaws.com', 'minutofit.com.br', 'cdn.minutofit.com.br'];
 
@@ -64,6 +65,45 @@ const router = Router();
 
 // Auth + produto Academia (claim no JWT) + tenant — alinhado ao ProductGate no frontend
 router.use(authMiddleware, requireProduct('academia'), tenantContextMiddleware);
+
+
+// ─── Rede de Profissionais ─────────────────────────────────────────────────
+
+router.get(
+  '/professional-network-policy',
+  requireTenantPermission('academy.professionals.read'),
+  async (req: Request, res: Response) => {
+    try {
+      const policy = await getAcademyNetworkPolicy(req.tenant!.academyId);
+      return res.json({ success: true, data: policy });
+    } catch {
+      return res.status(500).json({ success: false, error: 'internal_error' });
+    }
+  }
+);
+
+router.put(
+  '/professional-network-policy',
+  requireTenantPermission('academy.professionals.write'),
+  async (req: Request, res: Response) => {
+    const { mode } = req.body as { mode?: string };
+    if (!mode || !['allow', 'block'].includes(mode)) {
+      return res.status(400).json({ success: false, error: 'mode must be allow or block' });
+    }
+
+    try {
+      const policy = await upsertAcademyNetworkPolicy({
+        academyId: req.tenant!.academyId,
+        mode: mode as 'allow' | 'block',
+        actorId: req.user!.id,
+        ip: req.ip,
+      });
+      return res.json({ success: true, data: policy });
+    } catch {
+      return res.status(500).json({ success: false, error: 'internal_error' });
+    }
+  }
+);
 
 // ─── Team ─────────────────────────────────────────────────────────────────────
 

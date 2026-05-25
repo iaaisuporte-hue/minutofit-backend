@@ -9,7 +9,9 @@ export type DataAccessEventType =
   | 'request.expired'
   | 'consent.granted'
   | 'consent.revoked'
-  | 'connection.revoked';
+  | 'connection.revoked'
+  | 'academy_policy.changed'
+  | 'professional_network.reviewed';
 
 export interface DataAccessAuditEntry {
   actorId: number;

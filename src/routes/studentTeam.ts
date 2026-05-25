@@ -13,6 +13,10 @@ import {
   expireStaleRequests,
 } from '../services/connectionRequestService';
 import {
+  getAvailableProfessionalDetail,
+  listAvailableProfessionals,
+} from '../services/professionalNetworkService';
+import {
   revokeConsent,
   listConsentsForUser,
   type ProfessionalRole,
@@ -25,6 +29,44 @@ const router = Router();
 router.use(authMiddleware);
 
 // ── Student endpoints ─────────────────────────────────────────────────────
+
+
+/** Lista a Rede de Profissionais curada para o aluno */
+router.get('/professional-network', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  const { role, limit } = req.query as { role?: string; limit?: string };
+  const professionalRole = role && ['personal', 'nutri'].includes(role) ? role as ProfessionalRole : undefined;
+  const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+
+  try {
+    const result = await listAvailableProfessionals({
+      academyId,
+      professionalRole,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
+    return res.json({ success: true, data: result });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    if (e.status === 403) return res.status(403).json({ success: false, error: e.message });
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+/** Detalhe de um profissional da Rede antes da solicitação */
+router.get('/professional-network/:professionalId', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+  try {
+    const result = await getAvailableProfessionalDetail({
+      academyId,
+      professionalId: parseInt(req.params.professionalId, 10),
+    });
+    if (!result.professional) return res.status(404).json({ success: false, error: 'professional_not_available' });
+    return res.json({ success: true, data: result });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    if (e.status === 403) return res.status(403).json({ success: false, error: e.message });
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
 
 /** Busca profissional por email ou código para exibir preview antes de solicitar */
 router.get('/resolve-professional', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
@@ -45,11 +87,7 @@ router.get('/resolve-professional', roleCheckMiddleware('user'), async (req: Req
 router.post('/professional-requests', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
   const studentId = req.user!.id;
 
-  // Bloquear aluno de academia de contratar externo
   const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-  if (academyId) {
-    return res.status(403).json({ error: 'academy_blocks_external' });
-  }
 
   const {
     professionalId,
@@ -60,7 +98,7 @@ router.post('/professional-requests', roleCheckMiddleware('user'), async (req: R
   } = req.body as {
     professionalId: number;
     professionalRole: ProfessionalRole;
-    requestedVia: 'email' | 'code' | 'link';
+    requestedVia: 'email' | 'code' | 'link' | 'discovery';
     message?: string;
     scopes?: ConsentScope[];
   };
@@ -77,12 +115,13 @@ router.post('/professional-requests', roleCheckMiddleware('user'), async (req: R
       requestedVia,
       message,
       scopes,
+      academyId,
       ip: req.ip,
     });
     return res.status(201).json({ success: true, data: request });
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string };
-    if (e.status === 429) return res.status(429).json({ error: e.message });
+    if (e.status) return res.status(e.status).json({ error: e.message });
     return res.status(500).json({ error: 'internal_error' });
   }
 });

@@ -8,9 +8,10 @@ import {
   type ConsentScope,
   type ProfessionalRole,
 } from './consentService';
+import { assertProfessionalCanReceiveDiscoveryRequest } from './professionalNetworkService';
 
 export type RequestStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled' | 'expired';
-export type RequestedVia = 'email' | 'code' | 'link';
+export type RequestedVia = 'email' | 'code' | 'link' | 'discovery';
 
 export interface ProfessionalRequest {
   id: string;
@@ -37,6 +38,7 @@ export async function createConnectionRequest(opts: {
   requestedVia: RequestedVia;
   message?: string;
   scopes?: ConsentScope[];
+  academyId?: number | null;
   ip?: string;
 }): Promise<ProfessionalRequest> {
   const {
@@ -57,6 +59,36 @@ export async function createConnectionRequest(opts: {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    const assignmentTable =
+      professionalRole === 'personal' ? 'personal_student_assignments' : 'nutri_patient_assignments';
+    const studentCol = professionalRole === 'personal' ? 'student_id' : 'patient_id';
+
+    const { rows: roleRows } = await client.query(
+      `SELECT id FROM users WHERE id = $1 AND role = $2 LIMIT 1`,
+      [professionalId, professionalRole]
+    );
+    if (!roleRows[0]) {
+      throw Object.assign(new Error('professional_not_found'), { status: 404 });
+    }
+
+    if (requestedVia === 'discovery') {
+      await assertProfessionalCanReceiveDiscoveryRequest({
+        academyId: opts.academyId ?? null,
+        professionalId,
+        professionalRole,
+      });
+    }
+
+    const { rows: activeRows } = await client.query(
+      `SELECT id FROM ${assignmentTable}
+       WHERE ${studentCol} = $1 AND status = 'active'
+       LIMIT 1`,
+      [studentId]
+    );
+    if (activeRows[0]) {
+      throw Object.assign(new Error('conflict_active_link'), { status: 409 });
+    }
 
     // Rate limit: pendentes por aluno
     const { rows: pendingRows } = await client.query(
@@ -93,7 +125,7 @@ export async function createConnectionRequest(opts: {
         actorId: studentId,
         subjectUserId: studentId,
         eventType: 'request.created',
-        eventPayload: { requestId: req.id, professionalId, professionalRole },
+        eventPayload: { requestId: req.id, professionalId, professionalRole, requestedVia },
         ip,
       },
       client as never
@@ -139,6 +171,16 @@ export async function acceptConnectionRequest(opts: {
       req.professional_role === 'personal' ? 'personal_id' : 'nutri_id';
     const studentCol =
       req.professional_role === 'personal' ? 'student_id' : 'patient_id';
+
+    const { rows: activeRows } = await client.query(
+      `SELECT id FROM ${assignmentTable}
+       WHERE ${studentCol} = $1 AND status = 'active'
+       LIMIT 1`,
+      [req.student_id]
+    );
+    if (activeRows[0]) {
+      throw Object.assign(new Error('conflict_active_link'), { status: 409 });
+    }
 
     await client.query(
       `INSERT INTO ${assignmentTable} (${professionalCol}, ${studentCol}, status, initiated_by)

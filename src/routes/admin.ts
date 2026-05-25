@@ -20,8 +20,43 @@ import {
   updatePlatformProtocol,
 } from '../services/workoutProtocolService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
+import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
 
 const router = Router();
+
+
+// PATCH /admin/professionals/:professionalId/network-review - Valida perfil na Rede de Profissionais
+router.patch('/professionals/:professionalId/network-review', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  const { credentialStatus, publicationStatus, adminEnabled, reviewNotes } = req.body as {
+    credentialStatus?: CredentialStatus;
+    publicationStatus?: PublicationStatus;
+    adminEnabled?: boolean;
+    reviewNotes?: string;
+  };
+
+  if (!credentialStatus || !['pending_review', 'approved', 'rejected'].includes(credentialStatus)) {
+    return res.status(400).json({ success: false, error: 'credentialStatus inválido.' });
+  }
+  if (!publicationStatus || !['draft', 'pending_review', 'approved', 'disabled'].includes(publicationStatus)) {
+    return res.status(400).json({ success: false, error: 'publicationStatus inválido.' });
+  }
+
+  try {
+    const profile = await reviewNetworkProfile({
+      professionalId: parseInt(req.params.professionalId, 10),
+      reviewerId: req.user!.id,
+      credentialStatus,
+      publicationStatus,
+      adminEnabled: Boolean(adminEnabled),
+      reviewNotes,
+      ip: req.ip,
+    });
+    return res.json({ success: true, data: profile });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error' });
+  }
+});
 
 // GET /admin/dashboard/metrics - Get dashboard metrics
 router.get('/dashboard/metrics', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {

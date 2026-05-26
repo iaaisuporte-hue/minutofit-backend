@@ -483,7 +483,7 @@ router.get('/dashboard/platform-health', authMiddleware, adminMiddleware, async 
 // POST /admin/professionals - Create a professional user (personal or nutri)
 router.post('/professionals', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const { name, email, role, phone, cpf } = req.body;
+    const { name, email, role, phone, cpf, registry, specialty, bio } = req.body;
 
     if (!name || !email || !role) {
       return res.status(400).json({ success: false, error: 'name, email e role sao obrigatorios.' });
@@ -512,16 +512,40 @@ router.post('/professionals', authMiddleware, adminMiddleware, async (req: Reque
       return res.status(409).json({ success: false, error: 'E-mail já cadastrado na plataforma.' });
     }
 
-    // Promove o usuário recém-criado ao papel profissional desejado.
+    const userId = identity.user.id;
+
+    // Promove ao papel profissional, persiste campos opcionais e ativa
+    // troca de senha obrigatória no primeiro acesso.
     await pool.query(
-      `UPDATE users SET role = $2, profile_completed = TRUE, updated_at = NOW() WHERE id = $1`,
-      [identity.user.id, role]
+      `UPDATE users
+          SET role                = $2,
+              profile_completed   = TRUE,
+              must_change_password = TRUE,
+              registry_code       = NULLIF(TRIM($3), ''),
+              specialty           = NULLIF(TRIM($4), ''),
+              bio                 = NULLIF(TRIM($5), ''),
+              updated_at          = NOW()
+        WHERE id = $1`,
+      [
+        userId,
+        role,
+        registry  ? String(registry).trim()  : '',
+        specialty ? String(specialty).trim() : '',
+        bio       ? String(bio).trim()       : '',
+      ]
     );
+
+    // Concede o produto profissional correspondente via serviço centralizado.
+    const adminUserId = (req as any).user?.id ?? null;
+    await grantMembership(userId, role as 'personal' | 'nutri', {
+      source: 'metacore',
+      grantedByUserId: adminUserId,
+    });
 
     res.status(201).json({
       success: true,
       data: {
-        id: identity.user.id,
+        id: userId,
         name: identity.user.name,
         email: identity.user.email,
         role,

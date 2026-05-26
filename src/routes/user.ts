@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { getProfessionalContextForStudent } from '../services/professionalContextService';
 import { abandonWorkoutPlan } from '../services/personalWorkoutPlanService';
-import { getUserActivePlan, createAdherenceCheckin } from '../services/nutriService';
+import { getUserActivePlan, createAdherenceCheckin, listAdherenceHistory } from '../services/nutriService';
 import pool from '../config/database';
 
 const router = Router();
@@ -115,6 +115,16 @@ router.post('/nutrition-adherence-checkins', authMiddleware, async (req: Request
   } catch (err: any) {
     console.error('[user/nutrition-adherence-checkins]', err);
     return res.status(500).json({ success: false, error: 'Failed to record checkin' });
+  }
+});
+
+router.get('/nutrition-adherence-checkins', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const days = Math.min(Number(req.query.days) || 30, 90);
+    const rows = await listAdherenceHistory(req.user!.id, days);
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: 'Failed to load adherence history' });
   }
 });
 

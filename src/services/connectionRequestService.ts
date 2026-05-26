@@ -292,6 +292,16 @@ export async function revokeConnection(opts: {
     );
     if (!rows[0]) throw Object.assign(new Error('no_active_connection'), { status: 404 });
 
+    // Encerra plano nutricional ativo ao revogar vínculo nutri-paciente.
+    if (professionalRole === 'nutri') {
+      await client.query(
+        `UPDATE nutrition_plans
+            SET status = 'ended', ended_at = NOW(), updated_at = NOW()
+          WHERE nutri_id = $1 AND patient_id = $2 AND status = 'active'`,
+        [professionalId, studentId]
+      );
+    }
+
     await revokeAllConsents(studentId, professionalId, professionalRole, studentId, client as never, ip);
 
     await logDataAccessEvent(

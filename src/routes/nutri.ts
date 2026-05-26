@@ -10,6 +10,7 @@ import {
   getActivePlan,
   getPlanHistory,
   endPlan,
+  updatePlan,
   getAdherenceForPeriod,
   createObservation,
   getObservations,
@@ -214,6 +215,46 @@ router.get(
       res.json({ success: true, data: { active, history } });
     } catch (err: any) {
       logger.error({ err }, '[nutri] get plans error');
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+router.patch(
+  '/patients/:patientId/nutrition-plans/:planId',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const planId  = Number(req.params.planId);
+
+      if (!Number.isFinite(planId)) {
+        return res.status(400).json({ success: false, error: 'Invalid planId' });
+      }
+
+      const { title, objective, general_notes, meals } = req.body;
+
+      const validObjectives = ['weight_loss', 'muscle_gain', 'metabolic_health', 'performance', 'maintenance'];
+      if (objective && !validObjectives.includes(objective)) {
+        return res.status(400).json({ success: false, error: 'Invalid objective' });
+      }
+
+      if (meals !== undefined) {
+        if (!Array.isArray(meals) || meals.length === 0 || meals.length > 6) {
+          return res.status(400).json({ success: false, error: 'meals must be an array of 1–6 items' });
+        }
+        if (meals.some((m: any) => !m.name?.trim() || !m.orientation?.trim())) {
+          return res.status(400).json({ success: false, error: 'Each meal requires name and orientation' });
+        }
+      }
+
+      const plan = await updatePlan(nutriId, planId, { title, objective, general_notes, meals });
+      if (!plan) {
+        return res.status(404).json({ success: false, error: 'Active plan not found or not owned by this nutritionist' });
+      }
+      res.json({ success: true, data: plan });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] update plan error');
       res.status(500).json({ success: false, error: err.message });
     }
   }

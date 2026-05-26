@@ -133,6 +133,78 @@ export async function endPlan(nutriId: number, planId: number) {
   return result.rows[0] ?? null;
 }
 
+export async function updatePlan(
+  nutriId: number,
+  planId: number,
+  payload: {
+    title?: string;
+    objective?: string;
+    general_notes?: string;
+    meals?: Array<{ name: string; orientation: string; order_index: number }>;
+  }
+) {
+  const { title, objective, general_notes, meals } = payload;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const updated = await client.query(
+      `UPDATE nutrition_plans
+          SET title         = COALESCE(NULLIF(TRIM($3), ''), title),
+              objective     = COALESCE($4, objective),
+              general_notes = COALESCE($5, general_notes),
+              updated_at    = NOW()
+        WHERE id = $1 AND nutri_id = $2 AND status = 'active'
+        RETURNING *`,
+      [planId, nutriId, title ?? null, objective ?? null, general_notes ?? null]
+    );
+
+    if (!updated.rows[0]) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    if (meals !== undefined) {
+      await client.query(`DELETE FROM nutrition_plan_meals WHERE plan_id = $1`, [planId]);
+      for (const meal of meals) {
+        await client.query(
+          `INSERT INTO nutrition_plan_meals (plan_id, name, orientation, order_index, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, NOW(), NOW())`,
+          [planId, meal.name.trim(), meal.orientation.trim(), meal.order_index]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
+    const mealsResult = await pool.query(
+      `SELECT id, name, orientation, order_index FROM nutrition_plan_meals WHERE plan_id = $1 ORDER BY order_index, id`,
+      [planId]
+    );
+    return { ...updated.rows[0], meals: mealsResult.rows };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function listAdherenceHistory(patientId: number, days = 30) {
+  const result = await pool.query(
+    `SELECT nac.check_date, nac.adherence, nac.note, nac.created_at,
+            np.title AS plan_title
+       FROM nutrition_adherence_checkins nac
+       JOIN nutrition_plans np ON np.id = nac.plan_id
+      WHERE nac.patient_id = $1
+        AND nac.check_date >= CURRENT_DATE - ($2 - 1)
+      ORDER BY nac.check_date DESC`,
+    [patientId, days]
+  );
+  return result.rows;
+}
+
 // ---------------------------------------------------------------------------
 // Adherence check-ins (aluno)
 // ---------------------------------------------------------------------------

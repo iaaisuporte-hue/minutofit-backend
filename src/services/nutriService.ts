@@ -316,10 +316,10 @@ export async function getPatientContext(nutriId: number, patientId: number) {
 
   if (hasDailyConsent) {
     const checkins = await pool.query(
-      `SELECT check_date, adherence_score, energy_level, sleep_quality, notes
+      `SELECT date_key AS check_date, feeling, slept_well, in_pain, stressed, notes
        FROM user_daily_checkins
-       WHERE user_id = $1 AND check_date >= CURRENT_DATE - 6
-       ORDER BY check_date DESC`,
+       WHERE user_id = $1 AND date_key >= CURRENT_DATE - 6
+       ORDER BY date_key DESC`,
       [patientId]
     );
     context.dailyCheckins = checkins.rows;

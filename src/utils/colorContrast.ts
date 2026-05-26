@@ -2,7 +2,8 @@
  * WCAG 2.1 colour utilities.
  * Re-exports from contrastValidator and adds auto-calculation helpers.
  */
-export { contrastRatio, validateBrandingColor } from './contrastValidator';
+import { contrastRatio, validateBrandingColor } from './contrastValidator';
+export { contrastRatio, validateBrandingColor };
 
 function hexToRgb(hex: string): [number, number, number] | null {
   const clean = hex.replace('#', '');
@@ -44,7 +45,6 @@ export function calcPrimarySoft(primary: string): string {
 
 /** Choose #FFFFFF or #000000 to maximise contrast vs `primary`. */
 export function calcCtaTextColor(primary: string): string {
-  const { contrastRatio } = require('./contrastValidator') as typeof import('./contrastValidator');
   const vsWhite = contrastRatio(primary, '#FFFFFF');
   return vsWhite >= 4.5 ? '#FFFFFF' : '#000000';
 }

@@ -5,7 +5,7 @@ import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '.
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { getUserProducts } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
-import { findOrCreateUserFromContext } from './userIdentityService';
+import { findOrCreateUserFromContext, findOrCreateUserForPublicSignup } from './userIdentityService';
 import {
   PARQ_FORM_VERSION,
   assertParqSignature,
@@ -199,19 +199,18 @@ export async function registerUser(
     validateHealthFlags(data.healthFlags);
   }
 
-  // Signup público usa email como única chave de dedup. CPF/phone ficam apenas
-  // como atributos do usuário — sem merge silencioso. Preparado para reorientar
-  // o `matchBy` para `['cpf', 'email']` numa fase futura quando o CPF virar
-  // chave principal de identidade.
+  // Signup público usa email como única chave de dedup via helper dedicado
+  // (`findOrCreateUserForPublicSignup`). CPF/phone ficam apenas como atributos
+  // do usuário — sem merge silencioso por identidade alheia. O helper força
+  // `matchBy: ['email']` mesmo se um caller futuro esquecer de configurar.
   let identity;
   try {
-    identity = await findOrCreateUserFromContext({
+    identity = await findOrCreateUserForPublicSignup({
       email,
       name,
       cpf,
       phone,
       password: data.password,
-      matchBy: ['email'],
     });
   } catch (error: any) {
     if (error?.code === '23505') {

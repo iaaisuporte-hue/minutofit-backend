@@ -162,6 +162,36 @@ export async function findOrCreateUserFromContext(input: {
 }
 
 /**
+ * Helper dedicado para signup público (`POST /auth/register`). Força
+ * `matchBy: ['email']` — bloqueia merge silencioso de identidade por CPF/phone
+ * de terceiros mesmo se um caller futuro esquecer de configurar.
+ *
+ * Use SEMPRE em handlers acessíveis sem autenticação prévia (formulário de
+ * registro público). Para fluxos confirmados por profissional (academia,
+ * personal, nutri, convites) continue usando `findOrCreateUserFromContext`
+ * com a estratégia padrão.
+ */
+export async function findOrCreateUserForPublicSignup(input: {
+  email: string;
+  name: string;
+  cpf?: string | null;
+  phone?: string | null;
+  password: string;
+}): Promise<FindOrCreateResult> {
+  if (!input.password) {
+    throw new Error('Senha obrigatória no signup público.');
+  }
+  return findOrCreateUserFromContext({
+    email: input.email,
+    name: input.name,
+    cpf: input.cpf ?? null,
+    phone: input.phone ?? null,
+    password: input.password,
+    matchBy: ['email'],
+  });
+}
+
+/**
  * Verifies a user's password. Used when an existing user accepts an invite
  * and needs to prove ownership of their account.
  *

@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
+import { requireActiveConsent } from '../middleware/requireActiveConsent';
 import pool from '../config/database';
 import logger from '../lib/logger';
 
@@ -11,6 +12,16 @@ const INVITE_EXPIRY_DAYS = 14;
 
 // All nutri routes require authentication + nutri product gate
 router.use(authMiddleware, requireProduct('nutri'));
+
+// Defesa em profundidade: qualquer rota futura sob /patients/:patientId
+// (detalhes, plano alimentar, evolução, métricas) exige consentimento ativo
+// do paciente para `profile`. Handlers individuais devem adicionar escopos
+// mais específicos (nutrition, body_metrics, etc.) conforme cada endpoint.
+router.use(
+  '/patients/:patientId',
+  roleCheckMiddleware('nutri'),
+  requireActiveConsent('profile'),
+);
 
 // ===========================================================================
 // Direct Invites — nutri autônoma convida paciente direto

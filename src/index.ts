@@ -243,10 +243,12 @@ app.use(
   pinoHttp({
     logger,
     // Attach a correlation ID to every request for tracing
-    genReqId: (req) => {
+    genReqId: (req, res) => {
       const existing = req.headers['x-request-id'];
-      if (typeof existing === 'string' && existing) return existing;
-      return randomUUID();
+      const id = typeof existing === 'string' && existing ? existing : randomUUID();
+      // Eco no response header — clients/proxies podem correlacionar
+      res.setHeader('x-request-id', id);
+      return id;
     },
     customSuccessMessage: (req, res) => `${req.method} ${req.url} ${res.statusCode}`,
     customErrorMessage: (req, res, err) => `${req.method} ${req.url} ${res.statusCode} — ${err.message}`,
@@ -291,7 +293,7 @@ app.use('/api/professional', professionalNetworkRoutes);
 // Retorna 503 quando degradado (load balancer remove instância do pool)
 // ---------------------------------------------------------------------------
 app.get('/api/health', async (_req, res) => {
-  const checks: Record<string, 'ok' | 'fail'> = {};
+  const checks: Record<string, 'ok' | 'fail' | 'unset'> = {};
   let healthy = true;
 
   // DB connectivity
@@ -310,10 +312,40 @@ app.get('/api/health', async (_req, res) => {
     healthy = false;
   }
 
+  // Redis (optional — degraded gracefully when absent)
+  const redis = getRedisClient();
+  if (!process.env.REDIS_URL) {
+    checks.redis = 'unset';
+  } else if (!redis) {
+    checks.redis = 'fail';
+  } else {
+    try {
+      await redis.ping();
+      checks.redis = 'ok';
+    } catch {
+      checks.redis = 'fail';
+    }
+  }
+
+  // Last migration applied
+  let lastMigration: string | null = null;
+  try {
+    const migResult = await pool.query(
+      `SELECT name FROM pgmigrations ORDER BY run_on DESC LIMIT 1`
+    );
+    lastMigration = migResult.rows[0]?.name ?? null;
+  } catch {
+    // pgmigrations may not exist in test environments — non-fatal
+  }
+
   const status = healthy ? 200 : 503;
   res.status(status).json({
     success: healthy,
     checks,
+    meta: {
+      sha: process.env.BUILD_SHA ?? process.env.GIT_SHA ?? 'unknown',
+      migration: lastMigration,
+    },
     timestamp: new Date().toISOString(),
   });
 });
@@ -325,9 +357,10 @@ app.use((req, res) => {
 
 // --- Global error handler ---
 app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  Sentry.captureException(err);
-  logger.error({ err }, 'Unhandled error');
-  res.status(500).json({ success: false, error: 'Internal server error' });
+  const reqId = (req as express.Request & { id?: string }).id;
+  Sentry.captureException(err, reqId ? { tags: { request_id: reqId } } : undefined);
+  logger.error({ err, reqId }, 'Unhandled error');
+  res.status(500).json({ success: false, error: 'Internal server error', requestId: reqId });
 });
 
 // ---------------------------------------------------------------------------

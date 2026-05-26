@@ -81,6 +81,16 @@ const router = Router();
 // is a valid case; individual routes resolve academyId internally with ?? null.
 router.use(authMiddleware, requireProduct('personal'));
 
+// Defesa em profundidade: qualquer rota sob /students/:studentId requer
+// consentimento ativo de `profile` do aluno. Handlers individuais ainda podem
+// (e devem) adicionar escopos mais específicos (activity_logs, workouts, etc.).
+// Admin bypassa via early-return no próprio middleware.
+router.use(
+  '/students/:studentId',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('profile'),
+);
+
 router.get('/dashboard', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;

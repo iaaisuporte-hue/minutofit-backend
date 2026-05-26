@@ -7,8 +7,13 @@ import { hasActiveConsent, type ConsentScope, type ProfessionalRole } from '../s
  *
  * Uso: router.get('/aluno/:studentId/dados', requireActiveConsent('workouts'), handler)
  *
- * O middleware busca o `studentId` em req.params.studentId ou req.params.id.
+ * O middleware busca o id do titular em req.params.studentId, patientId ou id.
  * Requer que o profissional esteja em req.user (authMiddleware já aplicado).
+ *
+ * Recomenda-se também aplicar este middleware no nível de prefixo de rota
+ * (`router.use('/students/:studentId', requireActiveConsent('profile'))`) para
+ * garantir defesa em profundidade — handlers individuais podem adicionar
+ * escopos mais específicos (workouts, body_metrics, nutrition, ...).
  */
 export function requireActiveConsent(scope: ConsentScope) {
   return async (req: Request, res: Response, next: NextFunction) => {
@@ -22,8 +27,8 @@ export function requireActiveConsent(scope: ConsentScope) {
 
     if (!role) return next(); // admin ou outro role: não restrito por consent
 
-    const rawStudentId = req.params.studentId ?? req.params.id;
-    if (!rawStudentId) return next(); // rota não tem parâmetro de aluno: ignorar
+    const rawStudentId = req.params.studentId ?? req.params.patientId ?? req.params.id;
+    if (!rawStudentId) return next(); // rota não tem parâmetro de aluno/paciente: ignorar
 
     const studentId = parseInt(rawStudentId, 10);
     if (isNaN(studentId)) return res.status(400).json({ error: 'invalid_student_id' });

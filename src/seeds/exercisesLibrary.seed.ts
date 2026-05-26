@@ -2259,7 +2259,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   {
     source: 'metacore',
     name: 'Levantamento Terra',
-    freeDbId: 'Romanian_Deadlift',
+    freeDbId: 'Barbell_Deadlift',
     bodyPart: 'costas',
     targetMuscle: 'Eretor da espinha',
     secondaryMuscles: ['Glúteo', 'Isquiotibiais', 'Trapézio'],

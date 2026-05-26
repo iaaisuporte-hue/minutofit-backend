@@ -145,6 +145,18 @@ async function upsertExerciseMedia(
   isPrimary: boolean,
   source: string = 'metacore'
 ): Promise<void> {
+  if (isPrimary) {
+    await pool.query(
+      `UPDATE exercise_media
+       SET is_primary = false,
+           updated_at = NOW()
+       WHERE exercise_id = $1
+         AND url <> $2
+         AND is_primary = true`,
+      [exerciseId, url]
+    );
+  }
+
   await pool.query(
     `INSERT INTO exercise_media (exercise_id, media_type, url, source, is_primary)
      VALUES ($1, $2, $3, $4, $5)

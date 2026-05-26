@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { getProfessionalContextForStudent } from '../services/professionalContextService';
 import { abandonWorkoutPlan } from '../services/personalWorkoutPlanService';
+import { getUserActivePlan, createAdherenceCheckin } from '../services/nutriService';
 import pool from '../config/database';
 
 const router = Router();
@@ -68,6 +69,52 @@ router.post('/workout-plans/:planId/abandon', authMiddleware, async (req: Reques
   } catch (err: any) {
     console.error('[user/workout-plans/abandon]', err);
     return res.status(500).json({ success: false, error: err.message || 'Failed to abandon plan' });
+  }
+});
+
+// ===========================================================================
+// Nutrition — /user/nutrition-plan + /user/nutrition-adherence-checkins
+// ===========================================================================
+
+router.get('/nutrition-plan', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const plan = await getUserActivePlan(req.user!.id);
+    res.json({ success: true, data: plan });
+  } catch (err: any) {
+    console.error('[user/nutrition-plan]', err);
+    res.status(500).json({ success: false, error: 'Failed to load nutrition plan' });
+  }
+});
+
+router.post('/nutrition-adherence-checkins', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { adherence, note } = req.body;
+
+    const validAdherence = ['full', 'partial', 'skipped'];
+    if (!validAdherence.includes(adherence)) {
+      return res.status(400).json({ success: false, error: 'adherence must be full, partial, or skipped' });
+    }
+
+    const plan = await getUserActivePlan(userId);
+    if (!plan) {
+      return res.status(404).json({ success: false, error: 'No active nutrition plan' });
+    }
+
+    const result = await createAdherenceCheckin(
+      userId,
+      plan.id,
+      adherence,
+      typeof note === 'string' ? note : null
+    );
+
+    if (result.error) {
+      return res.status(result.status ?? 400).json({ success: false, error: result.error });
+    }
+    return res.status(201).json({ success: true, data: result.data });
+  } catch (err: any) {
+    console.error('[user/nutrition-adherence-checkins]', err);
+    return res.status(500).json({ success: false, error: 'Failed to record checkin' });
   }
 });
 

@@ -262,6 +262,7 @@ export async function updateWorkoutProtocol(
     weekPreset: string;
     selectedGroup: string | null;
     items: unknown[];
+    days: Array<{ name?: string; focus?: string | null; items?: unknown[] }>;
   }>
 ) {
   const existing = await pool.query(
@@ -315,21 +316,33 @@ export async function updateWorkoutProtocol(
         ? String(row.selected_group)
         : null;
 
+  // `days` é fonte de verdade no formato moderno (multi-dia). Quando vier,
+  // normalizamos e derivamos `items` do primeiro dia com exercícios para
+  // manter `payload_json` legado consistente. Se só vier `items`, mantemos
+  // os days existentes (caso protocol legado single-day).
+  let days: WorkoutPlanDay[];
   let items: WorkoutPlanItemPayload[];
-  if (input.items !== undefined) {
+  if (input.days !== undefined && Array.isArray(input.days) && input.days.length > 0) {
+    days = normalizeProtocolDays(input.days, selectedGroup);
+    items = days.find((d) => d.items.length > 0)?.items ?? [];
+    if (!items.length) throw new Error('At least one valid exercise item is required');
+  } else if (input.items !== undefined) {
     items = validateWorkoutItems(Array.isArray(input.items) ? input.items : []);
     if (!items.length) throw new Error('At least one valid exercise item is required');
+    days = [{ index: 1, name: 'Único', focus: selectedGroup, items }];
   } else {
-    items = mapProtocolRow(row as Record<string, unknown>).items;
+    const existingMapped = mapProtocolRow(row as Record<string, unknown>);
+    items = existingMapped.items;
+    days = existingMapped.days;
   }
 
   const result = await pool.query(
     `UPDATE workout_protocols
      SET title = $1, description = $2, tags = $3::jsonb, week_preset = $4, selected_group = $5,
-         payload_json = $6::jsonb, updated_at = NOW()
-     WHERE id = $7 AND owner_personal_id = $8 AND academy_id = $9 AND scope <> 'platform'
+         payload_json = $6::jsonb, days_json = $7::jsonb, updated_at = NOW()
+     WHERE id = $8 AND owner_personal_id = $9 AND academy_id = $10 AND scope <> 'platform'
      RETURNING *`,
-    [title, description, JSON.stringify(tags), weekPreset, selectedGroup, JSON.stringify(items), protocolId, personalId, academyId]
+    [title, description, JSON.stringify(tags), weekPreset, selectedGroup, JSON.stringify(items), JSON.stringify(days), protocolId, personalId, academyId]
   );
   if (!result.rows.length) {
     const err = new Error('Protocol not found');

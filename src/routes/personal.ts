@@ -549,6 +549,7 @@ router.patch('/protocols/:protocolId', roleCheckMiddleware('personal'), async (r
             ? null
             : String(body.selectedGroup),
       items: Array.isArray(body.items) ? body.items : undefined,
+      days: Array.isArray(body.days) ? body.days : undefined,
     });
     res.json({ success: true, data: row });
   } catch (error: any) {

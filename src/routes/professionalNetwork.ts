@@ -4,6 +4,7 @@ import { requireProduct } from '../middleware/productGate';
 import {
   getOwnNetworkProfile,
   submitOwnNetworkProfileForReview,
+  unpublishOwnNetworkProfile,
   upsertOwnNetworkProfile,
   type AvailabilityStatus,
 } from '../services/professionalNetworkService';
@@ -68,6 +69,27 @@ router.put('/network-profile', async (req: Request, res: Response) => {
   }
 });
 
+router.post('/network-profile/publish', async (req: Request, res: Response) => {
+  try {
+    const profile = await submitOwnNetworkProfileForReview(req.user!.id);
+    return res.json({ success: true, data: profile });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string; details?: unknown };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error', details: e.details });
+  }
+});
+
+router.post('/network-profile/unpublish', async (req: Request, res: Response) => {
+  try {
+    const profile = await unpublishOwnNetworkProfile(req.user!.id);
+    return res.json({ success: true, data: profile });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string; details?: unknown };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error', details: e.details });
+  }
+});
+
+// Keep old route alias for compatibility
 router.post('/network-profile/submit-review', async (req: Request, res: Response) => {
   try {
     const profile = await submitOwnNetworkProfileForReview(req.user!.id);

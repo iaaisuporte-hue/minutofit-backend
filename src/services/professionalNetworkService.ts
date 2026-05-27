@@ -319,13 +319,26 @@ export async function submitOwnNetworkProfileForReview(professionalId: number): 
     throw Object.assign(new Error('incomplete_profile'), { status: 400, details: missing });
   }
 
+  // MVP: auto-aprovação sem gate de admin. Preserva o data model para curadoria futura.
   const { rows } = await pool.query(
     `UPDATE professional_network_profiles
-     SET publication_status = 'pending_review', updated_at = NOW()
+     SET publication_status = 'approved', credential_status = 'approved', admin_enabled = TRUE, updated_at = NOW()
      WHERE professional_id = $1
      RETURNING *`,
     [professionalId]
   );
+  return mapProfile(rows[0]);
+}
+
+export async function unpublishOwnNetworkProfile(professionalId: number): Promise<ProfessionalNetworkProfile> {
+  const { rows } = await pool.query(
+    `UPDATE professional_network_profiles
+     SET publication_status = 'draft', admin_enabled = FALSE, updated_at = NOW()
+     WHERE professional_id = $1
+     RETURNING *`,
+    [professionalId]
+  );
+  if (!rows[0]) throw Object.assign(new Error('profile_not_found'), { status: 404 });
   return mapProfile(rows[0]);
 }
 

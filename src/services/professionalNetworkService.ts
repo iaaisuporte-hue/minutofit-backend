@@ -168,12 +168,8 @@ export async function listAvailableProfessionals(opts: {
   professionalRole?: ProfessionalRole;
   limit?: number;
 }): Promise<{ policy: NetworkPolicyMode; professionals: NetworkProfessionalCard[] }> {
-  const policy = await getAcademyNetworkPolicy(opts.academyId ?? null);
-  if (policy.mode === 'block') {
-    const err = Object.assign(new Error('academy_blocks_professional_network'), { status: 403 });
-    throw err;
-  }
-
+  // Tese MaaS: produtos são modulares. Aluno pode contratar profissionais independente
+  // da academia. A policy é mantida na tabela para telemetria/uso futuro, mas não bloqueia.
   const limit = Math.min(Math.max(opts.limit ?? 12, 1), 24);
   const params: unknown[] = [];
   let roleFilter = '';
@@ -200,19 +196,14 @@ export async function listAvailableProfessionals(opts: {
     params
   );
 
-  return { policy: policy.mode, professionals: rows.map(mapCard) };
+  return { policy: 'allow', professionals: rows.map(mapCard) };
 }
 
 export async function getAvailableProfessionalDetail(opts: {
   academyId?: number | null;
   professionalId: number;
 }): Promise<{ policy: NetworkPolicyMode; professional: NetworkProfessionalCard | null }> {
-  const policy = await getAcademyNetworkPolicy(opts.academyId ?? null);
-  if (policy.mode === 'block') {
-    const err = Object.assign(new Error('academy_blocks_professional_network'), { status: 403 });
-    throw err;
-  }
-
+  // Acesso à rede de profissionais é independente da policy da academia (tese MaaS modular).
   const { rows } = await pool.query(
     `SELECT p.*
      FROM professional_network_profiles p
@@ -226,7 +217,7 @@ export async function getAvailableProfessionalDetail(opts: {
     [opts.professionalId]
   );
 
-  return { policy: policy.mode, professional: rows[0] ? mapCard(rows[0]) : null };
+  return { policy: 'allow', professional: rows[0] ? mapCard(rows[0]) : null };
 }
 
 export async function assertProfessionalCanReceiveDiscoveryRequest(opts: {

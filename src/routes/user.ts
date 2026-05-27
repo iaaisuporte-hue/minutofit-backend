@@ -2,7 +2,14 @@ import { Router, type Request, type Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { getProfessionalContextForStudent } from '../services/professionalContextService';
 import { abandonWorkoutPlan } from '../services/personalWorkoutPlanService';
-import { getUserActivePlan, createAdherenceCheckin, listAdherenceHistory } from '../services/nutriService';
+import {
+  getUserActivePlan,
+  createAdherenceCheckin,
+  listAdherenceHistory,
+  getMealTimeline,
+  createMealCheckin,
+  type MealCheckinStatus,
+} from '../services/nutriService';
 import pool from '../config/database';
 
 const router = Router();
@@ -125,6 +132,58 @@ router.get('/nutrition-adherence-checkins', authMiddleware, async (req: Request,
     res.json({ success: true, data: rows });
   } catch (err: any) {
     res.status(500).json({ success: false, error: 'Failed to load adherence history' });
+  }
+});
+
+// ===========================================================================
+// Meal timeline — Onda A
+// ===========================================================================
+
+router.get('/meals/today', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const timeline = await getMealTimeline(req.user!.id);
+    res.json({ success: true, data: timeline });
+  } catch (err: any) {
+    console.error('[user/meals/today]', err);
+    res.status(500).json({ success: false, error: 'Failed to load meal timeline' });
+  }
+});
+
+router.post('/meals/:mealId/checkins', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const mealId = Number(req.params.mealId);
+    if (!Number.isFinite(mealId)) {
+      return res.status(400).json({ success: false, error: 'Invalid mealId' });
+    }
+
+    const validStatuses: MealCheckinStatus[] = ['done', 'partial', 'skipped', 'substituted', 'delayed'];
+    const { status, satiety, hunger, energy, note } = req.body;
+
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, error: `status must be one of: ${validStatuses.join(', ')}` });
+    }
+
+    const safeInt = (v: unknown) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
+    };
+
+    const result = await createMealCheckin(userId, mealId, {
+      status,
+      satiety: safeInt(satiety),
+      hunger: safeInt(hunger),
+      energy: safeInt(energy),
+      note: typeof note === 'string' ? note : null,
+    });
+
+    if (result.error) {
+      return res.status(result.status ?? 400).json({ success: false, error: result.error });
+    }
+    return res.status(result.updated ? 200 : 201).json({ success: true, data: result.data });
+  } catch (err: any) {
+    console.error('[user/meals/:mealId/checkins]', err);
+    return res.status(500).json({ success: false, error: 'Failed to record meal checkin' });
   }
 });
 

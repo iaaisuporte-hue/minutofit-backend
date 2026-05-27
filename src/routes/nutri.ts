@@ -16,6 +16,7 @@ import {
   getObservations,
   getPatientContext,
   getPatientsWithSummary,
+  getMealHeatmap,
 } from '../services/nutriService';
 
 const router = Router();
@@ -179,9 +180,17 @@ router.post(
       if (meals.length > 6) {
         return res.status(400).json({ success: false, error: 'Maximum 6 meals per plan' });
       }
+      const validGoals = ['energy', 'recovery', 'satiety', 'sleep_light'];
+      const validRelations = ['pre', 'post', 'none'];
       for (const m of meals) {
         if (!m.name || !m.orientation) {
           return res.status(400).json({ success: false, error: 'Each meal must have name and orientation' });
+        }
+        if (m.metabolic_goal && !validGoals.includes(m.metabolic_goal)) {
+          return res.status(400).json({ success: false, error: `Invalid metabolic_goal: ${m.metabolic_goal}` });
+        }
+        if (m.workout_relation && !validRelations.includes(m.workout_relation)) {
+          return res.status(400).json({ success: false, error: `Invalid workout_relation: ${m.workout_relation}` });
         }
       }
 
@@ -246,6 +255,16 @@ router.patch(
         if (meals.some((m: any) => !m.name?.trim() || !m.orientation?.trim())) {
           return res.status(400).json({ success: false, error: 'Each meal requires name and orientation' });
         }
+        const validGoals = ['energy', 'recovery', 'satiety', 'sleep_light'];
+        const validRelations = ['pre', 'post', 'none'];
+        for (const m of meals) {
+          if (m.metabolic_goal && !validGoals.includes(m.metabolic_goal)) {
+            return res.status(400).json({ success: false, error: `Invalid metabolic_goal: ${m.metabolic_goal}` });
+          }
+          if (m.workout_relation && !validRelations.includes(m.workout_relation)) {
+            return res.status(400).json({ success: false, error: `Invalid workout_relation: ${m.workout_relation}` });
+          }
+        }
       }
 
       const plan = await updatePlan(nutriId, planId, { title, objective, general_notes, meals });
@@ -279,6 +298,32 @@ router.delete(
       res.json({ success: true, data: plan });
     } catch (err: any) {
       logger.error({ err }, '[nutri] end plan error');
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// ===========================================================================
+// Meal heatmap — /patients/:patientId/meal-heatmap  (Onda A)
+// ===========================================================================
+
+router.get(
+  '/patients/:patientId/meal-heatmap',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId   = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const days      = Math.min(Number(req.query.days) || 14, 90);
+
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'Invalid patientId' });
+      }
+
+      const data = await getMealHeatmap(nutriId, patientId, days);
+      res.json({ success: true, data });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] get meal heatmap error');
       res.status(500).json({ success: false, error: err.message });
     }
   }

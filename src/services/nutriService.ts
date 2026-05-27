@@ -15,10 +15,22 @@ export type NutriObjective =
 
 export type Adherence = 'full' | 'partial' | 'skipped';
 
+export type MealCheckinStatus = 'done' | 'partial' | 'skipped' | 'substituted' | 'delayed';
+
+export type MealStatus = 'upcoming' | 'due_now' | 'done' | 'partial' | 'skipped' | 'substituted' | 'delayed' | 'missed_window' | 'no_time';
+
 export interface MealInput {
   name: string;
   orientation: string;
   order_index: number;
+  meal_time?: string | null;
+  tolerance_minutes?: number | null;
+  reminder_minutes?: number | null;
+  metabolic_goal?: string | null;
+  workout_relation?: string | null;
+  hydration_note?: string | null;
+  supplement_note?: string | null;
+  alternatives?: Array<{ description: string; order_index: number }>;
 }
 
 export interface CreatePlanInput {
@@ -60,20 +72,39 @@ export async function createPlan(
     const plan = planResult.rows[0];
 
     if (data.meals.length > 0) {
-      const mealValues = data.meals.map((m, i) =>
-        `($${i * 4 + 1}, $${i * 4 + 2}, $${i * 4 + 3}, $${i * 4 + 4})`
-      ).join(', ');
-      const mealParams = data.meals.flatMap((m) => [
-        plan.id,
-        m.name.trim().slice(0, 80),
-        m.orientation.trim(),
-        m.order_index ?? 0,
-      ]);
-      await client.query(
-        `INSERT INTO nutrition_plan_meals (plan_id, name, orientation, order_index)
-         VALUES ${mealValues}`,
-        mealParams
-      );
+      for (const m of data.meals) {
+        const mealRes = await client.query(
+          `INSERT INTO nutrition_plan_meals
+             (plan_id, name, orientation, order_index,
+              meal_time, tolerance_minutes, reminder_minutes,
+              metabolic_goal, workout_relation, hydration_note, supplement_note)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           RETURNING id`,
+          [
+            plan.id,
+            m.name.trim().slice(0, 80),
+            m.orientation.trim(),
+            m.order_index ?? 0,
+            m.meal_time ?? null,
+            m.tolerance_minutes ?? null,
+            m.reminder_minutes ?? null,
+            m.metabolic_goal ?? null,
+            m.workout_relation ?? null,
+            m.hydration_note?.trim().slice(0, 200) ?? null,
+            m.supplement_note?.trim().slice(0, 200) ?? null,
+          ]
+        );
+        const mealId = mealRes.rows[0].id;
+        if (Array.isArray(m.alternatives) && m.alternatives.length > 0) {
+          for (const alt of m.alternatives) {
+            await client.query(
+              `INSERT INTO nutrition_meal_alternatives (meal_id, description, order_index)
+               VALUES ($1, $2, $3)`,
+              [mealId, alt.description.trim(), alt.order_index ?? 0]
+            );
+          }
+        }
+      }
     }
 
     await client.query('COMMIT');
@@ -102,9 +133,16 @@ export async function getActivePlan(nutriId: number, patientId: number) {
   const plan = planResult.rows[0];
 
   const mealsResult = await pool.query(
-    `SELECT * FROM nutrition_plan_meals
-     WHERE plan_id = $1
-     ORDER BY order_index, id`,
+    `SELECT npm.*,
+            COALESCE(
+              json_agg(nma ORDER BY nma.order_index, nma.id) FILTER (WHERE nma.id IS NOT NULL),
+              '[]'
+            ) AS alternatives
+     FROM nutrition_plan_meals npm
+     LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
+     WHERE npm.plan_id = $1
+     GROUP BY npm.id
+     ORDER BY npm.order_index, npm.id`,
     [plan.id]
   );
   return { ...plan, meals: mealsResult.rows };
@@ -140,7 +178,7 @@ export async function updatePlan(
     title?: string;
     objective?: string;
     general_notes?: string;
-    meals?: Array<{ name: string; orientation: string; order_index: number }>;
+    meals?: MealInput[];
   }
 ) {
   const { title, objective, general_notes, meals } = payload;
@@ -168,18 +206,54 @@ export async function updatePlan(
     if (meals !== undefined) {
       await client.query(`DELETE FROM nutrition_plan_meals WHERE plan_id = $1`, [planId]);
       for (const meal of meals) {
-        await client.query(
-          `INSERT INTO nutrition_plan_meals (plan_id, name, orientation, order_index, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, NOW(), NOW())`,
-          [planId, meal.name.trim(), meal.orientation.trim(), meal.order_index]
+        const mealRes = await client.query(
+          `INSERT INTO nutrition_plan_meals
+             (plan_id, name, orientation, order_index,
+              meal_time, tolerance_minutes, reminder_minutes,
+              metabolic_goal, workout_relation, hydration_note, supplement_note,
+              created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
+           RETURNING id`,
+          [
+            planId,
+            meal.name.trim(),
+            meal.orientation.trim(),
+            meal.order_index,
+            meal.meal_time ?? null,
+            meal.tolerance_minutes ?? null,
+            meal.reminder_minutes ?? null,
+            meal.metabolic_goal ?? null,
+            meal.workout_relation ?? null,
+            meal.hydration_note?.trim().slice(0, 200) ?? null,
+            meal.supplement_note?.trim().slice(0, 200) ?? null,
+          ]
         );
+        const mealId = mealRes.rows[0].id;
+        if (Array.isArray(meal.alternatives) && meal.alternatives.length > 0) {
+          for (const alt of meal.alternatives) {
+            await client.query(
+              `INSERT INTO nutrition_meal_alternatives (meal_id, description, order_index)
+               VALUES ($1, $2, $3)`,
+              [mealId, alt.description.trim(), alt.order_index ?? 0]
+            );
+          }
+        }
       }
     }
 
     await client.query('COMMIT');
 
     const mealsResult = await pool.query(
-      `SELECT id, name, orientation, order_index FROM nutrition_plan_meals WHERE plan_id = $1 ORDER BY order_index, id`,
+      `SELECT npm.*,
+              COALESCE(
+                json_agg(nma ORDER BY nma.order_index, nma.id) FILTER (WHERE nma.id IS NOT NULL),
+                '[]'
+              ) AS alternatives
+       FROM nutrition_plan_meals npm
+       LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
+       WHERE npm.plan_id = $1
+       GROUP BY npm.id
+       ORDER BY npm.order_index, npm.id`,
       [planId]
     );
     return { ...updated.rows[0], meals: mealsResult.rows };
@@ -333,6 +407,208 @@ export async function getPatientContext(nutriId: number, patientId: number) {
 }
 
 // ---------------------------------------------------------------------------
+// Meal timeline — GET /user/meals/today
+// ---------------------------------------------------------------------------
+
+function computeMealStatus(
+  mealTime: string | null,
+  toleranceMinutes: number,
+  checkin: { status: string } | null,
+  nowMinutes: number // minutes since midnight
+): MealStatus {
+  if (checkin) {
+    return checkin.status as MealStatus;
+  }
+  if (!mealTime) return 'no_time';
+
+  const [h, m] = mealTime.split(':').map(Number);
+  const mealMinutes = h * 60 + m;
+  const windowStart = mealMinutes - toleranceMinutes;
+  const windowEnd   = mealMinutes + toleranceMinutes;
+  const afterEnd    = nowMinutes > windowEnd + 4 * 60; // 4h grace before missed_window
+
+  if (nowMinutes < windowStart) return 'upcoming';
+  if (nowMinutes <= windowEnd)  return 'due_now';
+  if (afterEnd)                 return 'missed_window';
+  return 'upcoming'; // passed window but inside 4h grace — keep upcoming
+}
+
+export async function getMealTimeline(userId: number) {
+  const planResult = await pool.query(
+    `SELECT np.id AS plan_id, np.title, np.objective, np.general_notes,
+            np.nutri_id, u.name AS nutri_name
+     FROM nutrition_plans np
+     JOIN users u ON u.id = np.nutri_id
+     WHERE np.patient_id = $1 AND np.status = 'active'
+     ORDER BY np.started_at DESC
+     LIMIT 1`,
+    [userId]
+  );
+  if (planResult.rows.length === 0) return null;
+  const plan = planResult.rows[0];
+  const today = new Date().toISOString().slice(0, 10);
+
+  const mealsResult = await pool.query(
+    `SELECT npm.*,
+            COALESCE(
+              json_agg(nma ORDER BY nma.order_index, nma.id) FILTER (WHERE nma.id IS NOT NULL),
+              '[]'
+            ) AS alternatives
+     FROM nutrition_plan_meals npm
+     LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
+     WHERE npm.plan_id = $1
+     GROUP BY npm.id
+     ORDER BY npm.meal_time NULLS LAST, npm.order_index, npm.id`,
+    [plan.plan_id]
+  );
+
+  const mealIds = mealsResult.rows.map((r) => r.id);
+  let checkinsMap = new Map<number, { status: string }>();
+
+  if (mealIds.length > 0) {
+    const checkinsResult = await pool.query(
+      `SELECT meal_id, status, satiety, hunger, energy, note
+       FROM nutrition_meal_checkins
+       WHERE patient_id = $1 AND check_date = $2 AND meal_id = ANY($3)`,
+      [userId, today, mealIds]
+    );
+    checkinsMap = new Map(checkinsResult.rows.map((r) => [r.meal_id, r]));
+  }
+
+  const now = new Date();
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  const meals = mealsResult.rows.map((m) => {
+    const checkin = checkinsMap.get(m.id) ?? null;
+    const status = computeMealStatus(
+      m.meal_time,
+      m.tolerance_minutes ?? 60,
+      checkin,
+      nowMinutes
+    );
+    return { ...m, status, checkin };
+  });
+
+  return { ...plan, today, meals };
+}
+
+// ---------------------------------------------------------------------------
+// Meal check-in — POST /user/meals/:mealId/checkins
+// ---------------------------------------------------------------------------
+
+export async function createMealCheckin(
+  userId: number,
+  mealId: number,
+  data: {
+    status: MealCheckinStatus;
+    satiety?: number | null;
+    hunger?: number | null;
+    energy?: number | null;
+    note?: string | null;
+  }
+) {
+  // Validate meal belongs to user's active plan
+  const mealCheck = await pool.query(
+    `SELECT npm.id, npm.plan_id
+     FROM nutrition_plan_meals npm
+     JOIN nutrition_plans np ON np.id = npm.plan_id
+     WHERE npm.id = $1 AND np.patient_id = $2 AND np.status = 'active'`,
+    [mealId, userId]
+  );
+  if (mealCheck.rows.length === 0) {
+    return { error: 'meal_not_found', status: 404 as const };
+  }
+  const planId = mealCheck.rows[0].plan_id;
+  const today = new Date().toISOString().slice(0, 10);
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO nutrition_meal_checkins
+         (patient_id, plan_id, meal_id, check_date, status, satiety, hunger, energy, note, recorded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+       RETURNING *`,
+      [
+        userId,
+        planId,
+        mealId,
+        today,
+        data.status,
+        data.satiety ?? null,
+        data.hunger ?? null,
+        data.energy ?? null,
+        data.note?.trim().slice(0, 500) ?? null,
+      ]
+    );
+    return { data: result.rows[0] };
+  } catch (err: any) {
+    if (err.code === '23505') {
+      // Already checked in — update instead
+      const result = await pool.query(
+        `UPDATE nutrition_meal_checkins
+         SET status = $1, satiety = $2, hunger = $3, energy = $4, note = $5, recorded_at = NOW()
+         WHERE patient_id = $6 AND meal_id = $7 AND check_date = $8
+         RETURNING *`,
+        [
+          data.status,
+          data.satiety ?? null,
+          data.hunger ?? null,
+          data.energy ?? null,
+          data.note?.trim().slice(0, 500) ?? null,
+          userId,
+          mealId,
+          today,
+        ]
+      );
+      return { data: result.rows[0], updated: true };
+    }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Meal heatmap — GET /nutri/patients/:id/meal-heatmap (nutri view)
+// ---------------------------------------------------------------------------
+
+export async function getMealHeatmap(
+  nutriId: number,
+  patientId: number,
+  days = 14
+) {
+  const planResult = await pool.query(
+    `SELECT np.id AS plan_id, np.title
+     FROM nutrition_plans np
+     WHERE np.nutri_id = $1 AND np.patient_id = $2 AND np.status = 'active'
+     LIMIT 1`,
+    [nutriId, patientId]
+  );
+  if (planResult.rows.length === 0) return { plan: null, meals: [], checkins: [] };
+  const plan = planResult.rows[0];
+
+  const mealsResult = await pool.query(
+    `SELECT id, name, meal_time, order_index
+     FROM nutrition_plan_meals
+     WHERE plan_id = $1
+     ORDER BY meal_time NULLS LAST, order_index, id`,
+    [plan.plan_id]
+  );
+
+  const checkinsResult = await pool.query(
+    `SELECT meal_id, check_date, status
+     FROM nutrition_meal_checkins
+     WHERE patient_id = $1 AND plan_id = $2
+       AND check_date >= CURRENT_DATE - ($3 - 1)
+     ORDER BY check_date DESC, meal_id`,
+    [patientId, plan.plan_id, days]
+  );
+
+  return {
+    plan: { id: plan.plan_id, title: plan.title },
+    meals: mealsResult.rows,
+    checkins: checkinsResult.rows,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Enriched patients list (nutri dashboard)
 // ---------------------------------------------------------------------------
 
@@ -419,9 +695,16 @@ export async function getUserActivePlan(userId: number) {
   const plan = planResult.rows[0];
 
   const mealsResult = await pool.query(
-    `SELECT * FROM nutrition_plan_meals
-     WHERE plan_id = $1
-     ORDER BY order_index, id`,
+    `SELECT npm.*,
+            COALESCE(
+              json_agg(nma ORDER BY nma.order_index, nma.id) FILTER (WHERE nma.id IS NOT NULL),
+              '[]'
+            ) AS alternatives
+     FROM nutrition_plan_meals npm
+     LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
+     WHERE npm.plan_id = $1
+     GROUP BY npm.id
+     ORDER BY npm.order_index, npm.id`,
     [plan.id]
   );
 

@@ -23,6 +23,11 @@ import {
   type ConsentScope,
 } from '../services/consentService';
 import { getAuditTrailForUser } from '../services/dataAccessAuditService';
+import {
+  cancelByStudent,
+  createCheckout,
+  listStudentSubscriptions,
+} from '../services/professionalSubscriptionService';
 import pool from '../config/database';
 
 const router = Router();
@@ -221,6 +226,50 @@ router.post('/admin/expire-requests', async (req: Request, res: Response) => {
     return res.json({ success: true, expired });
   } catch {
     return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// ── Student subscriptions (US4 — checkout pago) ───────────────────────────
+
+/** Aluno inicia checkout pago de uma offering profissional */
+router.post('/subscriptions', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  const { offeringId } = req.body as { offeringId?: string };
+  if (!offeringId) {
+    return res.status(400).json({ success: false, error: 'validation_failed', details: { required: ['offeringId'] } });
+  }
+  try {
+    const data = await createCheckout({
+      studentId: req.user!.id,
+      studentEmail: req.user!.email ?? '',
+      offeringId,
+      frontendUrl: process.env.FRONTEND_URL,
+      ip: req.ip,
+    });
+    return res.status(201).json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string; details?: unknown };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error', details: e.details });
+  }
+});
+
+/** Aluno lista suas próprias assinaturas */
+router.get('/subscriptions', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  try {
+    const data = await listStudentSubscriptions(req.user!.id);
+    return res.json({ success: true, data });
+  } catch {
+    return res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+/** Aluno cancela própria assinatura */
+router.delete('/subscriptions/:id', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  try {
+    const data = await cancelByStudent(req.params.id, req.user!.id, req.ip);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error' });
   }
 });
 

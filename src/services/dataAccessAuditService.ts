@@ -11,7 +11,16 @@ export type DataAccessEventType =
   | 'consent.revoked'
   | 'connection.revoked'
   | 'academy_policy.changed'
-  | 'professional_network.reviewed';
+  | 'professional_network.reviewed'
+  | 'offering.created'
+  | 'offering.updated'
+  | 'offering.archived'
+  | 'subscription.created'
+  | 'subscription.activated'
+  | 'subscription.cancelled'
+  | 'subscription.paused'
+  | 'subscription.expired'
+  | 'subscription.payment_failed';
 
 export interface DataAccessAuditEntry {
   actorId: number;

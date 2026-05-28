@@ -3,6 +3,10 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
 import { handleMpPreapprovalWebhook } from '../services/personalBillingService';
+import {
+  handleMpPreapprovalWebhook as handleProNetworkPreapproval,
+  PRO_NETWORK_EXTERNAL_REF_PREFIX,
+} from '../services/professionalSubscriptionService';
 import { grantMembership, cancelMembership } from '../services/membershipService';
 import logger from '../lib/logger';
 
@@ -176,6 +180,12 @@ async function handleSubscriptionNotification(data: any) {
     // Route personal-sub webhooks to the personal billing service
     if (externalReference?.startsWith('personal-sub:')) {
       await handleMpPreapprovalWebhook(preapprovalId, status, data);
+      return;
+    }
+
+    // Route pro-net-sub webhooks to the professional network subscription service
+    if (externalReference?.startsWith(PRO_NETWORK_EXTERNAL_REF_PREFIX)) {
+      await handleProNetworkPreapproval(preapprovalId, status, externalReference, data);
       return;
     }
 

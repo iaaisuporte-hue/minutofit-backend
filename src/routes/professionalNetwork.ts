@@ -9,6 +9,17 @@ import {
   type AvailabilityStatus,
 } from '../services/professionalNetworkService';
 import type { ProfessionalRole } from '../services/consentService';
+import {
+  archiveOffering,
+  createOffering,
+  listOwnOfferings,
+  updateOffering,
+  type OfferingPeriod,
+} from '../services/professionalOfferingService';
+import {
+  cancelByProfessional,
+  listProfessionalSubscriptions,
+} from '../services/professionalSubscriptionService';
 
 const router = Router();
 
@@ -97,6 +108,109 @@ router.post('/network-profile/submit-review', async (req: Request, res: Response
   } catch (err: unknown) {
     const e = err as { status?: number; message?: string; details?: unknown };
     return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error', details: e.details });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Offerings — planos comerciais (US4)
+// ---------------------------------------------------------------------------
+
+router.get('/offerings', async (req: Request, res: Response) => {
+  try {
+    const data = await listOwnOfferings(req.user!.id);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error' });
+  }
+});
+
+router.post('/offerings', async (req: Request, res: Response) => {
+  const role = req.user!.role as ProfessionalRole;
+  const body = req.body as {
+    title?: string;
+    description?: string | null;
+    priceCents?: number;
+    period?: OfferingPeriod;
+  };
+  try {
+    if (!body.title || body.priceCents == null || !body.period) {
+      return res.status(400).json({ success: false, error: 'validation_failed', details: { required: ['title', 'priceCents', 'period'] } });
+    }
+    const data = await createOffering({
+      professionalId: req.user!.id,
+      professionalRole: role,
+      input: {
+        title: body.title,
+        description: body.description ?? null,
+        priceCents: body.priceCents,
+        period: body.period,
+      },
+      ip: req.ip,
+    });
+    return res.status(201).json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string; details?: unknown };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error', details: e.details });
+  }
+});
+
+router.patch('/offerings/:id', async (req: Request, res: Response) => {
+  const body = req.body as {
+    title?: string;
+    description?: string | null;
+    priceCents?: number;
+    period?: OfferingPeriod;
+  };
+  try {
+    const data = await updateOffering({
+      offeringId: req.params.id,
+      professionalId: req.user!.id,
+      input: body,
+      ip: req.ip,
+    });
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string; details?: unknown };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error', details: e.details });
+  }
+});
+
+router.post('/offerings/:id/archive', async (req: Request, res: Response) => {
+  try {
+    const data = await archiveOffering({
+      offeringId: req.params.id,
+      professionalId: req.user!.id,
+      ip: req.ip,
+    });
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Subscriptions — visão do profissional (US4)
+// ---------------------------------------------------------------------------
+
+router.get('/subscriptions', async (req: Request, res: Response) => {
+  try {
+    const data = await listProfessionalSubscriptions(req.user!.id);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error' });
+  }
+});
+
+router.post('/subscriptions/:id/cancel', async (req: Request, res: Response) => {
+  try {
+    const data = await cancelByProfessional(req.params.id, req.user!.id, req.ip);
+    return res.json({ success: true, data });
+  } catch (err: unknown) {
+    const e = err as { status?: number; message?: string };
+    return res.status(e.status ?? 500).json({ success: false, error: e.message ?? 'internal_error' });
   }
 });
 

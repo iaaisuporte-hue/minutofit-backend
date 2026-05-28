@@ -12,7 +12,8 @@ export type ConsentScope =
   | 'nutrition'
   | 'parq_anamnese'
   | 'activity_logs'
-  | 'chat_history';
+  | 'chat_history'
+  | 'sports'; // Fight Intelligence — Onda B: coach/nutri view
 
 export type ProfessionalRole = 'personal' | 'nutri';
 

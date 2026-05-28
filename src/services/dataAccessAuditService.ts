@@ -22,7 +22,11 @@ export type DataAccessEventType =
   | 'subscription.expired'
   | 'subscription.payment_failed'
   | 'voice_note.published'
-  | 'voice_note.read';
+  | 'voice_note.read'
+  | 'sport.profile.upserted'
+  | 'sport.profile.deactivated'
+  | 'sport.checkin.created'
+  | 'sport.camp.created';
 
 export interface DataAccessAuditEntry {
   actorId: number;

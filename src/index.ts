@@ -27,6 +27,7 @@ import userRoutes from './routes/user';
 import metabolicCheckinRoutes from './routes/metabolicCheckins';
 import studentTeamRoutes from './routes/studentTeam';
 import professionalNetworkRoutes from './routes/professionalNetwork';
+import sportRoutes from './routes/sport';
 import { tenantResolverMiddleware } from './middleware/tenantResolver';
 import pool from './config/database';
 
@@ -287,6 +288,7 @@ app.use('/api/user', userRoutes);
 app.use('/api/metabolic-checkins', metabolicCheckinRoutes);
 app.use('/api/student', studentTeamRoutes);
 app.use('/api/professional', professionalNetworkRoutes);
+app.use('/api/sport', sportRoutes);
 
 // ---------------------------------------------------------------------------
 // Health check real — valida DB e presença de secrets críticos

@@ -18,6 +18,11 @@ import {
   getPatientsWithSummary,
   getMealHeatmap,
 } from '../services/nutriService';
+import {
+  publishVoiceNote,
+  listVoiceNotesForNutri,
+  computePatientInsights,
+} from '../services/nutritionVoiceNoteService';
 
 const router = Router();
 
@@ -433,6 +438,76 @@ router.get(
       res.json({ success: true, data: result.rows, meta: { total: result.total, limit, offset } });
     } catch (err: any) {
       logger.error({ err }, '[nutri] list observations error');
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// ===========================================================================
+// Voice Notes — nota visível ao aluno (Spec 005)
+// ===========================================================================
+
+router.post(
+  '/patients/:patientId/voice-notes',
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId   = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'invalid_patient_id' });
+      }
+      const body: string = typeof req.body.body === 'string' ? req.body.body.trim() : '';
+      if (!body) return res.status(400).json({ success: false, error: 'body_required' });
+
+      const anchorMealId: string | undefined =
+        typeof req.body.anchorMealId === 'string' ? req.body.anchorMealId : undefined;
+
+      const note = await publishVoiceNote({
+        nutriId,
+        patientId,
+        body,
+        anchorMealId,
+        ip: req.ip,
+      });
+      res.status(201).json({ success: true, data: note });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] publish voice note error');
+      res.status(err.status ?? 500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+router.get(
+  '/patients/:patientId/voice-notes',
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId   = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'invalid_patient_id' });
+      }
+      const notes = await listVoiceNotesForNutri(nutriId, patientId);
+      res.json({ success: true, data: notes });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] list voice notes error');
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+router.get(
+  '/patients/:patientId/insights',
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId   = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'invalid_patient_id' });
+      }
+      const insights = await computePatientInsights(nutriId, patientId);
+      res.json({ success: true, data: insights });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] compute insights error');
       res.status(500).json({ success: false, error: err.message });
     }
   }

@@ -29,6 +29,11 @@ import {
   listStudentSubscriptions,
 } from '../services/professionalSubscriptionService';
 import { listPublicOfferings } from '../services/professionalOfferingService';
+import {
+  upsertPushSubscription,
+  removePushSubscription,
+} from '../services/pushSubscriptionService';
+import { listPendingVoiceNotesForPatient } from '../services/nutritionVoiceNoteService';
 import pool from '../config/database';
 
 const router = Router();
@@ -354,6 +359,52 @@ router.post('/incoming-requests/:id/reject', async (req: Request, res: Response)
   } catch (err: unknown) {
     const e = err as { status?: number };
     return res.status(e.status ?? 500).json({ error: 'not_found_or_not_pending' });
+  }
+});
+
+// ===========================================================================
+// Push Subscriptions (Spec 005)
+// ===========================================================================
+
+router.post('/push-subscriptions', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { endpoint, p256dh, auth, deviceLabel } = req.body as {
+      endpoint?: string; p256dh?: string; auth?: string; deviceLabel?: string;
+    };
+    if (!endpoint || !p256dh || !auth) {
+      return res.status(400).json({ success: false, error: 'endpoint_p256dh_auth_required' });
+    }
+    await upsertPushSubscription(userId, { endpoint, p256dh, auth, deviceLabel });
+    res.status(201).json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+router.delete('/push-subscriptions', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const endpoint = typeof req.body.endpoint === 'string' ? req.body.endpoint : null;
+    if (!endpoint) return res.status(400).json({ success: false, error: 'endpoint_required' });
+    await removePushSubscription(userId, endpoint);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===========================================================================
+// Voice Notes — notas da nutri visíveis ao aluno (Spec 005)
+// ===========================================================================
+
+router.get('/voice-notes/pending', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  try {
+    const patientId = req.user!.id;
+    const notes = await listPendingVoiceNotesForPatient(patientId, req.ip);
+    res.json({ success: true, data: notes });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

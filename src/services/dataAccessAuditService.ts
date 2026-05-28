@@ -20,7 +20,9 @@ export type DataAccessEventType =
   | 'subscription.cancelled'
   | 'subscription.paused'
   | 'subscription.expired'
-  | 'subscription.payment_failed';
+  | 'subscription.payment_failed'
+  | 'voice_note.published'
+  | 'voice_note.read';
 
 export interface DataAccessAuditEntry {
   actorId: number;

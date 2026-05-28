@@ -636,10 +636,11 @@ export async function getPatientsWithSummary(nutriId: number) {
   );
   const plansByPatient = new Map(plansResult.rows.map((r) => [r.patient_id, r]));
 
-  // Last 7 days adherence per patient
+  // Adherence per patient: 7d + 30d
   const adherenceResult = await pool.query(
     `SELECT nac.patient_id,
-            COUNT(*) FILTER (WHERE nac.check_date >= CURRENT_DATE - 6) AS checkins_7d,
+            COUNT(*) FILTER (WHERE nac.check_date >= CURRENT_DATE - 6)  AS checkins_7d,
+            COUNT(*) FILTER (WHERE nac.check_date >= CURRENT_DATE - 29) AS checkins_30d,
             MAX(nac.check_date) AS last_checkin_date
      FROM nutrition_adherence_checkins nac
      WHERE nac.patient_id = ANY($1)
@@ -651,12 +652,18 @@ export async function getPatientsWithSummary(nutriId: number) {
   return patientsResult.rows.map((p) => {
     const plan = plansByPatient.get(p.id) ?? null;
     const adherence = adherenceByPatient.get(p.id) ?? null;
-    const checkins7d = Number(adherence?.checkins_7d ?? 0);
+    const checkins7d  = Number(adherence?.checkins_7d  ?? 0);
+    const checkins30d = Number(adherence?.checkins_30d ?? 0);
     const lastCheckin = adherence?.last_checkin_date ?? null;
 
     const daysSinceLastCheckin = lastCheckin
       ? Math.floor((Date.now() - new Date(lastCheckin).getTime()) / 86400000)
       : null;
+
+    const pct7d  = Math.round((checkins7d  / 7)  * 100);
+    const pct30d = Math.round((checkins30d / 30) * 100);
+    // adherenceDropFlag: 7d adherence fell ≥20pp vs 30d average
+    const adherenceDropFlag = checkins30d >= 5 && pct7d < pct30d - 20;
 
     // riskFlag: no active plan OR no checkin in last 3 days
     const riskFlag = !plan || daysSinceLastCheckin === null || daysSinceLastCheckin > 3;
@@ -669,8 +676,10 @@ export async function getPatientsWithSummary(nutriId: number) {
       academy_id: p.academy_id,
       activePlan: plan ?? null,
       adherence7d: checkins7d,
+      adherence30d: checkins30d,
       lastCheckinDate: lastCheckin,
       riskFlag,
+      adherenceDropFlag,
     };
   });
 }

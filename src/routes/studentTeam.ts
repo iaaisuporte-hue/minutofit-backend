@@ -28,6 +28,7 @@ import {
   createCheckout,
   listStudentSubscriptions,
 } from '../services/professionalSubscriptionService';
+import { listPublicOfferings } from '../services/professionalOfferingService';
 import pool from '../config/database';
 
 const router = Router();
@@ -226,6 +227,22 @@ router.post('/admin/expire-requests', async (req: Request, res: Response) => {
     return res.json({ success: true, expired });
   } catch {
     return res.status(500).json({ error: 'internal_error' });
+  }
+});
+
+// ── Student-visible offerings (US4 — leitura de planos do profissional) ──
+
+/** Aluno lista planos ativos de um profissional específico antes do checkout */
+router.get('/professionals/:professionalId/offerings', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  const professionalId = parseInt(req.params.professionalId, 10);
+  if (!Number.isFinite(professionalId)) {
+    return res.status(400).json({ success: false, error: 'invalid_professional_id' });
+  }
+  try {
+    const data = await listPublicOfferings(professionalId);
+    return res.json({ success: true, data });
+  } catch {
+    return res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 

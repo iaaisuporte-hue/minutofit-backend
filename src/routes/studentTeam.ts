@@ -17,6 +17,7 @@ import {
   listAvailableProfessionals,
 } from '../services/professionalNetworkService';
 import {
+  grantConsents,
   revokeConsent,
   listConsentsForUser,
   type ProfessionalRole,
@@ -179,6 +180,27 @@ router.delete('/connections/:professionalId', roleCheckMiddleware('user'), async
   } catch (err: unknown) {
     const e = err as { status?: number };
     return res.status(e.status ?? 500).json({ error: 'internal_error' });
+  }
+});
+
+/** Aluno concede um escopo de consent a um profissional */
+router.post('/consents/grant', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+  const { scope, professionalId, role } = req.body as {
+    scope?: ConsentScope;
+    professionalId?: number;
+    role?: ProfessionalRole;
+  };
+  if (!scope || !professionalId || !role) {
+    return res.status(400).json({ error: 'scope, professionalId and role are required' });
+  }
+  if (!['personal', 'nutri'].includes(role)) {
+    return res.status(400).json({ error: 'role must be personal or nutri' });
+  }
+  try {
+    await grantConsents(req.user!.id, professionalId, role, [scope], pool);
+    return res.json({ success: true });
+  } catch {
+    return res.status(500).json({ error: 'internal_error' });
   }
 });
 

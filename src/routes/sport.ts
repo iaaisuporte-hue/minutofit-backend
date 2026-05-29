@@ -10,9 +10,33 @@ import {
   createPreWorkoutCheckin,
   listPreWorkoutCheckins,
 } from '../services/sportCheckinService';
+import {
+  createPostWorkoutCheckin,
+  listPostWorkoutCheckins,
+  getFatigue7d,
+  getLastRecoveryGap,
+} from '../services/postWorkoutService';
 import { getReadinessToday } from '../services/sportReadinessService';
 import { listCamps, createCamp, updateCamp } from '../services/campService';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
+import pool from '../config/database';
+
+const VALID_WORKOUT_TYPES = ['sparring', 'technical', 'physical', 'competition', 'other'] as const;
+
+function validatePostWorkout(body: Record<string, unknown>): string | null {
+  const { duration_min, workout_type, rpe, muscle_soreness_post, joint_soreness_post } = body;
+  if (!Number.isInteger(duration_min) || (duration_min as number) < 1 || (duration_min as number) > 480)
+    return 'duration_min must be integer 1–480';
+  if (!VALID_WORKOUT_TYPES.includes(workout_type as any))
+    return `workout_type must be one of ${VALID_WORKOUT_TYPES.join(', ')}`;
+  if (!Number.isInteger(rpe) || (rpe as number) < 1 || (rpe as number) > 10)
+    return 'rpe must be integer 1–10';
+  if (!Number.isInteger(muscle_soreness_post) || (muscle_soreness_post as number) < 1 || (muscle_soreness_post as number) > 5)
+    return 'muscle_soreness_post must be integer 1–5';
+  if (!Number.isInteger(joint_soreness_post) || (joint_soreness_post as number) < 1 || (joint_soreness_post as number) > 5)
+    return 'joint_soreness_post must be integer 1–5';
+  return null;
+}
 
 const router = Router();
 
@@ -149,16 +173,86 @@ router.patch('/camps/:id', authMiddleware, requireSportActive, async (req: Reque
   }
 });
 
+// ── Post-workout check-ins ───────────────────────────────────────────────────
+
+router.post('/checkins/post-workout', authMiddleware, requireSportActive, async (req: Request, res: Response) => {
+  try {
+    const validationError = validatePostWorkout(req.body as Record<string, unknown>);
+    if (validationError) {
+      res.status(400).json({ success: false, error: validationError });
+      return;
+    }
+    const userId = req.user!.id;
+    const checkin = await createPostWorkoutCheckin(userId, req.body);
+    void logDataAccessEvent({ actorId: userId, subjectUserId: userId, eventType: 'sport.post_checkin.created', ip: req.ip });
+    res.status(201).json({ success: true, checkin });
+  } catch (err: any) {
+    if (err.code === '23514') {
+      res.status(400).json({ success: false, error: 'Valores fora do intervalo permitido' });
+      return;
+    }
+    console.error('[sport/checkins/post-workout POST]', err);
+    res.status(500).json({ success: false, error: 'Failed to save post-workout check-in' });
+  }
+});
+
+router.get('/checkins/post-workout', authMiddleware, requireSportActive, async (req: Request, res: Response) => {
+  try {
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const checkins = await listPostWorkoutCheckins(req.user!.id, from, to);
+    res.json({ success: true, checkins });
+  } catch (err) {
+    console.error('[sport/checkins/post-workout GET]', err);
+    res.status(500).json({ success: false, error: 'Failed to load post-workout check-ins' });
+  }
+});
+
+// ── Fatigue 7d ────────────────────────────────────────────────────────────────
+
+router.get('/fatigue', authMiddleware, requireSportActive, async (req: Request, res: Response) => {
+  try {
+    const fatigue = await getFatigue7d(req.user!.id);
+    res.json({ success: true, fatigue });
+  } catch (err) {
+    console.error('[sport/fatigue GET]', err);
+    res.status(500).json({ success: false, error: 'Failed to load fatigue data' });
+  }
+});
+
+// ── Has personal ──────────────────────────────────────────────────────────────
+
+router.get('/has-personal', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { rows } = await pool.query<{ personal_id: number }>(
+      `SELECT personal_id FROM personal_student_assignments
+       WHERE student_id = $1 AND status = 'active'
+       LIMIT 1`,
+      [req.user!.id],
+    );
+    if (rows.length === 0) {
+      res.json({ has_personal: false, personal_id: null });
+      return;
+    }
+    res.json({ has_personal: true, personal_id: rows[0].personal_id });
+  } catch (err) {
+    console.error('[sport/has-personal GET]', err);
+    res.status(500).json({ success: false, error: 'Failed to check personal link' });
+  }
+});
+
 // ── Dashboard aggregate ───────────────────────────────────────────────────────
 
 router.get('/dashboard', authMiddleware, requireSportActive, async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const [profile, readiness, camps, checkins] = await Promise.all([
+    const [profile, readiness, camps, checkins, fatigueData, lastGap] = await Promise.all([
       (await import('../services/sportProfileService')).getSportProfile(userId),
       getReadinessToday(userId),
       listCamps(userId, 'active'),
       (await import('../services/sportCheckinService')).listPreWorkoutCheckins(userId),
+      getFatigue7d(userId),
+      getLastRecoveryGap(userId),
     ]);
     res.json({
       success: true,
@@ -167,6 +261,9 @@ router.get('/dashboard', authMiddleware, requireSportActive, async (req: Request
         readiness_today: readiness,
         recent_checkins: checkins.slice(0, 7),
         active_camp: camps[0] ?? null,
+        fatigue_7d: fatigueData.fatigue_7d,
+        fatigue_level: fatigueData.level,
+        last_recovery_gap: lastGap,
       },
     });
   } catch (err) {

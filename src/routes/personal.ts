@@ -48,6 +48,11 @@ import {
 import { generateWorkout } from '../services/ai/workoutAi';
 import { getMetabolicHint } from '../services/ai/metabolicHint';
 import pool from '../config/database';
+import { logDataAccessEvent } from '../services/dataAccessAuditService';
+import { getSportProfile } from '../services/sportProfileService';
+import { getReadinessToday } from '../services/sportReadinessService';
+import { listCamps } from '../services/campService';
+import { getFatigue7d, getLastRecoveryGap } from '../services/postWorkoutService';
 import { findOrCreateUserFromContext } from '../services/userIdentityService';
 import { grantMembership } from '../services/membershipService';
 import crypto from 'crypto';
@@ -1439,6 +1444,89 @@ router.get(
       res.status(500).json({ success: false, error: error.message });
     }
   }
+);
+
+// ── Coach View: Fight Intelligence ──────────────────────────────────────────
+
+router.get(
+  '/students/:studentId/sport',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('sports'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+
+      // Gate 2: verify active assignment between this personal and student
+      const link = await pool.query(
+        `SELECT id FROM personal_student_assignments
+         WHERE personal_id = $1 AND student_id = $2 AND status = 'active'`,
+        [personalId, studentId],
+      );
+      if (link.rows.length === 0) {
+        res.status(403).json({ success: false, error: 'forbidden' });
+        return;
+      }
+
+      const profile = await getSportProfile(studentId);
+      if (!profile || !profile.active) {
+        res.json({ success: true, sport: null });
+        return;
+      }
+
+      const [readiness, camps, fatigueData, lastGap] = await Promise.all([
+        getReadinessToday(studentId),
+        listCamps(studentId, 'active'),
+        getFatigue7d(studentId),
+        getLastRecoveryGap(studentId),
+      ]);
+
+      const activeCamp = camps[0] ?? null;
+
+      void logDataAccessEvent({
+        actorId: personalId,
+        subjectUserId: studentId,
+        eventType: 'personal.sport.read',
+        ip: req.ip,
+      });
+
+      res.json({
+        success: true,
+        sport: {
+          profile: {
+            primary_sport: profile.primary_sport,
+            sport_level: profile.sport_level,
+            weekly_frequency: profile.weekly_frequency,
+            competes: profile.competes,
+          },
+          readiness_today: readiness
+            ? {
+                final_score: readiness.final_score,
+                risk_level: readiness.risk_level,
+                recommendation: readiness.recommendation,
+                has_checkin_today: readiness.has_checkin_today,
+              }
+            : null,
+          last_recovery_gap: lastGap,
+          fatigue_7d: fatigueData.fatigue_7d,
+          fatigue_level: fatigueData.level,
+          active_camp: activeCamp
+            ? {
+                event_name: activeCamp.event_name,
+                event_date: activeCamp.event_date,
+                days_remaining: activeCamp.days_remaining,
+                camp_phase: activeCamp.camp_phase,
+                current_weight_kg: activeCamp.current_weight_kg ?? null,
+                target_weight_kg: activeCamp.target_weight_kg ?? null,
+              }
+            : null,
+        },
+      });
+    } catch (err) {
+      console.error('[personal/students/sport GET]', err);
+      res.status(500).json({ success: false, error: 'Failed to load sport data' });
+    }
+  },
 );
 
 export default router;

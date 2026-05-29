@@ -26,7 +26,9 @@ export type DataAccessEventType =
   | 'sport.profile.upserted'
   | 'sport.profile.deactivated'
   | 'sport.checkin.created'
-  | 'sport.camp.created';
+  | 'sport.camp.created'
+  | 'sport.post_checkin.created'
+  | 'personal.sport.read';
 
 export interface DataAccessAuditEntry {
   actorId: number;

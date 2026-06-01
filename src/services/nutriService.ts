@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import { hasActiveConsent } from './consentService';
 import { getMetabolismForUser } from '../modules/metabolism/metabolic.service';
+import { logDataAccessEvent } from './dataAccessAuditService';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,6 +109,12 @@ export async function createPlan(
     }
 
     await client.query('COMMIT');
+    await logDataAccessEvent({
+      actorId: nutriId,
+      subjectUserId: patientId,
+      eventType: 'nutri.plan.created',
+      eventPayload: { planId: plan.id, title: data.title },
+    });
     return plan;
   } catch (err) {
     await client.query('ROLLBACK');
@@ -160,7 +167,7 @@ export async function getPlanHistory(nutriId: number, patientId: number) {
   return result.rows;
 }
 
-export async function endPlan(nutriId: number, planId: number) {
+export async function endPlan(nutriId: number, planId: number, patientId: number) {
   const result = await pool.query(
     `UPDATE nutrition_plans
      SET status = 'ended', ended_at = NOW(), updated_at = NOW()
@@ -168,12 +175,21 @@ export async function endPlan(nutriId: number, planId: number) {
      RETURNING *`,
     [planId, nutriId]
   );
+  if (result.rows[0]) {
+    await logDataAccessEvent({
+      actorId: nutriId,
+      subjectUserId: patientId,
+      eventType: 'nutri.plan.ended',
+      eventPayload: { planId },
+    });
+  }
   return result.rows[0] ?? null;
 }
 
 export async function updatePlan(
   nutriId: number,
   planId: number,
+  patientId: number,
   payload: {
     title?: string;
     objective?: string;
@@ -242,6 +258,12 @@ export async function updatePlan(
     }
 
     await client.query('COMMIT');
+    await logDataAccessEvent({
+      actorId: nutriId,
+      subjectUserId: patientId,
+      eventType: 'nutri.plan.updated',
+      eventPayload: { planId },
+    });
 
     const mealsResult = await pool.query(
       `SELECT npm.*,
@@ -320,7 +342,8 @@ export async function createAdherenceCheckin(
 export async function getAdherenceForPeriod(
   patientId: number,
   planId: number,
-  days = 7
+  days = 7,
+  nutriId?: number
 ) {
   const result = await pool.query(
     `SELECT check_date, adherence, note
@@ -330,6 +353,14 @@ export async function getAdherenceForPeriod(
      ORDER BY check_date DESC`,
     [patientId, planId, days]
   );
+  if (nutriId) {
+    await logDataAccessEvent({
+      actorId: nutriId,
+      subjectUserId: patientId,
+      eventType: 'nutri.adherence.read',
+      eventPayload: { planId, days },
+    });
+  }
   return result.rows;
 }
 
@@ -344,6 +375,12 @@ export async function createObservation(nutriId: number, patientId: number, body
      RETURNING *`,
     [nutriId, patientId, body.trim()]
   );
+  await logDataAccessEvent({
+    actorId: nutriId,
+    subjectUserId: patientId,
+    eventType: 'nutri.observation.created',
+    eventPayload: { observationId: result.rows[0].id },
+  });
   return result.rows[0];
 }
 
@@ -365,6 +402,12 @@ export async function getObservations(
     `SELECT COUNT(*) FROM nutrition_observations WHERE nutri_id = $1 AND patient_id = $2`,
     [nutriId, patientId]
   );
+  await logDataAccessEvent({
+    actorId: nutriId,
+    subjectUserId: patientId,
+    eventType: 'nutri.observation.read',
+    eventPayload: { limit, offset },
+  });
   return { rows: result.rows, total: Number(countResult.rows[0].count) };
 }
 
@@ -397,6 +440,19 @@ export async function getPatientContext(nutriId: number, patientId: number) {
       [patientId]
     );
     context.dailyCheckins = checkins.rows;
+  }
+
+  const accessedScopes = [
+    hasMetabolicConsent ? 'metabolic' : null,
+    hasDailyConsent ? 'daily_checkins' : null,
+  ].filter(Boolean);
+  if (accessedScopes.length > 0) {
+    await logDataAccessEvent({
+      actorId: nutriId,
+      subjectUserId: patientId,
+      eventType: 'nutri.context.read',
+      eventPayload: { scopes: accessedScopes },
+    });
   }
 
   return {
@@ -433,6 +489,22 @@ function computeMealStatus(
   return 'upcoming'; // passed window but inside 4h grace — keep upcoming
 }
 
+function computeStreak(checkinDates: string[]): number {
+  const dateSet = new Set(checkinDates);
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  // Start from today if it has a checkin, else from yesterday
+  const startOffset = dateSet.has(todayStr) ? 0 : 1;
+  let streak = 0;
+  for (let i = startOffset; i < 60; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    if (!dateSet.has(d.toISOString().slice(0, 10))) break;
+    streak++;
+  }
+  return streak;
+}
+
 export async function getMealTimeline(userId: number) {
   const planResult = await pool.query(
     `SELECT np.id AS plan_id, np.title, np.objective, np.general_notes,
@@ -448,19 +520,40 @@ export async function getMealTimeline(userId: number) {
   const plan = planResult.rows[0];
   const today = new Date().toISOString().slice(0, 10);
 
-  const mealsResult = await pool.query(
-    `SELECT npm.*,
-            COALESCE(
-              json_agg(nma ORDER BY nma.order_index, nma.id) FILTER (WHERE nma.id IS NOT NULL),
-              '[]'
-            ) AS alternatives
-     FROM nutrition_plan_meals npm
-     LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
-     WHERE npm.plan_id = $1
-     GROUP BY npm.id
-     ORDER BY npm.meal_time NULLS LAST, npm.order_index, npm.id`,
-    [plan.plan_id]
-  );
+  const [mealsResult, workoutResult, streakResult] = await Promise.all([
+    pool.query(
+      `SELECT npm.*,
+              COALESCE(
+                json_agg(nma ORDER BY nma.order_index, nma.id) FILTER (WHERE nma.id IS NOT NULL),
+                '[]'
+              ) AS alternatives
+       FROM nutrition_plan_meals npm
+       LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
+       WHERE npm.plan_id = $1
+       GROUP BY npm.id
+       ORDER BY npm.meal_time NULLS LAST, npm.order_index, npm.id`,
+      [plan.plan_id]
+    ),
+    // Workout logged today — drives pre/post meal context
+    pool.query(
+      `SELECT title, muscle_groups
+       FROM user_workout_logs
+       WHERE user_id = $1 AND DATE(completed_at) = CURRENT_DATE
+       ORDER BY completed_at DESC
+       LIMIT 1`,
+      [userId]
+    ),
+    // Distinct dates with non-skip checkin for streak (last 60 days)
+    pool.query(
+      `SELECT DISTINCT check_date::text
+       FROM nutrition_meal_checkins
+       WHERE patient_id = $1
+         AND check_date >= CURRENT_DATE - 59
+         AND status IN ('done', 'partial', 'substituted')
+       ORDER BY check_date DESC`,
+      [userId]
+    ),
+  ]);
 
   const mealIds = mealsResult.rows.map((r) => r.id);
   let checkinsMap = new Map<number, { status: string }>();
@@ -474,6 +567,12 @@ export async function getMealTimeline(userId: number) {
     );
     checkinsMap = new Map(checkinsResult.rows.map((r) => [r.meal_id, r]));
   }
+
+  const workoutToday = workoutResult.rows[0]
+    ? { title: workoutResult.rows[0].title as string, muscleGroups: workoutResult.rows[0].muscle_groups as string[] }
+    : null;
+
+  const streak = computeStreak(streakResult.rows.map((r) => r.check_date as string));
 
   const now = new Date();
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
@@ -489,7 +588,7 @@ export async function getMealTimeline(userId: number) {
     return { ...m, status, checkin };
   });
 
-  return { ...plan, today, meals };
+  return { ...plan, today, meals, workoutToday, streak };
 }
 
 // ---------------------------------------------------------------------------
@@ -505,6 +604,7 @@ export async function createMealCheckin(
     hunger?: number | null;
     energy?: number | null;
     note?: string | null;
+    substitutedAlternativeId?: number | null;
   }
 ) {
   // Validate meal belongs to user's active plan
@@ -519,44 +619,52 @@ export async function createMealCheckin(
     return { error: 'meal_not_found', status: 404 as const };
   }
   const planId = mealCheck.rows[0].plan_id;
+
+  // Validate alternative belongs to this meal
+  const altId = data.status === 'substituted' && data.substitutedAlternativeId
+    ? data.substitutedAlternativeId
+    : null;
+  if (altId) {
+    const altCheck = await pool.query(
+      `SELECT 1 FROM nutrition_meal_alternatives WHERE id = $1 AND meal_id = $2`,
+      [altId, mealId]
+    );
+    if (altCheck.rows.length === 0) {
+      return { error: 'alternative_not_found', status: 400 as const };
+    }
+  }
+
   const today = new Date().toISOString().slice(0, 10);
 
   try {
     const result = await pool.query(
       `INSERT INTO nutrition_meal_checkins
-         (patient_id, plan_id, meal_id, check_date, status, satiety, hunger, energy, note, recorded_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+         (patient_id, plan_id, meal_id, check_date, status, satiety, hunger, energy, note,
+          substituted_alternative_id, recorded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
        RETURNING *`,
       [
-        userId,
-        planId,
-        mealId,
-        today,
-        data.status,
-        data.satiety ?? null,
-        data.hunger ?? null,
-        data.energy ?? null,
+        userId, planId, mealId, today, data.status,
+        data.satiety ?? null, data.hunger ?? null, data.energy ?? null,
         data.note?.trim().slice(0, 500) ?? null,
+        altId,
       ]
     );
     return { data: result.rows[0] };
   } catch (err: any) {
     if (err.code === '23505') {
-      // Already checked in — update instead
       const result = await pool.query(
         `UPDATE nutrition_meal_checkins
-         SET status = $1, satiety = $2, hunger = $3, energy = $4, note = $5, recorded_at = NOW()
-         WHERE patient_id = $6 AND meal_id = $7 AND check_date = $8
+         SET status = $1, satiety = $2, hunger = $3, energy = $4, note = $5,
+             substituted_alternative_id = $6, recorded_at = NOW()
+         WHERE patient_id = $7 AND meal_id = $8 AND check_date = $9
          RETURNING *`,
         [
           data.status,
-          data.satiety ?? null,
-          data.hunger ?? null,
-          data.energy ?? null,
+          data.satiety ?? null, data.hunger ?? null, data.energy ?? null,
           data.note?.trim().slice(0, 500) ?? null,
-          userId,
-          mealId,
-          today,
+          altId,
+          userId, mealId, today,
         ]
       );
       return { data: result.rows[0], updated: true };
@@ -601,6 +709,12 @@ export async function getMealHeatmap(
     [patientId, plan.plan_id, days]
   );
 
+  await logDataAccessEvent({
+    actorId: nutriId,
+    subjectUserId: patientId,
+    eventType: 'nutri.meal_heatmap.read',
+    eventPayload: { days },
+  });
   return {
     plan: { id: plan.plan_id, title: plan.title },
     meals: mealsResult.rows,
@@ -732,4 +846,77 @@ export async function getUserActivePlan(userId: number) {
     meals: mealsResult.rows,
     todayCheckin: checkinResult.rows[0] ?? null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// LGPD — patient requests deletion of their own nutritional data
+// ---------------------------------------------------------------------------
+
+export interface NutritionDeletionResult {
+  mealCheckins: number;
+  adherenceCheckins: number;
+  voiceNotes: number;
+  observations: number;
+  plans: number;
+}
+
+export async function deletePatientNutritionData(
+  patientId: number,
+): Promise<NutritionDeletionResult> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const [mealCheckins, adherenceCheckins, voiceNotes, observations, plans] = await Promise.all([
+      client.query(
+        `DELETE FROM nutrition_meal_checkins WHERE patient_id = $1`,
+        [patientId],
+      ),
+      client.query(
+        `DELETE FROM nutrition_adherence_checkins WHERE patient_id = $1`,
+        [patientId],
+      ),
+      client.query(
+        `DELETE FROM nutrition_voice_notes WHERE patient_id = $1`,
+        [patientId],
+      ),
+      client.query(
+        `DELETE FROM nutrition_observations WHERE patient_id = $1`,
+        [patientId],
+      ),
+      // Cascades to nutrition_plan_meals → nutrition_meal_alternatives
+      client.query(
+        `DELETE FROM nutrition_plans WHERE patient_id = $1`,
+        [patientId],
+      ),
+    ]);
+
+    await client.query('COMMIT');
+
+    await logDataAccessEvent({
+      actorId: patientId,
+      subjectUserId: patientId,
+      eventType: 'nutri.data.patient_deletion',
+      eventPayload: {
+        mealCheckins: mealCheckins.rowCount,
+        adherenceCheckins: adherenceCheckins.rowCount,
+        voiceNotes: voiceNotes.rowCount,
+        observations: observations.rowCount,
+        plans: plans.rowCount,
+      },
+    });
+
+    return {
+      mealCheckins: mealCheckins.rowCount ?? 0,
+      adherenceCheckins: adherenceCheckins.rowCount ?? 0,
+      voiceNotes: voiceNotes.rowCount ?? 0,
+      observations: observations.rowCount ?? 0,
+      plans: plans.rowCount ?? 0,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }

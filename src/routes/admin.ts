@@ -4,6 +4,7 @@ import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
 import { ensureAcademyRoles } from '../db/academyRoles';
 import { assignOwner } from '../services/academyTeamService';
+import { dispatchMealReminders } from '../services/pushService';
 import { auditLog } from '../utils/auditLog';
 import {
   getUserProducts,
@@ -1302,6 +1303,24 @@ router.post(
       res.status(500).json({ success: false, error: err.message });
     }
   }
+);
+
+// ===========================================================================
+// Web Push — dispatch meal reminders (chamado por Render Cron Job a cada 5 min)
+// ===========================================================================
+
+router.post(
+  '/nutrition/dispatch-reminders',
+  authMiddleware,
+  adminMiddleware,
+  async (_req: Request, res: Response) => {
+    try {
+      const result = await dispatchMealReminders(30);
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
 );
 
 export default router;

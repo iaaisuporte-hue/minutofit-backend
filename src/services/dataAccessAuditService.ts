@@ -28,7 +28,16 @@ export type DataAccessEventType =
   | 'sport.checkin.created'
   | 'sport.camp.created'
   | 'sport.post_checkin.created'
-  | 'personal.sport.read';
+  | 'personal.sport.read'
+  | 'nutri.plan.created'
+  | 'nutri.plan.updated'
+  | 'nutri.plan.ended'
+  | 'nutri.observation.created'
+  | 'nutri.observation.read'
+  | 'nutri.context.read'
+  | 'nutri.meal_heatmap.read'
+  | 'nutri.adherence.read'
+  | 'nutri.data.patient_deletion';
 
 export interface DataAccessAuditEntry {
   actorId: number;

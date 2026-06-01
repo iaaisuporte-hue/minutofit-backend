@@ -1,8 +1,9 @@
 import crypto from 'crypto';
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import { requireActiveConsent } from '../middleware/requireActiveConsent';
+import { createRateLimiter } from '../lib/rateLimiter';
 import pool from '../config/database';
 import logger from '../lib/logger';
 import {
@@ -28,16 +29,67 @@ const router = Router();
 
 const INVITE_EXPIRY_DAYS = 14;
 
+// Rate limiters — Redis com fallback in-memory
+const observationLimiter = createRateLimiter({
+  storeKey: 'nutri_obs',
+  keyFn: (req) => `${req.user!.id}`,
+  limit: 30,
+  windowSeconds: 3600,
+  errorMessage: 'Limite de 30 observações por hora atingido.',
+});
+
+const voiceNoteLimiter = createRateLimiter({
+  storeKey: 'nutri_voice',
+  keyFn: (req) => `${req.user!.id}:${req.params.patientId}`,
+  limit: 20,
+  windowSeconds: 3600,
+  errorMessage: 'Limite de 20 notas de voz por hora por paciente atingido.',
+});
+
+const inviteLimiter = createRateLimiter({
+  storeKey: 'nutri_invite',
+  keyFn: (req) => `${req.user!.id}`,
+  limit: 20,
+  windowSeconds: 3600,
+  errorMessage: 'Limite de 20 convites por hora atingido.',
+});
+
 // All nutri routes require authentication + nutri product gate
 router.use(authMiddleware, requireProduct('nutri'));
 
+// Verifica vínculo ativo em nutri_patient_assignments antes de qualquer acesso
+// a dados de paciente. Defense-in-depth além do consent: bloqueia acesso
+// mesmo que o nutri conheça o ID do paciente sem ser o responsável.
+async function requireNutriAssignment(req: Request, res: Response, next: NextFunction) {
+  try {
+    const nutriId   = req.user!.id;
+    const patientId = parseInt(req.params.patientId, 10);
+    if (isNaN(patientId)) {
+      return res.status(400).json({ error: 'invalid_patient_id' });
+    }
+    const { rows } = await pool.query(
+      `SELECT 1 FROM nutri_patient_assignments
+       WHERE nutri_id = $1 AND patient_id = $2 AND status = 'active'
+       LIMIT 1`,
+      [nutriId, patientId],
+    );
+    if (rows.length === 0) {
+      return res.status(403).json({ error: 'patient_not_assigned' });
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Defesa em profundidade: qualquer rota futura sob /patients/:patientId
-// (detalhes, plano alimentar, evolução, métricas) exige consentimento ativo
-// do paciente para `profile`. Handlers individuais devem adicionar escopos
-// mais específicos (nutrition, body_metrics, etc.) conforme cada endpoint.
+// (detalhes, plano alimentar, evolução, métricas) exige vínculo ativo +
+// consentimento ativo do paciente para `profile`. Handlers individuais
+// devem adicionar escopos mais específicos conforme cada endpoint.
 router.use(
   '/patients/:patientId',
   roleCheckMiddleware('nutri'),
+  requireNutriAssignment,
   requireActiveConsent('profile'),
 );
 
@@ -45,7 +97,7 @@ router.use(
 // Direct Invites — nutri autônoma convida paciente direto
 // ===========================================================================
 
-router.post('/direct-invites', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+router.post('/direct-invites', roleCheckMiddleware('nutri'), inviteLimiter, async (req: Request, res: Response) => {
   try {
     const nutriId = req.user!.id;
     const invitedEmail = typeof req.body.invitedEmail === 'string'
@@ -239,11 +291,12 @@ router.patch(
   requireActiveConsent('nutrition'),
   async (req: Request, res: Response) => {
     try {
-      const nutriId = req.user!.id;
-      const planId  = Number(req.params.planId);
+      const nutriId   = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const planId    = Number(req.params.planId);
 
-      if (!Number.isFinite(planId)) {
-        return res.status(400).json({ success: false, error: 'Invalid planId' });
+      if (!Number.isFinite(patientId) || !Number.isFinite(planId)) {
+        return res.status(400).json({ success: false, error: 'Invalid patientId or planId' });
       }
 
       const { title, objective, general_notes, meals } = req.body;
@@ -272,7 +325,7 @@ router.patch(
         }
       }
 
-      const plan = await updatePlan(nutriId, planId, { title, objective, general_notes, meals });
+      const plan = await updatePlan(nutriId, planId, patientId, { title, objective, general_notes, meals });
       if (!plan) {
         return res.status(404).json({ success: false, error: 'Active plan not found or not owned by this nutritionist' });
       }
@@ -289,14 +342,15 @@ router.delete(
   requireActiveConsent('nutrition'),
   async (req: Request, res: Response) => {
     try {
-      const nutriId = req.user!.id;
-      const planId  = Number(req.params.planId);
+      const nutriId   = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const planId    = Number(req.params.planId);
 
-      if (!Number.isFinite(planId)) {
-        return res.status(400).json({ success: false, error: 'Invalid planId' });
+      if (!Number.isFinite(patientId) || !Number.isFinite(planId)) {
+        return res.status(400).json({ success: false, error: 'Invalid patientId or planId' });
       }
 
-      const plan = await endPlan(nutriId, planId);
+      const plan = await endPlan(nutriId, planId, patientId);
       if (!plan) {
         return res.status(404).json({ success: false, error: 'Plan not found or already ended' });
       }
@@ -356,7 +410,7 @@ router.get(
         return res.json({ success: true, data: { plan: null, checkins: [] } });
       }
 
-      const checkins = await getAdherenceForPeriod(patientId, plan.id, days);
+      const checkins = await getAdherenceForPeriod(patientId, plan.id, days, nutriId);
       res.json({ success: true, data: { plan: { id: plan.id, title: plan.title }, checkins } });
     } catch (err: any) {
       logger.error({ err }, '[nutri] get adherence error');
@@ -395,6 +449,7 @@ router.get(
 
 router.post(
   '/patients/:patientId/observations',
+  observationLimiter,
   async (req: Request, res: Response) => {
     try {
       const nutriId   = req.user!.id;
@@ -449,6 +504,7 @@ router.get(
 
 router.post(
   '/patients/:patientId/voice-notes',
+  voiceNoteLimiter,
   async (req: Request, res: Response) => {
     try {
       const nutriId   = req.user!.id;

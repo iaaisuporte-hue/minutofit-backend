@@ -8,8 +8,10 @@ import {
   listAdherenceHistory,
   getMealTimeline,
   createMealCheckin,
+  deletePatientNutritionData,
   type MealCheckinStatus,
 } from '../services/nutriService';
+import { saveSubscription, removeSubscription, getVapidPublicKey } from '../services/pushService';
 import pool from '../config/database';
 
 const router = Router();
@@ -158,7 +160,7 @@ router.post('/meals/:mealId/checkins', authMiddleware, async (req: Request, res:
     }
 
     const validStatuses: MealCheckinStatus[] = ['done', 'partial', 'skipped', 'substituted', 'delayed'];
-    const { status, satiety, hunger, energy, note } = req.body;
+    const { status, satiety, hunger, energy, note, substitutedAlternativeId } = req.body;
 
     if (!validStatuses.includes(status)) {
       return res.status(400).json({ success: false, error: `status must be one of: ${validStatuses.join(', ')}` });
@@ -169,12 +171,18 @@ router.post('/meals/:mealId/checkins', authMiddleware, async (req: Request, res:
       return Number.isFinite(n) && n >= 1 && n <= 5 ? n : null;
     };
 
+    const safeAltId = (v: unknown): number | null => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+
     const result = await createMealCheckin(userId, mealId, {
       status,
       satiety: safeInt(satiety),
       hunger: safeInt(hunger),
       energy: safeInt(energy),
       note: typeof note === 'string' ? note : null,
+      substitutedAlternativeId: safeAltId(substitutedAlternativeId),
     });
 
     if (result.error) {
@@ -184,6 +192,73 @@ router.post('/meals/:mealId/checkins', authMiddleware, async (req: Request, res:
   } catch (err: any) {
     console.error('[user/meals/:mealId/checkins]', err);
     return res.status(500).json({ success: false, error: 'Failed to record meal checkin' });
+  }
+});
+
+// ===========================================================================
+// LGPD — exclusão de dados nutricionais (paciente solicita)
+// Requer confirmação explícita no body para evitar deleção acidental.
+// ===========================================================================
+
+router.delete('/nutrition-data', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (req.body?.confirm !== true) {
+      return res.status(400).json({
+        success: false,
+        error: 'confirmation_required',
+        message: 'Envie { "confirm": true } no corpo da requisição para confirmar a exclusão.',
+      });
+    }
+
+    const patientId = req.user!.id;
+    const result = await deletePatientNutritionData(patientId);
+
+    return res.json({
+      success: true,
+      message: 'Dados nutricionais excluídos conforme solicitação LGPD.',
+      deleted: result,
+    });
+  } catch (err: any) {
+    console.error('[user/nutrition-data DELETE]', err);
+    return res.status(500).json({ success: false, error: 'Failed to delete nutrition data' });
+  }
+});
+
+// ===========================================================================
+// Web Push subscriptions
+// ===========================================================================
+
+router.get('/push/vapid-public-key', authMiddleware, (_req: Request, res: Response) => {
+  const key = getVapidPublicKey();
+  if (!key) return res.status(503).json({ success: false, error: 'push_not_configured' });
+  return res.json({ success: true, data: { key } });
+});
+
+router.post('/push/subscriptions', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { endpoint, keys, deviceLabel } = req.body;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return res.status(400).json({ success: false, error: 'invalid_subscription' });
+    }
+    await saveSubscription(userId, { endpoint, keys }, deviceLabel);
+    return res.status(201).json({ success: true });
+  } catch (err: any) {
+    console.error('[user/push/subscriptions]', err);
+    return res.status(500).json({ success: false, error: 'Failed to save subscription' });
+  }
+});
+
+router.delete('/push/subscriptions', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ success: false, error: 'endpoint_required' });
+    await removeSubscription(userId, endpoint);
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('[user/push/subscriptions DELETE]', err);
+    return res.status(500).json({ success: false, error: 'Failed to remove subscription' });
   }
 });
 

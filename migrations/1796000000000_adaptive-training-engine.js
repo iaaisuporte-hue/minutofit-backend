@@ -17,7 +17,7 @@ exports.up = (pgm) => {
     user_id:       { type: 'integer', notNull: true, references: '"users"', onDelete: 'CASCADE' },
     snapshot_date: { type: 'date', notNull: true, default: pgm.func('CURRENT_DATE') },
     level:         { type: 'text', notNull: true },
-    factors:       { type: 'jsonb', notNull: true, default: "'[]'::jsonb" },
+    factors:       { type: 'jsonb', notNull: true, default: pgm.func("'[]'::jsonb") },
     created_at:    { type: 'timestamptz', notNull: true, default: pgm.func('now()') },
   });
   pgm.addConstraint('user_readiness_snapshot', 'chk_readiness_level',
@@ -71,12 +71,12 @@ exports.up = (pgm) => {
     day_index:    { type: 'integer', notNull: true },
     snapshot_date:    { type: 'date', notNull: true, default: pgm.func('CURRENT_DATE') },
     readiness_level:  { type: 'text', notNull: true },
-    readiness_factors:{ type: 'jsonb', notNull: true, default: "'[]'::jsonb" },
+    readiness_factors:{ type: 'jsonb', notNull: true, default: pgm.func("'[]'::jsonb") },
     policy_version:   { type: 'integer', notNull: true },
     policy_snapshot:  { type: 'jsonb', notNull: true },
     original_payload: { type: 'jsonb', notNull: true },
     adapted_payload:  { type: 'jsonb', notNull: true },
-    changes:          { type: 'jsonb', notNull: true, default: "'[]'::jsonb" },
+    changes:          { type: 'jsonb', notNull: true, default: pgm.func("'[]'::jsonb") },
     created_at: { type: 'timestamptz', notNull: true, default: pgm.func('now()') },
   });
   pgm.addConstraint('workout_adaptation_log', 'chk_wal_level',

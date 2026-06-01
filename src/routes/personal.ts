@@ -1529,4 +1529,214 @@ router.get(
   },
 );
 
+// ── Adaptation policy — GET (read or return defaults) ──────────────────────
+router.get(
+  '/students/:studentId/adaptation-policy',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('workouts'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+
+      const link = await pool.query(
+        `SELECT id FROM personal_student_assignments
+         WHERE personal_id = $1 AND student_id = $2 AND status = 'active'`,
+        [personalId, studentId],
+      );
+      if (link.rows.length === 0) {
+        res.status(403).json({ success: false, error: 'assignment_required' });
+        return;
+      }
+
+      const { rows } = await pool.query(
+        `SELECT * FROM training_adaptation_policy
+         WHERE personal_id = $1 AND student_id = $2 LIMIT 1`,
+        [personalId, studentId],
+      );
+
+      if (!rows[0]) {
+        const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+        res.json({ success: true, data: defaultPolicy(personalId, studentId, academyId) });
+        return;
+      }
+
+      res.json({ success: true, data: mapPolicyRow(rows[0]) });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+// ── Adaptation policy — PATCH (upsert) ─────────────────────────────────────
+router.patch(
+  '/students/:studentId/adaptation-policy',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('workouts'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+
+      const link = await pool.query(
+        `SELECT id FROM personal_student_assignments
+         WHERE personal_id = $1 AND student_id = $2 AND status = 'active'`,
+        [personalId, studentId],
+      );
+      if (link.rows.length === 0) {
+        res.status(403).json({ success: false, error: 'assignment_required' });
+        return;
+      }
+
+      const b = req.body;
+      const errors: string[] = [];
+
+      if (b.maxSetReductionPct !== undefined) {
+        const v = Number(b.maxSetReductionPct);
+        if (!Number.isFinite(v) || v < 0 || v > 50) errors.push('maxSetReductionPct deve ser 0–50');
+      }
+      if (b.maxRestIncreasePct !== undefined) {
+        const v = Number(b.maxRestIncreasePct);
+        if (!Number.isFinite(v) || v < 0 || v > 60) errors.push('maxRestIncreasePct deve ser 0–60');
+      }
+      if (b.minIntensityPct !== undefined) {
+        const v = Number(b.minIntensityPct);
+        if (!Number.isFinite(v) || v < 50 || v > 100) errors.push('minIntensityPct deve ser 50–100');
+      }
+      if (errors.length) {
+        res.status(400).json({ success: false, error: 'invalid_policy', details: errors });
+        return;
+      }
+
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+
+      const { rows } = await pool.query(
+        `INSERT INTO training_adaptation_policy
+           (personal_id, student_id, academy_id,
+            master_enabled, allow_volume_reduction, allow_rest_increase,
+            allow_intensity_reduction, allow_active_recovery_substitution, allow_mobility_suggestion,
+            max_set_reduction_pct, max_rest_increase_pct, min_intensity_pct,
+            version, updated_at)
+         VALUES ($1,$2,$3, $4,$5,$6,$7,$8,$9,$10,$11,$12, 1, now())
+         ON CONFLICT (personal_id, student_id) DO UPDATE SET
+           master_enabled                     = COALESCE($4, training_adaptation_policy.master_enabled),
+           allow_volume_reduction             = COALESCE($5, training_adaptation_policy.allow_volume_reduction),
+           allow_rest_increase                = COALESCE($6, training_adaptation_policy.allow_rest_increase),
+           allow_intensity_reduction          = COALESCE($7, training_adaptation_policy.allow_intensity_reduction),
+           allow_active_recovery_substitution = COALESCE($8, training_adaptation_policy.allow_active_recovery_substitution),
+           allow_mobility_suggestion          = COALESCE($9, training_adaptation_policy.allow_mobility_suggestion),
+           max_set_reduction_pct = COALESCE($10, training_adaptation_policy.max_set_reduction_pct),
+           max_rest_increase_pct = COALESCE($11, training_adaptation_policy.max_rest_increase_pct),
+           min_intensity_pct     = COALESCE($12, training_adaptation_policy.min_intensity_pct),
+           version    = training_adaptation_policy.version + 1,
+           updated_at = now()
+         RETURNING *`,
+        [
+          personalId, studentId, academyId,
+          b.masterEnabled !== undefined ? Boolean(b.masterEnabled) : null,
+          b.allowVolumeReduction !== undefined ? Boolean(b.allowVolumeReduction) : null,
+          b.allowRestIncrease !== undefined ? Boolean(b.allowRestIncrease) : null,
+          b.allowIntensityReduction !== undefined ? Boolean(b.allowIntensityReduction) : null,
+          b.allowActiveRecoverySubstitution !== undefined ? Boolean(b.allowActiveRecoverySubstitution) : null,
+          b.allowMobilitySuggestion !== undefined ? Boolean(b.allowMobilitySuggestion) : null,
+          b.maxSetReductionPct !== undefined ? Number(b.maxSetReductionPct) : null,
+          b.maxRestIncreasePct !== undefined ? Number(b.maxRestIncreasePct) : null,
+          b.minIntensityPct !== undefined ? Number(b.minIntensityPct) : null,
+        ],
+      );
+
+      void logDataAccessEvent({
+        actorId: personalId,
+        subjectUserId: studentId,
+        eventType: 'training.policy.updated',
+        eventPayload: { policyVersion: rows[0].version, masterEnabled: rows[0].master_enabled },
+        ip: req.ip,
+      }).catch(() => {});
+
+      res.json({ success: true, data: mapPolicyRow(rows[0]) });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+// ── Adaptation log — GET ────────────────────────────────────────────────────
+router.get(
+  '/students/:studentId/adaptation-log',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('workouts'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+
+      const link = await pool.query(
+        `SELECT id FROM personal_student_assignments
+         WHERE personal_id = $1 AND student_id = $2 AND status = 'active'`,
+        [personalId, studentId],
+      );
+      if (link.rows.length === 0) {
+        res.status(403).json({ success: false, error: 'assignment_required' });
+        return;
+      }
+
+      const from = req.query.from as string | undefined;
+      const to = req.query.to as string | undefined;
+      const limit = Math.min(100, parseInt((req.query.limit as string) || '30', 10));
+
+      const { rows } = await pool.query(
+        `SELECT id, snapshot_date, readiness_level, readiness_factors,
+                policy_version, changes, created_at
+         FROM workout_adaptation_log
+         WHERE student_id = $1 AND personal_id = $2
+           AND ($3::date IS NULL OR snapshot_date >= $3::date)
+           AND ($4::date IS NULL OR snapshot_date <= $4::date)
+         ORDER BY snapshot_date DESC, id DESC
+         LIMIT $5`,
+        [studentId, personalId, from ?? null, to ?? null, limit],
+      );
+
+      res.json({ success: true, data: rows.map(r => ({
+        id: r.id,
+        snapshotDate: r.snapshot_date,
+        readinessLevel: r.readiness_level,
+        readinessFactors: r.readiness_factors,
+        policyVersion: r.policy_version,
+        changes: r.changes,
+        createdAt: r.created_at,
+      })) });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+function mapPolicyRow(r: Record<string, unknown>) {
+  return {
+    personalId: r.personal_id,
+    studentId: r.student_id,
+    academyId: r.academy_id,
+    version: r.version,
+    masterEnabled: r.master_enabled,
+    allowVolumeReduction: r.allow_volume_reduction,
+    allowRestIncrease: r.allow_rest_increase,
+    allowIntensityReduction: r.allow_intensity_reduction,
+    allowActiveRecoverySubstitution: r.allow_active_recovery_substitution,
+    allowMobilitySuggestion: r.allow_mobility_suggestion,
+    maxSetReductionPct: r.max_set_reduction_pct,
+    maxRestIncreasePct: r.max_rest_increase_pct,
+    minIntensityPct: r.min_intensity_pct,
+  };
+}
+
+function defaultPolicy(personalId: number, studentId: number, academyId: number | null) {
+  return {
+    personalId, studentId, academyId, version: 0,
+    masterEnabled: false,
+    allowVolumeReduction: false, allowRestIncrease: false,
+    allowIntensityReduction: false, allowActiveRecoverySubstitution: false, allowMobilitySuggestion: false,
+    maxSetReductionPct: 25, maxRestIncreasePct: 30, minIntensityPct: 70,
+  };
+}
+
 export default router;

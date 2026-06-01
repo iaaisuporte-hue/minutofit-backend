@@ -38,7 +38,9 @@ export type DataAccessEventType =
   | 'nutri.meal_heatmap.read'
   | 'nutri.adherence.read'
   | 'nutri.data.patient_deletion'
-  | 'parq.signed';
+  | 'parq.signed'
+  | 'training.adaptation.applied'
+  | 'training.policy.updated';
 
 export interface DataAccessAuditEntry {
   actorId: number;

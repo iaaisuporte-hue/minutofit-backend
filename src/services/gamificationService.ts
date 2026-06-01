@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import { invalidateMetabolismSnapshot } from '../modules/metabolism/metabolic.service';
 import { invalidatePersonalDashboardForStudent } from './personalDashboardService';
+import { invalidateReadinessSnapshot } from '../modules/readiness/readiness.service';
 import logger from '../lib/logger';
 
 type CheckinSource = 'workout' | 'activity' | 'wellbeing';
@@ -219,6 +220,10 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
     // (workouts_7d, last_workout_at, current_streak, score de engajamento).
     void invalidatePersonalDashboardForStudent(input.userId).catch((err) =>
       logger.error({ err }, '[personal_dashboard] invalidate cache error'),
+    );
+
+    void invalidateReadinessSnapshot(input.userId).catch((err) =>
+      logger.error({ err }, '[readiness] invalidate snapshot error'),
     );
 
     return await getGamificationSummary(input.userId, hadRow, academyId);

@@ -498,6 +498,10 @@ router.patch('/student-compliance', authMiddleware, async (req: Request, res: Re
       parqAnswers,
       parqSignatureDataUrl: String(parqSignatureDataUrl),
       parqFormVersion,
+      meta: {
+        ip: req.ip,
+        userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
+      },
     });
 
     res.json({

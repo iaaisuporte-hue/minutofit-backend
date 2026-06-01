@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { requireSportActive } from '../middleware/sportGate';
+import { requirePhysicalActivityClearance } from '../middleware/requirePhysicalActivityClearance';
 import {
   getSportProfile,
   upsertSportProfile,
@@ -84,7 +85,7 @@ router.delete('/profile', authMiddleware, requireSportActive, async (req: Reques
 
 // ── Pre-workout check-ins ────────────────────────────────────────────────────
 
-router.post('/checkins/pre-workout', authMiddleware, requireSportActive, async (req: Request, res: Response) => {
+router.post('/checkins/pre-workout', authMiddleware, requireSportActive, requirePhysicalActivityClearance(), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const checkin = await createPreWorkoutCheckin(userId, req.body);
@@ -175,7 +176,7 @@ router.patch('/camps/:id', authMiddleware, requireSportActive, async (req: Reque
 
 // ── Post-workout check-ins ───────────────────────────────────────────────────
 
-router.post('/checkins/post-workout', authMiddleware, requireSportActive, async (req: Request, res: Response) => {
+router.post('/checkins/post-workout', authMiddleware, requireSportActive, requirePhysicalActivityClearance(), async (req: Request, res: Response) => {
   try {
     const validationError = validatePostWorkout(req.body as Record<string, unknown>);
     if (validationError) {

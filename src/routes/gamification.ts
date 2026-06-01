@@ -7,6 +7,7 @@ import {
   type WellbeingSignals,
 } from '../services/gamificationService';
 import { requireFeature } from '../middleware/featureGate';
+import { requirePhysicalActivityClearance } from '../middleware/requirePhysicalActivityClearance';
 
 const router = Router();
 // requireAcademyContext removido: standalone user tem gamification (XP, streak)
@@ -32,6 +33,13 @@ router.post(
     const src = req.body?.source;
     if (src === 'wellbeing' || src === 'workout') return next();
     return requireFeature('tracker')(req, res, next);
+  },
+  // PAR-Q clearance: apenas workout e activity exigem assinatura válida.
+  // wellbeing fica aberto (Flutter + aderência não requerem clearance).
+  (req: Request, res: Response, next: NextFunction) => {
+    const src = req.body?.source;
+    if (src === 'wellbeing') return next();
+    return requirePhysicalActivityClearance()(req, res, next);
   },
   async (req: Request, res: Response) => {
     try {

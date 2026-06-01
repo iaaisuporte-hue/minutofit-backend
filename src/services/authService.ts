@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
+import crypto from 'crypto';
 import logger from '../lib/logger';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { assertStrongPassword } from '../utils/passwordPolicy';
@@ -14,6 +15,8 @@ import {
   type OnboardingAnswersInput,
   type ParqAnswerInput,
 } from './complianceValidation';
+import { deriveClearance, invalidateClearanceCache, type PhysicalActivityClearance } from './physicalActivityClearanceService';
+import { logDataAccessEvent } from './dataAccessAuditService';
 
 export type AccessProfile =
   | 'admin_owner'
@@ -57,6 +60,9 @@ export interface User {
   parqSignedAt?: string;
   parqFormVersion?: string;
   parqAnyYes?: boolean;
+  parqExpiresAt?: string;
+  parqSignatureLevel?: number;
+  physicalActivityClearance?: PhysicalActivityClearance;
   /** Triagem de saude + onboarding de treino + PAR-Q assinado (apenas papel user). */
   studentComplianceComplete?: boolean;
   mustChangePassword?: boolean;
@@ -91,6 +97,8 @@ const USER_SELECT_FIELDS = `
   parq_signed_at,
   parq_signature_data,
   parq_any_yes,
+  parq_expires_at,
+  parq_signature_level,
   COALESCE(must_change_password, false) AS must_change_password
 `;
 
@@ -555,6 +563,7 @@ export async function saveStudentCompliance(
     parqAnswers: unknown;
     parqSignatureDataUrl: string;
     parqFormVersion?: string;
+    meta?: { ip?: string; userAgent?: string };
   }
 ): Promise<User> {
   validateHealthFlags(payload.healthFlags);
@@ -564,42 +573,116 @@ export async function saveStudentCompliance(
 
   const version = String(payload.parqFormVersion || PARQ_FORM_VERSION).slice(0, 64);
   const anyYes = parq.some((a) => a.yes);
+  const signedAt = new Date();
+  const expiresAt = new Date(signedAt);
+  expiresAt.setFullYear(expiresAt.getFullYear() + 1);
 
-  const result = await pool.query(
-    `UPDATE users SET
-      sem_historico_hipertensao = $1,
-      sem_historico_cardiaco = $2,
-      sem_restricao_medica_exercicio = $3,
-      apto_para_atividade_fisica = $4,
-      aceita_responsabilidade_informacoes = $5,
-      onboarding_answers = $6::jsonb,
-      parq_answers = $7::jsonb,
-      parq_form_version = $8,
-      parq_signed_at = NOW(),
-      parq_signature_data = $9,
-      parq_any_yes = $10
-    WHERE id = $11 AND role = 'user'
-    RETURNING ${USER_SELECT_FIELDS}`,
-    [
-      payload.healthFlags.semHistoricoHipertensao,
-      payload.healthFlags.semHistoricoCardiaco,
-      payload.healthFlags.semRestricaoMedicaExercicio,
-      payload.healthFlags.aptoParaAtividadeFisica,
-      payload.healthFlags.aceitaResponsabilidadeInformacoes,
-      JSON.stringify(onboarding),
-      JSON.stringify(parq),
-      version,
-      payload.parqSignatureDataUrl,
-      anyYes,
-      userId,
-    ]
-  );
+  // Level-1 evidence hash: SHA-256 of (formVersion + canonical answers + signature)
+  const evidenceHash = crypto
+    .createHash('sha256')
+    .update(version + JSON.stringify(parq) + payload.parqSignatureDataUrl)
+    .digest('hex');
 
-  if (result.rows.length === 0) {
-    throw new Error('Usuario nao encontrado ou sem permissao.');
+  const healthFlagsSnapshot = {
+    sem_historico_hipertensao: payload.healthFlags.semHistoricoHipertensao,
+    sem_historico_cardiaco: payload.healthFlags.semHistoricoCardiaco,
+    sem_restricao_medica_exercicio: payload.healthFlags.semRestricaoMedicaExercicio,
+    apto_para_atividade_fisica: payload.healthFlags.aptoParaAtividadeFisica,
+    aceita_responsabilidade_informacoes: payload.healthFlags.aceitaResponsabilidadeInformacoes,
+  };
+
+  const client = await pool.connect();
+  let updatedRow: any;
+  try {
+    await client.query('BEGIN');
+
+    const updateResult = await client.query(
+      `UPDATE users SET
+        sem_historico_hipertensao = $1,
+        sem_historico_cardiaco = $2,
+        sem_restricao_medica_exercicio = $3,
+        apto_para_atividade_fisica = $4,
+        aceita_responsabilidade_informacoes = $5,
+        onboarding_answers = $6::jsonb,
+        parq_answers = $7::jsonb,
+        parq_form_version = $8,
+        parq_signed_at = $9,
+        parq_signature_data = $10,
+        parq_any_yes = $11,
+        parq_expires_at = $12,
+        parq_signature_level = 1
+      WHERE id = $13 AND role = 'user'
+      RETURNING ${USER_SELECT_FIELDS}`,
+      [
+        payload.healthFlags.semHistoricoHipertensao,
+        payload.healthFlags.semHistoricoCardiaco,
+        payload.healthFlags.semRestricaoMedicaExercicio,
+        payload.healthFlags.aptoParaAtividadeFisica,
+        payload.healthFlags.aceitaResponsabilidadeInformacoes,
+        JSON.stringify(onboarding),
+        JSON.stringify(parq),
+        version,
+        signedAt,
+        payload.parqSignatureDataUrl,
+        anyYes,
+        expiresAt,
+        userId,
+      ]
+    );
+
+    if (updateResult.rows.length === 0) {
+      throw new Error('Usuario nao encontrado ou sem permissao.');
+    }
+    updatedRow = updateResult.rows[0];
+
+    await client.query(
+      `INSERT INTO parq_signatures (
+        user_id, form_version, parq_answers, parq_any_yes, health_flags,
+        signature_data, acceptance_checkbox, evidence_hash, signature_level,
+        signed_at, expires_at, ip, user_agent
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        userId,
+        version,
+        JSON.stringify(parq),
+        anyYes,
+        JSON.stringify(healthFlagsSnapshot),
+        payload.parqSignatureDataUrl,
+        true,
+        evidenceHash,
+        1,
+        signedAt,
+        expiresAt,
+        payload.meta?.ip ?? null,
+        payload.meta?.userAgent?.slice(0, 512) ?? null,
+      ]
+    );
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 
-  return mapUserRow(result.rows[0]);
+  // Post-commit: audit trail + cache invalidation (best-effort, non-blocking)
+  void logDataAccessEvent({
+    actorId: userId,
+    subjectUserId: userId,
+    eventType: 'parq.signed',
+    eventPayload: {
+      formVersion: version,
+      anyYes,
+      expiresAt: expiresAt.toISOString(),
+      signatureLevel: 1,
+      evidenceHash,
+    },
+    ip: payload.meta?.ip,
+  });
+  invalidateClearanceCache(userId);
+
+  return mapUserRow(updatedRow);
 }
 
 function rowHealthComplete(row: any): boolean {
@@ -904,6 +987,9 @@ function mapUserRow(row: any): User {
     parqSignedAt: row.parq_signed_at ? new Date(row.parq_signed_at).toISOString() : undefined,
     parqFormVersion: row.parq_form_version || undefined,
     parqAnyYes: typeof row.parq_any_yes === 'boolean' ? row.parq_any_yes : undefined,
+    parqExpiresAt: row.parq_expires_at ? new Date(row.parq_expires_at).toISOString() : undefined,
+    parqSignatureLevel: row.parq_signature_level ?? undefined,
+    physicalActivityClearance: row.role === 'user' ? deriveClearance(row) : undefined,
     studentComplianceComplete,
   };
 }

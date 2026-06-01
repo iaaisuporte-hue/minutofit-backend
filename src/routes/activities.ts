@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
+import { requirePhysicalActivityClearance } from '../middleware/requirePhysicalActivityClearance';
 import { withTenant, TENANT_PLACEHOLDER } from '../db/tenantQuery';
 import logger from '../lib/logger';
 
@@ -12,7 +13,7 @@ const router = Router();
 router.use(authMiddleware, requireProduct('app'));
 
 // POST /api/activities — save a completed activity session
-router.post('/', async (req: Request, res: Response) => {
+router.post('/', requirePhysicalActivityClearance(), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     // Tenant isolation: stamp academy_id from JWT if available (always present after Phase 2 backfill)

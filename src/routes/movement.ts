@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
+import { requirePhysicalActivityClearance } from '../middleware/requirePhysicalActivityClearance';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -10,7 +11,7 @@ const router = Router();
 router.use(authMiddleware, requireProduct('app'));
 
 // POST /api/movement/sessions — save a completed movement lab session
-router.post('/sessions', async (req: Request, res: Response) => {
+router.post('/sessions', requirePhysicalActivityClearance(), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;

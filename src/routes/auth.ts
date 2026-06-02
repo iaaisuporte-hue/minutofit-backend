@@ -108,17 +108,21 @@ router.post('/register', async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     const message = String(error.message || 'Nao foi possivel concluir o cadastro.');
-    const code = String(error?.code || '');
+    let code = String(error?.code || '');
+    // Deriva o código correto a partir da mensagem amigável quando o erro de
+    // conflito (unique violation traduzida) não carrega code próprio. Sem isso,
+    // um conflito de CPF caía no fallback EMAIL_ALREADY_REGISTERED e o frontend
+    // exibia "este email já tem conta" para um CPF duplicado (email novo).
+    if (!code) {
+      if (message === 'Email ja cadastrado.') code = 'EMAIL_ALREADY_REGISTERED';
+      else if (message === 'CPF ja cadastrado.') code = 'CPF_ALREADY_REGISTERED';
+    }
     const status =
-      code === 'EMAIL_ALREADY_REGISTERED' ||
-      message === 'CPF ja cadastrado.' ||
-      message === 'Email ja cadastrado.'
-        ? 409
-        : 400;
+      code === 'EMAIL_ALREADY_REGISTERED' || code === 'CPF_ALREADY_REGISTERED' ? 409 : 400;
     res.status(status).json({
       success: false,
       error: message,
-      ...(status === 409 ? { code: code || 'EMAIL_ALREADY_REGISTERED' } : {}),
+      ...(status === 409 && code ? { code } : {}),
     });
   }
 });

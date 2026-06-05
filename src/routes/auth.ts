@@ -12,6 +12,11 @@ import { logAcademyAction } from '../services/auditService';
 import { getUserProducts, getUserProductsWithMeta } from '../db/ensureProductsSchema';
 import { findOrCreateUserFromContext, verifyUserPassword } from '../services/userIdentityService';
 import { grantMembership } from '../services/membershipService';
+import {
+  grantConsents,
+  DIRECT_INVITE_SCOPES_PERSONAL,
+  DIRECT_INVITE_SCOPES_NUTRI,
+} from '../services/consentService';
 import logger from '../lib/logger';
 import { createMetabolicCheckin, normalizeMetabolicCheckinInput } from '../services/metabolicCheckinService';
 import {
@@ -829,6 +834,11 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
       [invite.personal_id, identityUser.id]
     );
 
+    // Grant default consents — o aluno iniciou o vínculo ao usar o link de
+    // convite, então concede o mesmo conjunto dos vínculos legados. Sem isso o
+    // personal recebe `consent_required` ao abrir as fichas do aluno.
+    await grantConsents(identityUser.id, invite.personal_id, 'personal', DIRECT_INVITE_SCOPES_PERSONAL, pool);
+
     // Grant PERSONAL membership
     await grantMembership(identityUser.id, 'personal', {
       professionalId: invite.personal_id,
@@ -947,6 +957,10 @@ router.post('/direct-invite-nutri/:token/accept', async (req: Request, res: Resp
        ON CONFLICT (nutri_id, patient_id) DO UPDATE SET status = 'active', updated_at = NOW()`,
       [invite.nutri_id, identityUser.id]
     );
+
+    // Grant default consents — mesmo motivo do convite direto de personal:
+    // sem isso o nutri recebe `consent_required` ao abrir os dados do paciente.
+    await grantConsents(identityUser.id, invite.nutri_id, 'nutri', DIRECT_INVITE_SCOPES_NUTRI, pool);
 
     // Grant NUTRI + APP memberships
     await grantMembership(identityUser.id, 'nutri', {

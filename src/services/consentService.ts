@@ -20,6 +20,23 @@ export type ProfessionalRole = 'personal' | 'nutri';
 export const DEFAULT_SCOPES_PERSONAL: ConsentScope[] = ['profile', 'workouts', 'daily_checkins'];
 export const DEFAULT_SCOPES_NUTRI: ConsentScope[] = ['profile', 'daily_checkins', 'nutrition'];
 
+/**
+ * Escopos concedidos quando o aluno entra por convite direto do profissional
+ * (vínculo iniciado pelo próprio aluno ao usar o link de convite). Espelham
+ * o backfill da migration 1790600000000 para que um aluno convidado direto se
+ * comporte igual a um vínculo legado — sem lacunas de `consent_required` nas
+ * abas de fichas, metabolismo, sono etc. O aluno pode revogar granularmente
+ * depois em "Minha equipe".
+ */
+export const DIRECT_INVITE_SCOPES_PERSONAL: ConsentScope[] = [
+  'profile', 'workouts', 'daily_checkins', 'metabolic', 'sleep',
+  'body_metrics', 'parq_anamnese', 'activity_logs', 'chat_history',
+];
+export const DIRECT_INVITE_SCOPES_NUTRI: ConsentScope[] = [
+  'profile', 'nutrition', 'daily_checkins', 'metabolic',
+  'body_metrics', 'parq_anamnese', 'chat_history',
+];
+
 export interface ConsentEntry {
   id: string;
   scope: ConsentScope;

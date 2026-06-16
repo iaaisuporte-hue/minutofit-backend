@@ -1611,6 +1611,8 @@ router.patch(
 
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
 
+      // COALESCE no VALUES também: primeiro INSERT pode receber NULL para campos
+      // não enviados, mas as colunas são NOT NULL — usar defaults da tabela.
       const { rows } = await pool.query(
         `INSERT INTO training_adaptation_policy
            (personal_id, student_id, academy_id,
@@ -1618,7 +1620,11 @@ router.patch(
             allow_intensity_reduction, allow_active_recovery_substitution, allow_mobility_suggestion,
             max_set_reduction_pct, max_rest_increase_pct, min_intensity_pct,
             version, updated_at)
-         VALUES ($1,$2,$3, $4,$5,$6,$7,$8,$9,$10,$11,$12, 1, now())
+         VALUES ($1,$2,$3,
+           COALESCE($4, FALSE), COALESCE($5, FALSE), COALESCE($6, FALSE),
+           COALESCE($7, FALSE), COALESCE($8, FALSE), COALESCE($9, FALSE),
+           COALESCE($10, 25),   COALESCE($11, 30),   COALESCE($12, 70),
+           1, now())
          ON CONFLICT (personal_id, student_id) DO UPDATE SET
            master_enabled                     = COALESCE($4, training_adaptation_policy.master_enabled),
            allow_volume_reduction             = COALESCE($5, training_adaptation_policy.allow_volume_reduction),

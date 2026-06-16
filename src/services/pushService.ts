@@ -146,3 +146,66 @@ export async function dispatchMealReminders(windowMinutes = 30): Promise<{ dispa
   }
   return { dispatched };
 }
+
+/**
+ * Dispatch check-in reminders for users who:
+ *   - have at least one active adaptation policy (master_enabled = true)
+ *   - have a push subscription
+ *   - have NOT checked in today
+ *   - have NOT already received this reminder today (dedup via data_access_audit)
+ *
+ * Intended to be called once per day via admin endpoint / Render Cron.
+ */
+export async function dispatchCheckinReminders(): Promise<{ dispatched: number; skipped: number }> {
+  if (!init()) {
+    logger.warn('[push] VAPID not configured — skipping check-in reminder dispatch');
+    return { dispatched: 0, skipped: 0 };
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ps.user_id
+     FROM push_subscriptions ps
+     JOIN training_adaptation_policy tap
+       ON tap.student_id = ps.user_id AND tap.master_enabled = TRUE
+     WHERE NOT EXISTS (
+       SELECT 1 FROM user_daily_checkins udc
+       WHERE udc.user_id = ps.user_id AND udc.date_key = $1::date
+     )
+     AND NOT EXISTS (
+       SELECT 1 FROM data_access_audit daa
+       WHERE daa.actor_id = ps.user_id
+         AND daa.event_type = 'push.checkin_reminder'
+         AND daa.created_at::date = $1::date
+     )`,
+    [today],
+  );
+
+  let dispatched = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const userId: number = row.user_id;
+    try {
+      await sendToUser(userId, {
+        title: 'Treino adaptado esperando por você',
+        body: 'Registre seu check-in e receba seu treino ajustado para como você está hoje.',
+        tag: `checkin-reminder-${today}`,
+      });
+
+      await pool.query(
+        `INSERT INTO data_access_audit (actor_id, subject_user_id, event_type, event_payload)
+         VALUES ($1, $1, 'push.checkin_reminder', '{}')`,
+        [userId],
+      );
+      dispatched++;
+    } catch (err) {
+      logger.warn({ err, userId }, '[push] check-in reminder failed');
+      skipped++;
+    }
+  }
+
+  logger.info({ dispatched, skipped }, '[push] check-in reminders dispatched');
+  return { dispatched, skipped };
+}

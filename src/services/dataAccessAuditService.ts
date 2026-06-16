@@ -41,7 +41,8 @@ export type DataAccessEventType =
   | 'parq.signed'
   | 'training.adaptation.applied'
   | 'training.adaptation.viewed'
-  | 'training.policy.updated';
+  | 'training.policy.updated'
+  | 'push.checkin_reminder';
 
 export interface DataAccessAuditEntry {
   actorId: number;

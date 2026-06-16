@@ -4,7 +4,7 @@ import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
 import { ensureAcademyRoles } from '../db/academyRoles';
 import { assignOwner } from '../services/academyTeamService';
-import { dispatchMealReminders } from '../services/pushService';
+import { dispatchMealReminders, dispatchCheckinReminders } from '../services/pushService';
 import { auditLog } from '../utils/auditLog';
 import {
   getUserProducts,
@@ -1417,6 +1417,20 @@ router.post(
   async (_req: Request, res: Response) => {
     try {
       const result = await dispatchMealReminders(30);
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+router.post(
+  '/push/dispatch-checkin-reminders',
+  authMiddleware,
+  adminMiddleware,
+  async (_req: Request, res: Response) => {
+    try {
+      const result = await dispatchCheckinReminders();
       res.json({ success: true, data: result });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });

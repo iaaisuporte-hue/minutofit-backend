@@ -558,6 +558,107 @@ router.post('/professionals', authMiddleware, adminMiddleware, async (req: Reque
   }
 });
 
+// GET /admin/dashboard/loop-metrics — 90-day retention KPIs for the adaptive loop
+router.get('/dashboard/loop-metrics', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const window = (req.query.days ? parseInt(req.query.days as string, 10) : 30);
+
+    // KPI 1: Check-in wellbeing D7 retention
+    // Users with ≥1 wellbeing check-in 7d ago who also checked in since then
+    const d7Res = await pool.query(`
+      WITH cohort AS (
+        SELECT DISTINCT user_id
+        FROM user_daily_checkins
+        WHERE source = 'wellbeing'
+          AND date_key::date = CURRENT_DATE - INTERVAL '7 days'
+      ),
+      retained AS (
+        SELECT DISTINCT c.user_id
+        FROM cohort c
+        JOIN user_daily_checkins udc ON udc.user_id = c.user_id
+          AND udc.source = 'wellbeing'
+          AND udc.date_key::date > CURRENT_DATE - INTERVAL '7 days'
+          AND udc.date_key::date <= CURRENT_DATE
+      )
+      SELECT
+        COUNT(cohort.user_id) AS cohort_size,
+        COUNT(retained.user_id) AS retained,
+        ROUND(100.0 * COUNT(retained.user_id) / NULLIF(COUNT(cohort.user_id), 0), 1) AS d7_retention_pct
+      FROM cohort
+      LEFT JOIN retained ON cohort.user_id = retained.user_id
+    `);
+
+    // KPI 2: % of adaptation log entries that had at least 1 change (policy was ON + readiness triggered)
+    const adaptedRes = await pool.query(`
+      SELECT
+        COUNT(*) AS total_logs,
+        COUNT(*) FILTER (WHERE jsonb_array_length(changes) > 0) AS with_changes,
+        ROUND(
+          100.0 * COUNT(*) FILTER (WHERE jsonb_array_length(changes) > 0)
+          / NULLIF(COUNT(*), 0), 1
+        ) AS pct_adapted
+      FROM workout_adaptation_log
+      WHERE snapshot_date >= CURRENT_DATE - ($1 || ' days')::interval
+    `, [window]);
+
+    // KPI 2b: readiness level distribution in the same window
+    const readinessDistRes = await pool.query(`
+      SELECT readiness_level, COUNT(*) AS count
+      FROM workout_adaptation_log
+      WHERE snapshot_date >= CURRENT_DATE - ($1 || ' days')::interval
+      GROUP BY readiness_level
+    `, [window]);
+
+    // KPI 3: % of adapted workouts where the user expanded the banner
+    const viewedRes = await pool.query(`
+      SELECT
+        adapted.count AS adapted_with_changes,
+        viewed.count AS banner_views,
+        ROUND(
+          100.0 * viewed.count / NULLIF(adapted.count, 0), 1
+        ) AS pct_banner_viewed
+      FROM (
+        SELECT COUNT(*) AS count
+        FROM workout_adaptation_log
+        WHERE jsonb_array_length(changes) > 0
+          AND snapshot_date >= CURRENT_DATE - ($1 || ' days')::interval
+      ) adapted,
+      (
+        SELECT COUNT(*) AS count
+        FROM data_access_audit
+        WHERE event_type = 'training.adaptation.viewed'
+          AND created_at >= NOW() - ($1 || ' days')::interval
+      ) viewed
+    `, [window]);
+
+    // KPI 4: daily active check-in users (wellbeing) last 30d for trend
+    const dailyRes = await pool.query(`
+      SELECT
+        date_key::date AS day,
+        COUNT(DISTINCT user_id) AS users
+      FROM user_daily_checkins
+      WHERE source = 'wellbeing'
+        AND date_key::date >= CURRENT_DATE - ($1 || ' days')::interval
+      GROUP BY date_key::date
+      ORDER BY day
+    `, [window]);
+
+    res.json({
+      success: true,
+      data: {
+        windowDays: window,
+        checkinD7: d7Res.rows[0],
+        adaptationRate: adaptedRes.rows[0],
+        readinessDistribution: readinessDistRes.rows,
+        bannerEngagement: viewedRes.rows[0],
+        dailyCheckinUsers: dailyRes.rows,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // ─── Academias (MetaCore Admin) ──────────────────────────────────────────────
 
 // GET /admin/academies — lista todas as academias

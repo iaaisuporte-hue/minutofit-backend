@@ -40,6 +40,7 @@ export type DataAccessEventType =
   | 'nutri.data.patient_deletion'
   | 'parq.signed'
   | 'training.adaptation.applied'
+  | 'training.adaptation.viewed'
   | 'training.policy.updated';
 
 export interface DataAccessAuditEntry {

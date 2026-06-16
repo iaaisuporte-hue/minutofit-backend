@@ -111,6 +111,24 @@ router.get('/today', async (req: Request, res: Response) => {
   }
 });
 
+// Frontend UX events — allow-list only, actorId = subjectUserId = self
+const ALLOWED_FRONTEND_EVENTS = new Set<string>(['training.adaptation.viewed']);
+
+router.post('/events', async (req: Request, res: Response) => {
+  const { eventType, payload = {} } = req.body ?? {};
+  if (typeof eventType !== 'string' || !ALLOWED_FRONTEND_EVENTS.has(eventType)) {
+    return res.status(400).json({ success: false, error: 'unknown_event' });
+  }
+  void logDataAccessEvent({
+    actorId: req.user!.id,
+    subjectUserId: req.user!.id,
+    eventType: eventType as 'training.adaptation.viewed',
+    eventPayload: typeof payload === 'object' && payload !== null ? payload : {},
+    ip: req.ip,
+  }).catch(() => {});
+  return res.json({ success: true });
+});
+
 async function upsertAdaptationLog(params: {
   studentId: number;
   personalId: number;

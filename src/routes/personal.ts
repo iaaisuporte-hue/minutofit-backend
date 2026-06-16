@@ -1530,10 +1530,11 @@ router.get(
 );
 
 // ── Adaptation policy — GET (read or return defaults) ──────────────────────
+// Sem requireActiveConsent: policy é configuração do personal, não dado do aluno.
+// Autorização real = assignment ativo (checado dentro do handler).
 router.get(
   '/students/:studentId/adaptation-policy',
   roleCheckMiddleware('personal'),
-  requireActiveConsent('workouts'),
   async (req: Request, res: Response) => {
     try {
       const personalId = req.user!.id;
@@ -1569,10 +1570,10 @@ router.get(
 );
 
 // ── Adaptation policy — PATCH (upsert) ─────────────────────────────────────
+// Sem requireActiveConsent: policy é configuração do personal, não dado do aluno.
 router.patch(
   '/students/:studentId/adaptation-policy',
   roleCheckMiddleware('personal'),
-  requireActiveConsent('workouts'),
   async (req: Request, res: Response) => {
     try {
       const personalId = req.user!.id;

@@ -1026,6 +1026,16 @@ router.post(
       const personalId = req.user!.id;
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
 
+      const gate = await checkStudentLimitGate(personalId);
+      if (gate.over) {
+        return res.status(403).json({
+          success: false,
+          code: 'STUDENT_LIMIT_REACHED',
+          limit: gate.limit,
+          current: gate.current,
+        });
+      }
+
       const name: string = (req.body.name ?? '').toString().trim();
       const email: string = (req.body.email ?? '').toString().trim().toLowerCase();
       const phone: string | null = typeof req.body.phone === 'string' ? req.body.phone.trim() || null : null;

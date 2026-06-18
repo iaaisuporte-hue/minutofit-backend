@@ -28,7 +28,8 @@ export type AuditAction =
   | 'personal.student_note.deleted'
   | 'personal.student.removed'
   | 'membership.expire_graces'
-  | 'admin.password_set';
+  | 'admin.password_set'
+  | 'personal.plan.set';
 
 export interface AuditEntry {
   academyId: number | null;

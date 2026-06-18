@@ -56,6 +56,10 @@ import { listCamps } from '../services/campService';
 import { getFatigue7d, getLastRecoveryGap } from '../services/postWorkoutService';
 import { findOrCreateUserFromContext } from '../services/userIdentityService';
 import { grantMembership } from '../services/membershipService';
+import {
+  checkStudentLimitGate,
+  getPersonalPlan,
+} from '../services/personalPlanService';
 import crypto from 'crypto';
 import {
   createRelationshipAction,
@@ -97,6 +101,19 @@ router.use(
   roleCheckMiddleware('personal'),
   requireActiveConsent('profile'),
 );
+
+// ── Plano SaaS do Personal ─────────────────────────────────────────────────
+
+router.get('/plan', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const config = await getPersonalPlan(req.user!.id);
+    res.json({ success: true, data: config });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'Failed to load personal plan' });
+  }
+});
+
+// ── Dashboard ──────────────────────────────────────────────────────────────
 
 router.get('/dashboard', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
@@ -150,6 +167,11 @@ router.get(
       const studentId = Number(req.params.studentId);
       if (!Number.isFinite(studentId)) {
         return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+
+      const planConfig = await getPersonalPlan(req.user!.id);
+      if (!planConfig.aiEnabled) {
+        return res.status(403).json({ success: false, code: 'AI_NOT_ENABLED', upgradeRequired: 'pro' });
       }
 
       if (!process.env.OPENAI_API_KEY) {
@@ -1101,6 +1123,17 @@ router.post(
   async (req: Request, res: Response) => {
     try {
       const personalId = req.user!.id;
+
+      const gate = await checkStudentLimitGate(personalId);
+      if (gate.over) {
+        return res.status(403).json({
+          success: false,
+          code: 'STUDENT_LIMIT_REACHED',
+          limit: gate.limit,
+          current: gate.current,
+        });
+      }
+
       const invitedEmail = typeof req.body.invitedEmail === 'string' ? req.body.invitedEmail.trim().toLowerCase() || null : null;
       const invitedName = typeof req.body.invitedName === 'string' ? req.body.invitedName.trim().slice(0, 255) || null : null;
 

@@ -22,6 +22,7 @@ import {
 } from '../services/workoutProtocolService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
+import { setPersonalPlan, type PersonalPlan } from '../services/personalPlanService';
 
 const router = Router();
 
@@ -1217,6 +1218,40 @@ router.post('/users/:userId/products/revoke', authMiddleware, adminMiddleware, a
       entityType: 'user',
       entityId: userId,
       meta: { productKey },
+      ipAddress: req.ip,
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/users/:userId/personal-plan — seta plano SaaS do personal (Free/Starter/Pro)
+router.post('/users/:userId/personal-plan', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ success: false, error: 'Invalid userId' });
+
+    const { plan, periodDays, notes } = req.body;
+    const validPlans: PersonalPlan[] = ['free', 'starter', 'pro'];
+    if (!validPlans.includes(plan as PersonalPlan)) {
+      return res.status(400).json({ success: false, error: `Invalid plan. Valid: ${validPlans.join(', ')}` });
+    }
+
+    await setPersonalPlan(userId, plan as PersonalPlan, {
+      periodDays: typeof periodDays === 'number' ? periodDays : undefined,
+      notes: typeof notes === 'string' ? notes : undefined,
+      setBy: req.user!.id,
+    });
+
+    logAcademyAction({
+      academyId: null,
+      userId: req.user!.id,
+      action: 'personal.plan.set',
+      entityType: 'user',
+      entityId: userId,
+      meta: { plan, periodDays: periodDays ?? null },
       ipAddress: req.ip,
     });
 

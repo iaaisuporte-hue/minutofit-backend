@@ -209,3 +209,97 @@ export async function dispatchCheckinReminders(): Promise<{ dispatched: number; 
   logger.info({ dispatched, skipped }, '[push] check-in reminders dispatched');
   return { dispatched, skipped };
 }
+
+/**
+ * Agrupa sinais de alunos em risco e envia UMA notificação por personal
+ * em vez de N notificações separadas — princípio de agregação (Fase E).
+ *
+ * Regras:
+ *  - Só dispara se houver ≥ 1 aluno com riskScore ≥ 55 no portfolio.
+ *  - Máximo 1 disparo por personal por dia (dedup via data_access_audit).
+ *  - Título varia conforme quantidade: "2 alunos precisam de atenção".
+ */
+export async function dispatchPersonalAtRiskAlerts(): Promise<{ dispatched: number; skipped: number }> {
+  if (!init()) {
+    logger.warn('[push] VAPID not configured — skipping personal at-risk alerts');
+    return { dispatched: 0, skipped: 0 };
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Personals com push subscription que ainda não receberam este alerta hoje
+  const { rows: personals } = await pool.query<{ personal_id: number }>(
+    `SELECT DISTINCT ps.user_id AS personal_id
+     FROM push_subscriptions ps
+     JOIN users u ON u.id = ps.user_id AND u.role = 'personal'
+     WHERE NOT EXISTS (
+       SELECT 1 FROM data_access_audit daa
+       WHERE daa.actor_id = ps.user_id
+         AND daa.event_type = 'push.personal_at_risk_alert'
+         AND daa.created_at::date = $1::date
+     )`,
+    [today],
+  );
+
+  let dispatched = 0;
+  let skipped = 0;
+
+  for (const row of personals) {
+    const personalId = row.personal_id;
+    try {
+      // Buscar alunos em risco deste personal agrupados em uma única query
+      const { rows: atRisk } = await pool.query<{ name: string; risk_score: number }>(
+        `SELECT name, risk_score FROM (
+           SELECT u.name,
+                  GREATEST(0, 100 - LEAST(100,
+                    COALESCE(gs.current_streak, 0) * 2 +
+                    (SELECT COUNT(*)::int FROM user_workout_logs uwl
+                     WHERE uwl.user_id = u.id
+                       AND uwl.completed_at >= NOW() - INTERVAL '7 days') * 5
+                  )) AS risk_score
+           FROM personal_student_assignments psa
+           JOIN users u ON u.id = psa.student_id
+           LEFT JOIN user_gamification_stats gs ON gs.user_id = u.id
+           WHERE psa.personal_id = $1
+             AND psa.status = 'active'
+             AND u.role = 'user'
+         ) scored
+         WHERE risk_score >= 55
+         ORDER BY risk_score DESC
+         LIMIT 5`,
+        [personalId],
+      );
+
+      if (atRisk.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      const names = atRisk.slice(0, 3).map((r) => r.name.split(' ')[0]).join(', ');
+      const count = atRisk.length;
+      const title = count === 1 ? 'Aluno precisa de atenção' : `${count} alunos precisam de atenção`;
+      const body = count === 1
+        ? `${names} está com baixo engajamento. Um contato pode fazer diferença.`
+        : `${names}${count > 3 ? ' e outros' : ''} — engajamento em queda. Veja o dashboard.`;
+
+      await sendToUser(personalId, {
+        title,
+        body,
+        tag: `personal-at-risk-${today}`,
+      });
+
+      await pool.query(
+        `INSERT INTO data_access_audit (actor_id, subject_user_id, event_type, event_payload)
+         VALUES ($1, $1, 'push.personal_at_risk_alert', $2)`,
+        [personalId, JSON.stringify({ count, names: atRisk.map((r) => r.name) })],
+      );
+      dispatched++;
+    } catch (err) {
+      logger.warn({ err, personalId }, '[push] personal at-risk alert failed');
+      skipped++;
+    }
+  }
+
+  logger.info({ dispatched, skipped }, '[push] personal at-risk alerts dispatched');
+  return { dispatched, skipped };
+}

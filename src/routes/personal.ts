@@ -8,6 +8,7 @@ import {
   getPersonalStudentSnapshot,
   listPersonalStudentActivities,
 } from '../services/personalDashboardService';
+import { generateStudentSummary } from '../services/ai/studentSummaryAi';
 import {
   createStudentExerciseNote,
   deleteStudentExerciseNote,
@@ -75,6 +76,7 @@ import {
   createBillingPlan,
   deleteBillingPlan,
   getBillingSettings,
+  getStudentSubscription,
   listBillingPlans,
   subscribeStudent,
   updateBillingPlan,
@@ -135,6 +137,62 @@ router.get(
         return res.status(403).json({ success: false, error: error.message });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to load student snapshot' });
+    }
+  }
+);
+
+router.get(
+  '/students/:studentId/ai-summary',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('profile'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(503).json({ success: false, error: 'Módulo de IA não configurado.' });
+      }
+
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const dashboard = await getPersonalDashboard(req.user!.id, academyId);
+      const student = dashboard.students.find((s) => s.id === String(studentId));
+
+      if (!student) {
+        return res.status(403).json({ success: false, error: 'Aluno não encontrado na sua carteira.' });
+      }
+
+      const assignedWeeks = student.assignedAtISO
+        ? Math.floor((Date.now() - new Date(student.assignedAtISO).getTime()) / (1000 * 60 * 60 * 24 * 7))
+        : 0;
+
+      const data = await generateStudentSummary(req.user!.id, {
+        name: student.name,
+        streakDays: student.streakDays,
+        adherencePct: student.adherencePct,
+        workouts7d: student.workouts7d,
+        workouts30d: student.workouts30d,
+        metabolismScore: student.metabolismScore,
+        metabolismTrend: student.metabolismTrend,
+        metabolismDelta7d: student.metabolismDelta7d,
+        latestSleptWell: student.latestSleptWell,
+        engagementStatus: student.engagementStatus,
+        riskScore: student.riskScore,
+        engagementScore: student.engagementScore,
+        assignedWeeks,
+      });
+
+      res.json({ success: true, data });
+    } catch (error: any) {
+      if (error?.message?.includes('Limite de')) {
+        return res.status(429).json({ success: false, error: error.message });
+      }
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Falha ao gerar resumo IA.' });
     }
   }
 );
@@ -1378,6 +1436,21 @@ router.delete(
       res.json({ success: true });
     } catch (error: any) {
       if (error.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: error.message });
+    }
+  }
+);
+
+router.get(
+  '/students/:studentId/subscription',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const personalId = req.user!.id;
+      const studentId = Number(req.params.studentId);
+      const sub = await getStudentSubscription(personalId, studentId);
+      res.json({ success: true, data: sub });
+    } catch (error: any) {
       res.status(500).json({ success: false, error: error.message });
     }
   }

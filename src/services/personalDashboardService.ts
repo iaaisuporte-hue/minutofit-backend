@@ -463,6 +463,153 @@ function daysSinceLastWorkout(iso: string | null): number {
   return Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24));
 }
 
+// ---------------------------------------------------------------------------
+// Máquina de Reconhecimento — simetria com Máquina de Risco
+// ---------------------------------------------------------------------------
+
+export type RecognitionMilestone = {
+  studentId: string;
+  studentName: string;
+  milestoneKey: string;
+  milestoneLabel: string;
+  milestoneDetail: string;
+  streakDays: number;
+  workouts7d: number;
+  workouts30d: number;
+  adherencePct: number;
+  engagementStatus: PersonalDashboardEngagementStatus;
+  lastWorkoutISO: string | null;
+};
+
+async function loadAlreadyRecognizedMilestones(personalId: number): Promise<Set<string>> {
+  const result = await pool.query<{ student_id: number; milestone_key: string }>(
+    `SELECT student_id, payload_json->>'milestone_key' AS milestone_key
+     FROM personal_relationship_actions
+     WHERE personal_id = $1
+       AND action_type = 'recognition_sent'
+       AND created_at >= NOW() - INTERVAL '45 days'
+       AND payload_json->>'milestone_key' IS NOT NULL`,
+    [personalId]
+  );
+  const recognized = new Set<string>();
+  for (const row of result.rows) {
+    if (row.milestone_key) {
+      recognized.add(`${row.student_id}:${row.milestone_key}`);
+    }
+  }
+  return recognized;
+}
+
+function recognitionPeriodKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function computeRecognitionMilestones(
+  students: PersonalDashboardStudent[],
+  alreadyRecognized: Set<string>
+): RecognitionMilestone[] {
+  if (students.length === 0) return [];
+  const period = recognitionPeriodKey();
+  const milestones: RecognitionMilestone[] = [];
+
+  for (const s of students) {
+    const candidates: Array<{ key: string; label: string; detail: string }> = [];
+
+    // Streak milestones — prioridade decrescente, do maior para o menor
+    if (s.streakDays >= 90) {
+      candidates.push({
+        key: `streak_90:${period}`,
+        label: '90 dias de aderência',
+        detail: `${s.name} está há ${s.streakDays} dias em sequência.`,
+      });
+    } else if (s.streakDays >= 60) {
+      candidates.push({
+        key: `streak_60:${period}`,
+        label: '60 dias de sequência',
+        detail: `${s.name} está há ${s.streakDays} dias consecutivos.`,
+      });
+    } else if (s.streakDays >= 30) {
+      candidates.push({
+        key: `streak_30:${period}`,
+        label: 'Um mês em sequência',
+        detail: `${s.name} treina há ${s.streakDays} dias seguidos.`,
+      });
+    } else if (s.streakDays >= 14) {
+      candidates.push({
+        key: `streak_14:${period}`,
+        label: 'Duas semanas seguidas',
+        detail: `${s.name} está em sequência há ${s.streakDays} dias.`,
+      });
+    } else if (s.streakDays >= 7) {
+      candidates.push({
+        key: `streak_7:${period}`,
+        label: '7 dias de aderência',
+        detail: `${s.name} completa 1 semana em sequência.`,
+      });
+    }
+
+    // Alta frequência semanal
+    if (s.workouts7d >= 5) {
+      candidates.push({
+        key: `freq_5:${period}`,
+        label: '5 treinos esta semana',
+        detail: `${s.name} treinou ${s.workouts7d} vezes nos últimos 7 dias.`,
+      });
+    }
+
+    // Meta mensal batida
+    if (s.adherencePct >= 100) {
+      candidates.push({
+        key: `full_adherence:${period}`,
+        label: 'Meta do mês batida',
+        detail: `${s.name} atingiu ${s.adherencePct}% da meta mensal.`,
+      });
+    }
+
+    // Volume mensal expressivo
+    if (s.workouts30d >= 12) {
+      candidates.push({
+        key: `vol_12:${period}`,
+        label: '12 treinos no mês',
+        detail: `${s.name} acumulou ${s.workouts30d} treinos nos últimos 30 dias.`,
+      });
+    }
+
+    // Engajamento em ascensão
+    if (s.engagementStatus === 'evolving') {
+      candidates.push({
+        key: `evolving:${period}`,
+        label: 'Evolução consistente',
+        detail: `${s.name} está em ascensão — engajamento e aderência em alta.`,
+      });
+    }
+
+    // Primeiro marco não-reconhecido deste aluno (um por aluno para não gerar ruído)
+    for (const c of candidates) {
+      const dedupKey = `${s.id}:${c.key}`;
+      if (!alreadyRecognized.has(dedupKey)) {
+        milestones.push({
+          studentId: s.id,
+          studentName: s.name,
+          milestoneKey: c.key,
+          milestoneLabel: c.label,
+          milestoneDetail: c.detail,
+          streakDays: s.streakDays,
+          workouts7d: s.workouts7d,
+          workouts30d: s.workouts30d,
+          adherencePct: s.adherencePct,
+          engagementStatus: s.engagementStatus,
+          lastWorkoutISO: s.lastWorkoutISO,
+        });
+        break;
+      }
+    }
+  }
+
+  return milestones.slice(0, 8);
+}
+
 export async function getPersonalDashboard(personalId: number, academyId?: number | null) {
   const redis = getRedisClient();
   const cacheKey = personalDashboardCacheKey(personalId, academyId);
@@ -681,6 +828,8 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     .slice(0, 8);
 
   const insights = computeRetentionInsights(students);
+  const recognizedMilestones = await loadAlreadyRecognizedMilestones(personalId);
+  const needsRecognitionTop = computeRecognitionMilestones(students, recognizedMilestones);
 
   const dashboard = {
     summary: {
@@ -699,6 +848,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       metabolismDistribution,
       atRiskTop,
       insights,
+      needsRecognitionTop,
     },
     students,
     generatedAt: new Date().toISOString(),

@@ -236,6 +236,19 @@ export async function subscribeStudent(
   }
 }
 
+export async function getStudentSubscription(
+  personalId: number,
+  studentId: number
+): Promise<StudentSubscription | null> {
+  const { rows } = await pool.query(
+    `SELECT * FROM personal_student_subscriptions
+     WHERE personal_id = $1 AND student_id = $2 AND status NOT IN ('canceled','expired')
+     ORDER BY created_at DESC LIMIT 1`,
+    [personalId, studentId]
+  );
+  return rows.length > 0 ? mapSubscription(rows[0]) : null;
+}
+
 export async function cancelSubscription(subId: number, personalId: number): Promise<StudentSubscription> {
   const r = await pool.query(
     `UPDATE personal_student_subscriptions

@@ -4,7 +4,7 @@ import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
 import { ensureAcademyRoles } from '../db/academyRoles';
 import { assignOwner } from '../services/academyTeamService';
-import { dispatchMealReminders, dispatchCheckinReminders } from '../services/pushService';
+import { dispatchMealReminders, dispatchCheckinReminders, dispatchPersonalAtRiskAlerts } from '../services/pushService';
 import { auditLog } from '../utils/auditLog';
 import {
   getUserProducts,
@@ -652,6 +652,106 @@ router.get('/dashboard/loop-metrics', authMiddleware, adminMiddleware, async (re
         readinessDistribution: readinessDistRes.rows,
         bannerEngagement: viewedRes.rows[0],
         dailyCheckinUsers: dailyRes.rows,
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /admin/dashboard/pmf-metrics — validação das 4 hipóteses de PMF mensuráveis
+router.get('/dashboard/pmf-metrics', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    // H1: Personal paga mensal? — assinaturas ativas + pendentes
+    const h1 = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'active')  AS active_subs,
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending_subs,
+        COUNT(DISTINCT personal_id)                 AS personals_with_plan,
+        COALESCE(SUM(price_cents) FILTER (WHERE status = 'active'), 0) AS mrr_cents
+      FROM personal_student_subscriptions
+    `);
+
+    // H2: Adaptive Engine melhora aderência? — taxa de check-in 30d: adaptação ON vs OFF
+    // (alunos com ficha de personal atribuída em ambos os grupos)
+    const h2 = await pool.query(`
+      WITH assigned_students AS (
+        SELECT DISTINCT student_id AS user_id FROM personal_student_assignments WHERE status = 'active'
+      ),
+      adapted AS (
+        SELECT user_id,
+          COUNT(udc.id) * 100.0 / 30 AS checkin_rate_30d
+        FROM (SELECT DISTINCT student_id AS user_id FROM training_adaptation_policy WHERE master_enabled = TRUE) t
+        LEFT JOIN user_daily_checkins udc ON udc.user_id = t.user_id
+          AND udc.date_key::date >= CURRENT_DATE - 30
+        GROUP BY user_id
+      ),
+      control AS (
+        SELECT a.user_id,
+          COUNT(udc.id) * 100.0 / 30 AS checkin_rate_30d
+        FROM assigned_students a
+        WHERE a.user_id NOT IN (SELECT student_id FROM training_adaptation_policy WHERE master_enabled = TRUE)
+        LEFT JOIN user_daily_checkins udc ON udc.user_id = a.user_id
+          AND udc.date_key::date >= CURRENT_DATE - 30
+        GROUP BY a.user_id
+      )
+      SELECT
+        COUNT(*)                        AS adapted_n,
+        ROUND(AVG(checkin_rate_30d), 1) AS adapted_checkin_pct,
+        (SELECT COUNT(*)                        FROM control) AS control_n,
+        (SELECT ROUND(AVG(checkin_rate_30d), 1) FROM control) AS control_checkin_pct
+      FROM adapted
+    `);
+
+    // H4: Usuário sustenta check-in pós-30d? — cohort de usuários com ≥30d de conta
+    const h4 = await pool.query(`
+      WITH cohort AS (
+        SELECT u.id,
+          COUNT(udc.id) AS checkins_last_30d
+        FROM users u
+        LEFT JOIN user_daily_checkins udc ON udc.user_id = u.id
+          AND udc.date_key::date >= CURRENT_DATE - 30
+        WHERE u.created_at::date <= CURRENT_DATE - 30
+        GROUP BY u.id
+      )
+      SELECT
+        COUNT(*)                                                   AS cohort_size,
+        COUNT(*) FILTER (WHERE checkins_last_30d >= 20)            AS high_compliance,
+        COUNT(*) FILTER (WHERE checkins_last_30d BETWEEN 10 AND 19) AS mid_compliance,
+        COUNT(*) FILTER (WHERE checkins_last_30d < 10)             AS low_compliance,
+        ROUND(100.0 * COUNT(*) FILTER (WHERE checkins_last_30d >= 20) / NULLIF(COUNT(*), 0), 1) AS pct_high
+      FROM cohort
+    `);
+
+    // H3: Academia mostra retenção? — memberships MetaCore ativos em academias
+    const h3 = await pool.query(`
+      SELECT
+        COUNT(DISTINCT upm.user_id)
+          FILTER (WHERE upm.status = 'active' AND upm.product_key = 'metacore_app') AS metacore_active,
+        COUNT(DISTINCT upm.user_id)
+          FILTER (WHERE upm.status = 'active' AND upm.product_key = 'personal') AS personal_active,
+        COUNT(DISTINCT a.id)
+          FILTER (WHERE a.status = 'active') AS academies_active
+      FROM user_product_memberships upm
+      CROSS JOIN (SELECT COUNT(*) FILTER (WHERE status = 'active') AS dummy FROM academies) dummy_cross
+      RIGHT JOIN (SELECT id, status FROM academies) a ON TRUE
+    `);
+
+    // Simplified H3: just counts
+    const h3Simple = await pool.query(`
+      SELECT
+        (SELECT COUNT(DISTINCT user_id) FROM user_product_memberships WHERE status = 'active' AND product_key = 'metacore_app') AS metacore_app_active,
+        (SELECT COUNT(*) FROM personal_student_subscriptions WHERE status = 'active') AS personal_billing_active,
+        (SELECT COUNT(*) FROM academies WHERE status = 'active') AS academies_active
+    `);
+
+    res.json({
+      success: true,
+      data: {
+        h1_personal_billing: h1.rows[0],
+        h2_adaptive_adherence: h2.rows[0],
+        h3_platform_counts: h3Simple.rows[0],
+        h4_checkin_sustainability: h4.rows[0],
       },
     });
   } catch (error: any) {
@@ -1431,6 +1531,20 @@ router.post(
   async (_req: Request, res: Response) => {
     try {
       const result = await dispatchCheckinReminders();
+      res.json({ success: true, data: result });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+router.post(
+  '/push/dispatch-personal-at-risk',
+  authMiddleware,
+  adminMiddleware,
+  async (_req: Request, res: Response) => {
+    try {
+      const result = await dispatchPersonalAtRiskAlerts();
       res.json({ success: true, data: result });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });

@@ -8,7 +8,8 @@ export type ActionType =
   | 'light_workout_offered'
   | 'gradual_return_offered'
   | 'message_sent'
-  | 'quick_nudge';
+  | 'quick_nudge'
+  | 'recognition_sent';
 
 export type CreateActionInput = {
   actionType: ActionType;
@@ -220,6 +221,7 @@ function humanizeTitle(kind: string, raw: string): string {
       gradual_return_offered: 'Retorno gradual oferecido',
       message_sent: 'Mensagem enviada',
       quick_nudge: 'Contato rápido',
+      recognition_sent: 'Marco reconhecido',
     };
     return map[raw] ?? raw;
   }

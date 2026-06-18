@@ -286,10 +286,30 @@ export async function getGamificationSummary(userId: number, alreadyCheckedIn = 
         [userId],
       );
 
+  // Contagem de treinos no mês corrente — para microcopy "Xº treino do mês"
+  const monthWorkoutsResult = academyId
+    ? await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM user_workout_logs
+         WHERE user_id = $1
+           AND academy_id = $2
+           AND completed_at >= date_trunc('month', CURRENT_DATE)`,
+        [userId, academyId],
+      )
+    : await pool.query<{ count: string }>(
+        `SELECT COUNT(*) AS count FROM user_workout_logs
+         WHERE user_id = $1
+           AND completed_at >= date_trunc('month', CURRENT_DATE)`,
+        [userId],
+      );
+  const workoutsThisMonth = Number(monthWorkoutsResult.rows[0]?.count || 0);
+
+  const streak = Number(stats.current_streak || 0);
+  const rewardMicrocopy = buildRewardMicrocopy(streak, workoutsThisMonth);
+
   return {
     xp: Number(stats.xp || 0),
     level: normalizeLevel(Number(stats.xp || 0)),
-    streak: Number(stats.current_streak || 0),
+    streak,
     todayCheckedIn: checkinResult.rows.some((row: { date_key?: Date }) =>
       row.date_key instanceof Date
         ? row.date_key.toISOString().slice(0, 10) === todayDateKey()
@@ -309,5 +329,32 @@ export async function getGamificationSummary(userId: number, alreadyCheckedIn = 
           completedAt: lastWorkoutResult.rows[0].completed_at,
         }
       : null,
+    rewardMicrocopy,
   };
+}
+
+function buildRewardMicrocopy(streak: number, workoutsThisMonth: number): string | null {
+  // Marcos de sequência — prioridade máxima
+  const streakMilestones = [90, 60, 30, 21, 14, 7];
+  for (const m of streakMilestones) {
+    if (streak === m) return `${m} dias em sequência — parabéns pela consistência!`;
+  }
+
+  // Marco de treinos mensais
+  const monthMilestones = [20, 15, 10, 8, 5];
+  for (const m of monthMilestones) {
+    if (workoutsThisMonth === m) return `${m}º treino do mês — continue assim!`;
+  }
+
+  // Microcopy genérica para treinos acima de 1
+  if (workoutsThisMonth > 1) {
+    return `${workoutsThisMonth}º treino do mês registrado.`;
+  }
+
+  // Primeiro treino do mês
+  if (workoutsThisMonth === 1) {
+    return 'Primeiro treino do mês — ótimo começo!';
+  }
+
+  return null;
 }

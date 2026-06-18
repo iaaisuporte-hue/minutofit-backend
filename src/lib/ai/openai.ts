@@ -53,6 +53,8 @@ export const TOKEN_BUDGET = {
   SMART_SUMMARY: 800,
   /** Plano semanal: JSON com até 5 dias × 7 exercícios + reasoning minimal. */
   WORKOUT_PLAN: 3000,
+  /** Resumo do aluno para o personal: síntese de evolução, sono e aderência. */
+  STUDENT_SUMMARY: 600,
 } as const;
 
 // ---------------------------------------------------------------------------

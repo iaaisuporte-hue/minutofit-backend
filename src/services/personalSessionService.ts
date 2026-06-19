@@ -28,7 +28,7 @@ export interface SessionLog {
 async function assertAssigned(personalId: number, studentId: number): Promise<void> {
   const res = await pool.query(
     `SELECT 1 FROM personal_student_assignments
-     WHERE personal_id = $1 AND user_id = $2 AND status = 'active'`,
+     WHERE personal_id = $1 AND student_id = $2 AND status = 'active'`,
     [personalId, studentId],
   );
   if (res.rows.length === 0) {

@@ -5,6 +5,12 @@ export interface ProfessionalContextProfessional {
   name: string;
   photo: string | null;
   lastObservation: { text: string; createdAt: string } | null;
+  /**
+   * Última sessão registrada pelo personal (Veio/Parcial) nos últimos 7 dias.
+   * Fecha o loop no lado do aluno: prova que o personal o notou mesmo sem
+   * observação escrita. Só `present`/`partial` (faltas não são touchpoint).
+   */
+  lastSession: { status: 'present' | 'partial'; at: string } | null;
 }
 
 export interface ProfessionalContext {
@@ -34,6 +40,29 @@ async function getLatestPersonalObservation(
   return { text, createdAt: new Date(row.created_at).toISOString() };
 }
 
+async function getLatestPersonalSession(
+  personalId: number,
+  studentId: number
+): Promise<ProfessionalContextProfessional['lastSession']> {
+  const result = await pool.query(
+    `SELECT status, session_at
+       FROM personal_session_logs
+      WHERE personal_id = $1
+        AND student_id  = $2
+        AND status IN ('present', 'partial')
+        AND session_at >= NOW() - INTERVAL '7 days'
+      ORDER BY session_at DESC
+      LIMIT 1`,
+    [personalId, studentId]
+  );
+  if (result.rowCount === 0) return null;
+  const row = result.rows[0];
+  return {
+    status: row.status as 'present' | 'partial',
+    at: new Date(row.session_at).toISOString(),
+  };
+}
+
 export async function getProfessionalContextForStudent(
   studentId: number
 ): Promise<ProfessionalContext> {
@@ -50,11 +79,16 @@ export async function getProfessionalContextForStudent(
   let personal: ProfessionalContextProfessional | null = null;
   if (personalRes.rowCount && personalRes.rows[0]) {
     const r = personalRes.rows[0];
+    const [lastObservation, lastSession] = await Promise.all([
+      getLatestPersonalObservation(r.id, studentId),
+      getLatestPersonalSession(r.id, studentId),
+    ]);
     personal = {
       id: r.id,
       name: r.name,
       photo: r.avatar_url ?? null,
-      lastObservation: await getLatestPersonalObservation(r.id, studentId),
+      lastObservation,
+      lastSession,
     };
   }
 
@@ -71,12 +105,13 @@ export async function getProfessionalContextForStudent(
   let nutri: ProfessionalContextProfessional | null = null;
   if (nutriRes.rowCount && nutriRes.rows[0]) {
     const r = nutriRes.rows[0];
-    // Nutri ainda não tem timeline de observations equivalente ao personal_relationship_actions
+    // Nutri ainda não tem timeline de observations/sessões equivalente ao personal
     nutri = {
       id: r.id,
       name: r.name,
       photo: r.avatar_url ?? null,
       lastObservation: null,
+      lastSession: null,
     };
   }
 

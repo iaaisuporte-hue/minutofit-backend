@@ -631,26 +631,49 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
         st.name AS subscription_tier,
         COALESCE(gs.current_streak, 0) AS current_streak,
         (
-          SELECT COUNT(*)
-          FROM user_workout_logs uwl7
-          WHERE uwl7.user_id = u.id
-            AND uwl7.completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
-            AND ($2::integer IS NULL OR uwl7.academy_id = $2)
+          SELECT COUNT(DISTINCT day) FROM (
+            SELECT uwl7.completed_at::date AS day
+            FROM user_workout_logs uwl7
+            WHERE uwl7.user_id = u.id
+              AND uwl7.completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+              AND ($2::integer IS NULL OR uwl7.academy_id = $2)
+            UNION
+            SELECT psl7.session_at::date AS day
+            FROM personal_session_logs psl7
+            WHERE psl7.student_id = u.id
+              AND psl7.personal_id = $1
+              AND psl7.status IN ('present', 'partial')
+              AND psl7.session_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
+          ) AS days_7d
         ) AS workouts_7d,
         (
-          SELECT COUNT(*)
-          FROM user_workout_logs uwl30
-          WHERE uwl30.user_id = u.id
-            AND uwl30.completed_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
-            AND ($2::integer IS NULL OR uwl30.academy_id = $2)
+          SELECT COUNT(DISTINCT day) FROM (
+            SELECT uwl30.completed_at::date AS day
+            FROM user_workout_logs uwl30
+            WHERE uwl30.user_id = u.id
+              AND uwl30.completed_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+              AND ($2::integer IS NULL OR uwl30.academy_id = $2)
+            UNION
+            SELECT psl30.session_at::date AS day
+            FROM personal_session_logs psl30
+            WHERE psl30.student_id = u.id
+              AND psl30.personal_id = $1
+              AND psl30.status IN ('present', 'partial')
+              AND psl30.session_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+          ) AS days_30d
         ) AS workouts_30d,
         (
-          SELECT uwll.completed_at
-          FROM user_workout_logs uwll
-          WHERE uwll.user_id = u.id
-            AND ($2::integer IS NULL OR uwll.academy_id = $2)
-          ORDER BY uwll.completed_at DESC
-          LIMIT 1
+          SELECT GREATEST(
+            (SELECT MAX(uwll.completed_at)
+             FROM user_workout_logs uwll
+             WHERE uwll.user_id = u.id
+               AND ($2::integer IS NULL OR uwll.academy_id = $2)),
+            (SELECT MAX(psll.session_at)
+             FROM personal_session_logs psll
+             WHERE psll.student_id = u.id
+               AND psll.personal_id = $1
+               AND psll.status IN ('present', 'partial'))
+          )
         ) AS last_workout_at,
         (
           SELECT COUNT(*)

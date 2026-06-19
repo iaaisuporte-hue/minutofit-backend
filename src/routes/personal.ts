@@ -60,6 +60,11 @@ import {
   checkStudentLimitGate,
   getPersonalPlan,
 } from '../services/personalPlanService';
+import {
+  createSession,
+  listSessions,
+  type SessionStatus,
+} from '../services/personalSessionService';
 import crypto from 'crypto';
 import {
   createRelationshipAction,
@@ -215,6 +220,63 @@ router.get(
         return res.status(403).json({ success: false, error: error.message });
       }
       res.status(500).json({ success: false, error: error.message || 'Falha ao gerar resumo IA.' });
+    }
+  }
+);
+
+// ── Registro de Sessão do Personal ────────────────────────────────────────
+
+router.post(
+  '/students/:studentId/sessions',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+
+      const { status, tags, note, sessionAt } = req.body;
+      const validStatuses: SessionStatus[] = ['present', 'absent', 'partial'];
+      if (!validStatuses.includes(status as SessionStatus)) {
+        return res.status(400).json({ success: false, error: `status inválido. Use: ${validStatuses.join(', ')}` });
+      }
+
+      const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+      const data = await createSession(req.user!.id, studentId, academyId, {
+        status: status as SessionStatus,
+        tags: Array.isArray(tags) ? tags : [],
+        note: typeof note === 'string' ? note.slice(0, 500) || undefined : undefined,
+        sessionAt: typeof sessionAt === 'string' ? sessionAt : undefined,
+      });
+
+      res.status(201).json({ success: true, data });
+    } catch (error: any) {
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Falha ao registrar sessão.' });
+    }
+  }
+);
+
+router.get(
+  '/students/:studentId/sessions',
+  roleCheckMiddleware('personal'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      const limit = Math.min(Number(req.query.limit) || 20, 50);
+      const data = await listSessions(req.user!.id, studentId, limit);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
+      res.status(500).json({ success: false, error: error.message || 'Falha ao listar sessões.' });
     }
   }
 );

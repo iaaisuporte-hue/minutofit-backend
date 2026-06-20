@@ -7,6 +7,10 @@ import {
   handleMpPreapprovalWebhook as handleProNetworkPreapproval,
   PRO_NETWORK_EXTERNAL_REF_PREFIX,
 } from '../services/professionalSubscriptionService';
+import {
+  handlePlatformPreapprovalWebhook,
+  PLATFORM_SUB_EXTERNAL_REF_PREFIX,
+} from '../services/personalPlanService';
 import { grantMembership, cancelMembership } from '../services/membershipService';
 import logger from '../lib/logger';
 
@@ -180,6 +184,15 @@ async function handleSubscriptionNotification(data: any) {
     // Route personal-sub webhooks to the personal billing service
     if (externalReference?.startsWith('personal-sub:')) {
       await handleMpPreapprovalWebhook(preapprovalId, status, data);
+      return;
+    }
+
+    // Route platform-sub webhooks (personal paga o plano SaaS) ao personalPlanService
+    if (externalReference?.startsWith(PLATFORM_SUB_EXTERNAL_REF_PREFIX)) {
+      const personalId = Number(externalReference.slice(PLATFORM_SUB_EXTERNAL_REF_PREFIX.length));
+      if (Number.isFinite(personalId)) {
+        await handlePlatformPreapprovalWebhook(personalId, status, data);
+      }
       return;
     }
 

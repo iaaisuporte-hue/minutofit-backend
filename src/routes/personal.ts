@@ -59,6 +59,8 @@ import { grantMembership } from '../services/membershipService';
 import {
   checkStudentLimitGate,
   getPersonalPlan,
+  createPlatformCheckout,
+  type PersonalPlan,
 } from '../services/personalPlanService';
 import {
   createSession,
@@ -115,6 +117,31 @@ router.get('/plan', roleCheckMiddleware('personal'), async (req: Request, res: R
     res.json({ success: true, data: config });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message || 'Failed to load personal plan' });
+  }
+});
+
+// Checkout self-serve: personal assina um plano pago (V1: Pro) via Mercado Pago.
+router.post('/plan/checkout', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const plan = String(req.body?.plan ?? '') as PersonalPlan;
+    if (plan !== 'pro' && plan !== 'starter') {
+      return res.status(400).json({ success: false, error: 'Plano inválido para checkout' });
+    }
+    const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+    const { initPoint } = await createPlatformCheckout(req.user!.id, plan, {
+      payerEmail: req.user!.email,
+      frontendUrl: `${frontendUrl}/app/personal?upgrade=ok`,
+    });
+    return res.json({ success: true, data: { initPoint } });
+  } catch (error: any) {
+    const code = error?.code;
+    if (code === 'PLAN_NOT_BILLABLE') {
+      return res.status(400).json({ success: false, error: 'Plano gratuito não requer pagamento' });
+    }
+    if (code === 'PAYMENTS_UNAVAILABLE') {
+      return res.status(503).json({ success: false, error: 'Pagamento indisponível no momento' });
+    }
+    return res.status(500).json({ success: false, error: error.message || 'Falha ao iniciar checkout' });
   }
 });
 

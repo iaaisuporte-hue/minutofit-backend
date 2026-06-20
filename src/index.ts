@@ -368,6 +368,30 @@ app.use((err: unknown, req: express.Request, res: express.Response, _next: expre
 });
 
 // ---------------------------------------------------------------------------
+// Validação de env de runtime — não derruba o boot (pagamento fora ≠ app fora),
+// mas loga alto (error em produção) para que faltas não passem silenciosas.
+// ---------------------------------------------------------------------------
+function validateRuntimeEnv(): void {
+  const isProd = (process.env.NODE_ENV || 'development') === 'production';
+  const hasMpToken = Boolean(
+    process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN
+  );
+  const checks: Array<[string, boolean, string]> = [
+    ['MERCADOPAGO_ACCESS_TOKEN', hasMpToken, 'checkout e cobrança ficam indisponíveis (503)'],
+    ['MERCADOPAGO_WEBHOOK_SECRET', Boolean(process.env.MERCADOPAGO_WEBHOOK_SECRET), 'webhooks de pagamento serão rejeitados em produção'],
+    ['GOOGLE_CLIENT_ID', Boolean(process.env.GOOGLE_CLIENT_ID), 'login com Google não funciona'],
+    ['FRONTEND_URL', Boolean(process.env.FRONTEND_URL), 'back_url do checkout usa fallback'],
+    ['BACKEND_URL', Boolean(process.env.BACKEND_URL), 'notification_url do webhook fica vazia'],
+  ];
+  for (const [name, present, impact] of checks) {
+    if (present) continue;
+    const msg = `[env] ${name} ausente — ${impact}`;
+    if (isProd) logger.error(msg);
+    else logger.warn(msg);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Start server
 // ---------------------------------------------------------------------------
 const PORT = parseInt(process.env.PORT || '3000', 10);
@@ -375,6 +399,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 app.listen(PORT, () => {
   logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'MinutoFit Backend running');
   logger.info({ origins: allowedOrigins }, 'Allowed frontend origins');
+  validateRuntimeEnv();
 
   // Inicializa Redis (não bloqueia o boot — falha silenciosa com fallback in-memory)
   getRedisClient();

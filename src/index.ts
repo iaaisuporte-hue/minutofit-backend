@@ -377,9 +377,11 @@ function validateRuntimeEnv(): void {
     process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN
   );
   const checks: Array<[string, boolean, string]> = [
+    ['DATABASE_URL', Boolean(process.env.DATABASE_URL), 'sem banco o app não sobe nem persiste nada'],
     ['MERCADOPAGO_ACCESS_TOKEN', hasMpToken, 'checkout e cobrança ficam indisponíveis (503)'],
     ['MERCADOPAGO_WEBHOOK_SECRET', Boolean(process.env.MERCADOPAGO_WEBHOOK_SECRET), 'webhooks de pagamento serão rejeitados em produção'],
     ['GOOGLE_CLIENT_ID', Boolean(process.env.GOOGLE_CLIENT_ID), 'login com Google não funciona'],
+    ['TURNSTILE_SECRET_KEY', Boolean(process.env.TURNSTILE_SECRET_KEY), 'cadastro por email retorna 503 (captcha)'],
     ['FRONTEND_URL', Boolean(process.env.FRONTEND_URL), 'back_url do checkout usa fallback'],
     ['BACKEND_URL', Boolean(process.env.BACKEND_URL), 'notification_url do webhook fica vazia'],
   ];

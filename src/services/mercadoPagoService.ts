@@ -59,7 +59,10 @@ export async function createPreapprovalSubscription(
         start_date: new Date().toISOString()
       },
       payer_email: userEmail,
-      notification_url: `${process.env.FRONTEND_URL}/api/webhooks/mercadopago`,
+      // notification_url aponta para o BACKEND (onde o webhook é recebido) — nunca o
+      // frontend. back_url é onde o USUÁRIO volta após o checkout (frontend). Misturar
+      // os dois fazia o MP notificar o host do Vercel e o pagamento B2C nunca confirmar.
+      notification_url: `${process.env.BACKEND_URL ?? ''}/api/webhooks/mercadopago`,
       back_url: `${process.env.FRONTEND_URL}/subscriptions/success`,
       external_reference: `user_${userId}_${Date.now()}`
     };

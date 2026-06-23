@@ -9,7 +9,7 @@ import { DEFAULT_POLICY } from '../modules/training/adaptive/types';
 import pool from '../config/database';
 import logger from '../lib/logger';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
-import { createSession, listSessions, getSession } from '../services/workoutSessionService';
+import { createSession, listSessions, getSession, getWorkoutStats } from '../services/workoutSessionService';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('app'));
@@ -177,6 +177,17 @@ router.get('/sessions', async (req: Request, res: Response) => {
   } catch (err: any) {
     logger.error({ err }, '[training] GET /sessions error');
     return res.status(500).json({ success: false, error: 'Failed to list sessions' });
+  }
+});
+
+// GET /api/training/stats — frequência + progressão de carga por exercício
+router.get('/stats', async (req: Request, res: Response) => {
+  try {
+    const stats = await getWorkoutStats(req.user!.id);
+    return res.json({ success: true, data: stats });
+  } catch (err: any) {
+    logger.error({ err }, '[training] GET /stats error');
+    return res.status(500).json({ success: false, error: 'Failed to load stats' });
   }
 });
 

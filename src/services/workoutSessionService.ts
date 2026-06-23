@@ -215,6 +215,57 @@ export async function listSessions(userId: number, limit = 50) {
   return rows;
 }
 
+/** Estatísticas de execução (Spec 010 V1.1): frequência + progressão de carga. */
+export async function getWorkoutStats(userId: number) {
+  const freq = await pool.query(
+    `SELECT
+       COUNT(*)::int AS total,
+       COUNT(*) FILTER (WHERE started_at >= date_trunc('week', now()))::int AS this_week,
+       COUNT(*) FILTER (WHERE started_at >= now() - interval '30 days')::int AS last_30d
+     FROM workout_sessions
+     WHERE user_id = $1 AND status IN ('completed', 'partial')`,
+    [userId],
+  );
+
+  // Progressão de carga por exercício: MAX(carga) por dia, só onde há carga.
+  const prog = await pool.query(
+    `SELECT sl.exercise_id,
+            MIN(sl.exercise_name) AS exercise_name,
+            ws.started_at::date AS d,
+            MAX(sl.load_done_kg) AS max_load
+       FROM workout_set_logs sl
+       JOIN workout_sessions ws ON ws.id = sl.session_id
+      WHERE ws.user_id = $1 AND sl.load_done_kg IS NOT NULL AND sl.exercise_id IS NOT NULL
+      GROUP BY sl.exercise_id, ws.started_at::date
+      ORDER BY sl.exercise_id, d`,
+    [userId],
+  );
+
+  const byExercise = new Map<string, { exerciseId: string; name: string; points: { date: string; maxLoadKg: number }[] }>();
+  for (const r of prog.rows) {
+    const key = r.exercise_id;
+    if (!byExercise.has(key)) byExercise.set(key, { exerciseId: key, name: r.exercise_name, points: [] });
+    byExercise.get(key)!.points.push({ date: r.d, maxLoadKg: Number(r.max_load) });
+  }
+  // Só exercícios com ≥2 pontos rendem "progressão"; ordena por maior ganho.
+  const exerciseProgression = Array.from(byExercise.values())
+    .filter((e) => e.points.length >= 2)
+    .map((e) => ({
+      ...e,
+      firstLoadKg: e.points[0].maxLoadKg,
+      lastLoadKg: e.points[e.points.length - 1].maxLoadKg,
+      deltaKg: e.points[e.points.length - 1].maxLoadKg - e.points[0].maxLoadKg,
+    }))
+    .sort((a, b) => b.deltaKg - a.deltaKg);
+
+  return {
+    totalSessions: freq.rows[0].total,
+    thisWeek: freq.rows[0].this_week,
+    last30Days: freq.rows[0].last_30d,
+    exerciseProgression,
+  };
+}
+
 export async function getSession(userId: number, sessionId: number) {
   const head = await pool.query(`SELECT * FROM workout_sessions WHERE id = $1 AND user_id = $2`, [sessionId, userId]);
   if (head.rows.length === 0) return null;

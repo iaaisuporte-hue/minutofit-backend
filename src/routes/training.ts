@@ -9,6 +9,7 @@ import { DEFAULT_POLICY } from '../modules/training/adaptive/types';
 import pool from '../config/database';
 import logger from '../lib/logger';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
+import { createSession, listSessions, getSession } from '../services/workoutSessionService';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('app'));
@@ -127,6 +128,70 @@ router.post('/events', async (req: Request, res: Response) => {
     ip: req.ip,
   }).catch(() => {});
   return res.json({ success: true });
+});
+
+// ── Execução real do treino (Spec 010) ──────────────────────────────────────
+const VALID_SOURCES = new Set(['personal', 'suggested', 'academy', 'free']);
+const VALID_STATUS = new Set(['started', 'completed', 'partial', 'abandoned']);
+
+// POST /api/training/sessions — registra a sessão executada (caminho rápido:
+// só prescribed + status; ou detalhado: sets com carga/reps reais).
+router.post('/sessions', async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
+    const body = req.body ?? {};
+
+    if (!VALID_SOURCES.has(body.source)) {
+      return res.status(400).json({ success: false, error: 'invalid_source' });
+    }
+    if (!VALID_STATUS.has(body.status)) {
+      return res.status(400).json({ success: false, error: 'invalid_status' });
+    }
+
+    const result = await createSession(userId, academyId, {
+      source: body.source,
+      status: body.status,
+      title: typeof body.title === 'string' ? body.title.slice(0, 200) : null,
+      planId: Number.isFinite(Number(body.planId)) ? Number(body.planId) : null,
+      dayIndex: Number.isFinite(Number(body.dayIndex)) ? Number(body.dayIndex) : null,
+      sessionRpe: body.sessionRpe ?? null,
+      notes: typeof body.notes === 'string' ? body.notes.slice(0, 1000) : null,
+      prescribed: Array.isArray(body.prescribed) ? body.prescribed : [],
+      sets: Array.isArray(body.sets) ? body.sets : undefined,
+    });
+
+    return res.status(201).json({ success: true, data: result });
+  } catch (err: any) {
+    logger.error({ err }, '[training] POST /sessions error');
+    return res.status(500).json({ success: false, error: 'Failed to register session' });
+  }
+});
+
+// GET /api/training/sessions — histórico do aluno
+router.get('/sessions', async (req: Request, res: Response) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+    const rows = await listSessions(req.user!.id, limit);
+    return res.json({ success: true, data: rows });
+  } catch (err: any) {
+    logger.error({ err }, '[training] GET /sessions error');
+    return res.status(500).json({ success: false, error: 'Failed to list sessions' });
+  }
+});
+
+// GET /api/training/sessions/:id — detalhe (séries)
+router.get('/sessions/:id', async (req: Request, res: Response) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    const session = await getSession(req.user!.id, id);
+    if (!session) return res.status(404).json({ success: false, error: 'not_found' });
+    return res.json({ success: true, data: session });
+  } catch (err: any) {
+    logger.error({ err }, '[training] GET /sessions/:id error');
+    return res.status(500).json({ success: false, error: 'Failed to load session' });
+  }
 });
 
 async function upsertAdaptationLog(params: {

@@ -460,7 +460,7 @@ export async function addStudent(
 
   // Identidade: a academia confirma identidade do aluno → permitir dedup amplo
   // (email > cpf > phone). Senha temporária gerada quando o usuário ainda não
-  // existe; ignorada quando o aluno já tem conta no MetaCore.
+  // existe; ignorada quando o aluno já tem conta no CoreFit.
   let tempPassword: string | undefined = generateTempPassword();
   const identity = await findOrCreateUserFromContext({
     email,

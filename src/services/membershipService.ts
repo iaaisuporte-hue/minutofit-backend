@@ -7,7 +7,7 @@ import { type ProductKey } from '../db/ensureProductsSchema';
  * Manter alinhado com a CHECK constraint (migration 1747700000000).
  */
 export type MembershipSource =
-  | 'metacore'
+  | 'corefit'
   | 'academy_bootstrap'
   | 'direct_purchase'
   | 'bonus_academy'
@@ -68,12 +68,12 @@ export interface ActiveMembership {
  * Resolve o `source` final do membership.
  *  - Se `opts.source` foi explícito → usa.
  *  - Senão, mantém compatibilidade com o comportamento legado:
- *      sourceAcademyId presente ⇒ `academy_bootstrap`, do contrário `metacore`.
+ *      sourceAcademyId presente ⇒ `academy_bootstrap`, do contrário `corefit`.
  */
 function resolveSource(opts: MembershipOptions): MembershipSource {
   if (opts.source) return opts.source;
   if ((opts.sourceAcademyId ?? null) !== null) return 'academy_bootstrap';
-  return 'metacore';
+  return 'corefit';
 }
 
 /**
@@ -212,7 +212,7 @@ export async function cancelMembership(userId: number, productKey: ProductKey, o
  * Idempotente:
  *  - Só atua se o App estiver ativo e com source correspondente ao bônus
  *    daquele produto pai (`bonus_academy/_personal/_nutri`).
- *  - Não age sobre App `direct_purchase`, `metacore`, `trial`, etc.
+ *  - Não age sobre App `direct_purchase`, `corefit`, `trial`, etc.
  *  - Preserva `source` original em `converted_from_source` para auditoria.
  */
 export async function enterGraceForAppBonus(

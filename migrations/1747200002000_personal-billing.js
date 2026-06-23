@@ -1,13 +1,13 @@
 /**
  * Monetização recorrente do personal.
  *
- * personal_billing_settings     : configuração financeira do personal (ticket padrão, fee MetaCore)
+ * personal_billing_settings     : configuração financeira do personal (ticket padrão, fee CoreFit)
  * personal_billing_plans        : planos que o personal oferece (preço, período)
  * personal_student_subscriptions: assinatura por aluno (vinculada ao MP pre-approval)
  * personal_billing_events       : log imutável de eventos de cobrança/webhook
  *
  * Anti-escopo: sem DRE, NFS-e, plano de contas. Financeiro = mensalidade + régua + dashboard.
- * Split MP (metacore_fee_bps_snapshot) registrado agora; efetivado na Onda 9.
+ * Split MP (corefit_fee_bps_snapshot) registrado agora; efetivado na Onda 9.
  */
 
 /** @type {import('node-pg-migrate').MigrationBuilder} */
@@ -26,7 +26,7 @@ exports.up = (pgm) => {
       },
       default_ticket_cents: { type: 'integer' },
       default_period: { type: 'varchar(20)', default: 'monthly' },
-      metacore_fee_bps: { type: 'integer', notNull: true, default: 0 },
+      corefit_fee_bps: { type: 'integer', notNull: true, default: 0 },
       mp_access_token_id: { type: 'integer' },
       created_at: { type: 'timestamptz', default: pgm.func('NOW()') },
       updated_at: { type: 'timestamptz', default: pgm.func('NOW()') },
@@ -110,7 +110,7 @@ exports.up = (pgm) => {
       next_charge_at: { type: 'timestamptz' },
       canceled_at: { type: 'timestamptz' },
       discount_cents: { type: 'integer', notNull: true, default: 0 },
-      metacore_fee_bps_snapshot: { type: 'integer', notNull: true, default: 0 },
+      corefit_fee_bps_snapshot: { type: 'integer', notNull: true, default: 0 },
       created_at: { type: 'timestamptz', default: pgm.func('NOW()') },
       updated_at: { type: 'timestamptz', default: pgm.func('NOW()') },
     },

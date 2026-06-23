@@ -32,7 +32,7 @@ exports.up = (pgm) => {
     ALTER TABLE user_product_memberships
       ADD CONSTRAINT user_product_memberships_source_check
       CHECK (source IN (
-        'metacore',
+        'corefit',
         'academy_bootstrap',
         'direct_purchase',
         'bonus_academy',
@@ -83,6 +83,6 @@ exports.down = (pgm) => {
   pgm.sql(`
     ALTER TABLE user_product_memberships
       ADD CONSTRAINT user_product_memberships_source_check
-      CHECK (source IN ('metacore', 'academy_bootstrap', 'direct_purchase'))
+      CHECK (source IN ('corefit', 'academy_bootstrap', 'direct_purchase'))
   `);
 };

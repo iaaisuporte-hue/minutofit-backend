@@ -110,7 +110,7 @@ export async function tenantContextMiddleware(req: Request, res: Response, next:
  * /messages, /personal).
  *
  * NÃO faz DB lookup — apenas garante que há contexto de academia no request.
- * Admin (MetaCore) é bypassado automaticamente (acesso global).
+ * Admin (CoreFit) é bypassado automaticamente (acesso global).
  *
  * Use router.use(requireAcademyContext) antes dos handlers.
  * Retorna 403 com code TENANT_REQUIRED quando nenhum contexto está presente.

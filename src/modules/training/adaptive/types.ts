@@ -4,7 +4,7 @@ import type { ReadinessLens } from '../../readiness/readiness.engine';
 export type WorkoutSourceKind =
   | 'personal_prescription'
   | 'academy_published'
-  | 'metacore_suggested';
+  | 'corefit_suggested';
 
 export interface AdaptableWorkoutDay {
   sourceKind: WorkoutSourceKind;

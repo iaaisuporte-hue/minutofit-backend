@@ -1,6 +1,6 @@
 /**
- * Seed — templates de mensagem MetaCore (scope='metacore').
- * Visíveis para todos os personals, não editáveis (escopo metacore).
+ * Seed — templates de mensagem CoreFit (scope='corefit').
+ * Visíveis para todos os personals, não editáveis (escopo corefit).
  * Copy em PT-BR humano, tom de acompanhamento — não CRM frio.
  */
 
@@ -52,12 +52,12 @@ exports.up = (pgm) => {
       INSERT INTO personal_message_templates
         (personal_id, academy_id, scope, category, title, body, is_default, created_at, updated_at)
       VALUES
-        (NULL, NULL, 'metacore', '${t.category}', ${pgm.func(`'${t.title.replace(/'/g, "''")}'`)}, ${pgm.func(`'${t.body.replace(/'/g, "''")}'`)}, ${t.is_default}, NOW(), NOW())
+        (NULL, NULL, 'corefit', '${t.category}', ${pgm.func(`'${t.title.replace(/'/g, "''")}'`)}, ${pgm.func(`'${t.body.replace(/'/g, "''")}'`)}, ${t.is_default}, NOW(), NOW())
       ON CONFLICT DO NOTHING;
     `);
   }
 };
 
 exports.down = (pgm) => {
-  pgm.sql(`DELETE FROM personal_message_templates WHERE scope = 'metacore';`);
+  pgm.sql(`DELETE FROM personal_message_templates WHERE scope = 'corefit';`);
 };

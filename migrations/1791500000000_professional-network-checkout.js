@@ -49,7 +49,7 @@ exports.up = (pgm) => {
       offering_id                 UUID NOT NULL REFERENCES professional_service_offerings(id) ON DELETE RESTRICT,
       price_cents_snapshot        INTEGER NOT NULL CHECK (price_cents_snapshot >= 0),
       period_snapshot             VARCHAR(16) NOT NULL CHECK (period_snapshot IN ('monthly','quarterly','semiannual','annual')),
-      metacore_fee_bps_snapshot   INTEGER NOT NULL DEFAULT 0 CHECK (metacore_fee_bps_snapshot >= 0),
+      corefit_fee_bps_snapshot   INTEGER NOT NULL DEFAULT 0 CHECK (corefit_fee_bps_snapshot >= 0),
       status                      VARCHAR(20) NOT NULL DEFAULT 'pending_payment'
                                     CHECK (status IN ('pending_payment','active','paused','cancelled','expired')),
       mp_preapproval_id           VARCHAR(120),

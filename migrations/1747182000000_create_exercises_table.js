@@ -1,5 +1,5 @@
 /**
- * Cria a tabela global de exercícios da biblioteca MetaCore.
+ * Cria a tabela global de exercícios da biblioteca CoreFit.
  * Exercícios são globais (sem academy_id) — apenas leitura para autenticados,
  * gravação restrita a admin.
  *
@@ -18,7 +18,7 @@ exports.up = (pgm) => {
         default: pgm.func('gen_random_uuid()'),
       },
       external_id: { type: 'text', notNull: false },
-      source: { type: 'text', notNull: true, default: "'metacore'" },
+      source: { type: 'text', notNull: true, default: "'corefit'" },
       name: { type: 'text', notNull: true },
       normalized_name: { type: 'text', notNull: true },
       body_part: { type: 'text', notNull: true },

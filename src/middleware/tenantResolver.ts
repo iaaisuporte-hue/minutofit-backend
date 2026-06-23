@@ -8,7 +8,7 @@ const RESERVED_SLUGS = new Set([
   'mail', 'dev', 'staging', 'test', 'localhost',
 ]);
 
-const SLUG_REGEX = /^([a-z0-9][a-z0-9-]{1,61}[a-z0-9])\.minutofit\.com\.br$/i;
+const SLUG_REGEX = /^([a-z0-9][a-z0-9-]{1,61}[a-z0-9])\.corefit\.com\.br$/i;
 
 export interface TenantHost {
   slug: string;

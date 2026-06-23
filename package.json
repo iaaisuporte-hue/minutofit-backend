@@ -1,7 +1,7 @@
 {
-  "name": "minutofit-backend",
+  "name": "corefit-backend",
   "version": "1.0.0",
-  "description": "MinutoFit Fitness SaaS Backend - Node.js/Express/TypeScript",
+  "description": "CoreFit Fitness SaaS Backend - Node.js/Express/TypeScript",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",

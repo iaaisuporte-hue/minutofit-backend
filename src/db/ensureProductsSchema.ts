@@ -5,7 +5,7 @@ export const PRODUCT_KEYS = ['app', 'personal', 'nutri', 'academia', 'metabolism
 export type ProductKey = (typeof PRODUCT_KEYS)[number];
 
 const PRODUCT_CATALOG: Array<{ key: ProductKey; name: string; description: string }> = [
-  { key: 'app', name: 'App MinutoFit', description: 'Acesso ao app do aluno: Today, Tracker GPS, Lab de Movimento, treinos diários, gamificação.' },
+  { key: 'app', name: 'App S2Core', description: 'Acesso ao app do aluno: Today, Tracker GPS, Lab de Movimento, treinos diários, gamificação.' },
   { key: 'personal', name: 'Personal', description: 'Acompanhamento por personal trainer: plano atribuído, snapshot metabólico, chat.' },
   { key: 'nutri', name: 'Nutricionista', description: 'Acompanhamento por nutricionista: plano alimentar, chat.' },
   { key: 'academia', name: 'Academia', description: 'Vínculo com academia: área do aluno, frequência, comunicação com staff.' },
@@ -38,9 +38,9 @@ export async function ensureProductsSchema(): Promise<void> {
       product_key         VARCHAR(40) NOT NULL REFERENCES products(key),
       status              VARCHAR(20) NOT NULL DEFAULT 'active'
                             CHECK (status IN ('active', 'paused', 'suspended', 'cancelled', 'expired')),
-      source              VARCHAR(30) NOT NULL DEFAULT 'metacore'
+      source              VARCHAR(30) NOT NULL DEFAULT 'corefit'
                             CHECK (source IN (
-                              'metacore', 'academy_bootstrap', 'direct_purchase',
+                              'corefit', 'academy_bootstrap', 'direct_purchase',
                               'bonus_academy', 'bonus_personal', 'bonus_nutri',
                               'discount_partner', 'trial', 'grace_period'
                             )),
@@ -150,7 +150,7 @@ export async function getUserProductsWithMeta(userId: number): Promise<UserProdu
 export async function grantUserProduct(input: {
   userId: number;
   productKey: ProductKey;
-  source: 'metacore' | 'academy_bootstrap' | 'direct_purchase';
+  source: 'corefit' | 'academy_bootstrap' | 'direct_purchase';
   sourceAcademyId?: number | null;
   academyId?: number | null;
   professionalId?: number | null;

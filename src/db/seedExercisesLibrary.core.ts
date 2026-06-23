@@ -1,5 +1,5 @@
 /**
- * Lógica central de seed da biblioteca de exercícios MetaCore.
+ * Lógica central de seed da biblioteca de exercícios CoreFit.
  * Reutilizada tanto pelo script CLI (seedExercisesLibrary.ts)
  * quanto pelo boot automático (seedExercisesIfEmpty.ts).
  *
@@ -143,7 +143,7 @@ async function upsertExerciseMedia(
   url: string,
   mediaType: 'youtube' | 'image' | 'gif' | 'video',
   isPrimary: boolean,
-  source: string = 'metacore'
+  source: string = 'corefit'
 ): Promise<void> {
   if (isPrimary) {
     await pool.query(
@@ -181,7 +181,7 @@ export interface RunSeedResult {
  * Recebe o `pool` já aberto — não fecha a conexão ao terminar.
  */
 export async function runExercisesSeed(pool: Pool): Promise<RunSeedResult> {
-  logger.info('[seed:exercises] Iniciando seed da biblioteca MetaCore...');
+  logger.info('[seed:exercises] Iniciando seed da biblioteca CoreFit...');
 
   const freeDbMap = buildFreeDbImageMap();
   const seeds = [...EXERCISES_SEED.map(withCommonGymAliases), ...COMMON_GYM_EXERCISES_SEED];

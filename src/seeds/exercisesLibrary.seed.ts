@@ -1,11 +1,11 @@
 /**
- * Biblioteca proprietária MetaCore de exercícios.
+ * Biblioteca proprietária CoreFit de exercícios.
  * Seed curado com ~180 exercícios — expansível para 500+.
  * Schema inspirado no ExerciseDB v2.
  *
  * Campos:
- *  - externalId: identificador externo opcional (null = MetaCore original)
- *  - source: 'metacore' (todos neste seed)
+ *  - externalId: identificador externo opcional (null = CoreFit original)
+ *  - source: 'corefit' (todos neste seed)
  *  - name: nome PT-BR
  *  - bodyPart: grupo principal
  *  - targetMuscle / secondaryMuscles: músculos
@@ -22,7 +22,7 @@
 
 export type ExerciseSeed = {
   externalId?: string | null;
-  source: 'metacore';
+  source: 'corefit';
   name: string;
   bodyPart: string;
   targetMuscle: string;
@@ -42,7 +42,7 @@ export type ExerciseSeed = {
 export const EXERCISES_SEED: ExerciseSeed[] = [
   // ─── PEITO ───────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Supino Reto',
     freeDbId: 'Barbell_Bench_Press_-_Medium_Grip',
     bodyPart: 'peito',
@@ -63,7 +63,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Supino Inclinado com Halteres',
     freeDbId: 'Incline_Dumbbell_Press',
     bodyPart: 'peito',
@@ -84,7 +84,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Crucifixo com Halteres',
     freeDbId: 'Dumbbell_Flyes',
     bodyPart: 'peito',
@@ -104,7 +104,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Crossover no Cabo',
     freeDbId: 'Cable_Crossover',
     bodyPart: 'peito',
@@ -124,7 +124,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Flexão de Braço',
     freeDbId: 'Pushups',
     bodyPart: 'peito',
@@ -143,7 +143,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Peck Deck (Máquina)',
     freeDbId: 'Butterfly',
     bodyPart: 'peito',
@@ -164,7 +164,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── COSTAS ──────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Puxada Frente (Lat Pulldown)',
     freeDbId: 'Wide-Grip_Lat_Pulldown',
     bodyPart: 'costas',
@@ -184,7 +184,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada Curvada com Barra',
     freeDbId: 'Bent_Over_Barbell_Row',
     bodyPart: 'costas',
@@ -204,7 +204,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada Unilateral com Haltere',
     freeDbId: 'Bent_Over_Two-Dumbbell_Row',
     bodyPart: 'costas',
@@ -224,7 +224,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Barra Fixa',
     freeDbId: 'Pullups',
     bodyPart: 'costas',
@@ -244,7 +244,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada Baixa no Cabo',
     freeDbId: 'Low_Pulley_Row_To_Neck',
     bodyPart: 'costas',
@@ -264,7 +264,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── PERNA ───────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento Livre',
     freeDbId: 'Barbell_Full_Squat',
     bodyPart: 'perna',
@@ -285,7 +285,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Leg Press 45°',
     freeDbId: 'Leg_Press',
     bodyPart: 'perna',
@@ -304,7 +304,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Cadeira Extensora',
     freeDbId: 'Leg_Extensions',
     bodyPart: 'perna',
@@ -323,7 +323,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Mesa Flexora (Leg Curl Deitado)',
     freeDbId: 'Lying_Leg_Curls',
     bodyPart: 'perna',
@@ -342,7 +342,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Stiff (Romanian Deadlift)',
     freeDbId: 'Romanian_Deadlift',
     bodyPart: 'perna',
@@ -362,7 +362,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Afundo (Lunge)',
     freeDbId: 'Dumbbell_Lunges',
     bodyPart: 'perna',
@@ -381,7 +381,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Panturrilha em Pé (Calf Raise)',
     freeDbId: 'Rocking_Standing_Calf_Raise',
     bodyPart: 'perna',
@@ -401,7 +401,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── GLÚTEO ───────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Elevação Pélvica (Hip Thrust)',
     freeDbId: 'Barbell_Hip_Thrust',
     bodyPart: 'glúteo',
@@ -421,7 +421,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Abdução de Quadril na Máquina',
     freeDbId: 'Thigh_Adductor',
     bodyPart: 'glúteo',
@@ -439,7 +439,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento Sumô',
     freeDbId: 'Plie_Dumbbell_Squat',
     bodyPart: 'glúteo',
@@ -459,7 +459,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── OMBRO ────────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Desenvolvimento com Halteres',
     freeDbId: 'Dumbbell_Shoulder_Press',
     bodyPart: 'ombro',
@@ -478,7 +478,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Elevação Lateral',
     freeDbId: 'Seated_Side_Lateral_Raise',
     bodyPart: 'ombro',
@@ -497,7 +497,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Elevação Frontal',
     freeDbId: 'Front_Raise_And_Pullover',
     bodyPart: 'ombro',
@@ -515,7 +515,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Crucifixo Inverso (Elevação Posterior)',
     freeDbId: 'Cable_Rear_Delt_Fly',
     bodyPart: 'ombro',
@@ -534,7 +534,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Arnold Press',
     freeDbId: 'Arnold_Dumbbell_Press',
     bodyPart: 'ombro',
@@ -553,7 +553,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── BÍCEPS ───────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca Direta com Barra',
     freeDbId: 'Barbell_Curl',
     bodyPart: 'bíceps',
@@ -572,7 +572,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca Alternada com Halteres',
     freeDbId: 'Dumbbell_Alternate_Bicep_Curl',
     bodyPart: 'bíceps',
@@ -590,7 +590,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca Martelo',
     freeDbId: 'Hammer_Curls',
     bodyPart: 'bíceps',
@@ -608,7 +608,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca Scott (Preacher Curl)',
     freeDbId: 'Preacher_Curl',
     bodyPart: 'bíceps',
@@ -627,7 +627,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── TRÍCEPS ──────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tríceps Corda (Pushdown)',
     freeDbId: 'Triceps_Pushdown_-_Rope_Attachment',
     bodyPart: 'tríceps',
@@ -646,7 +646,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tríceps Testa (Skull Crusher)',
     freeDbId: 'Decline_Close-Grip_Bench_To_Skull_Crusher',
     bodyPart: 'tríceps',
@@ -665,7 +665,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tríceps Francês com Haltere',
     freeDbId: 'Overhead_Triceps',
     bodyPart: 'tríceps',
@@ -683,7 +683,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Mergulho (Tríceps Dip)',
     freeDbId: 'Dips_-_Triceps_Version',
     bodyPart: 'tríceps',
@@ -702,7 +702,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── ABDÔMEN ──────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Prancha Isométrica',
     freeDbId: 'Plank',
     bodyPart: 'abdômen',
@@ -721,7 +721,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Crunch Abdominal',
     freeDbId: 'Crunches',
     bodyPart: 'abdômen',
@@ -741,7 +741,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Abdominal Infra (Elevação de Pernas)',
     freeDbId: 'Flat_Bench_Lying_Leg_Raise',
     bodyPart: 'abdômen',
@@ -759,7 +759,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Oblíquo com Rotação',
     freeDbId: 'Oblique_Crunches',
     bodyPart: 'abdômen',
@@ -778,7 +778,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── CARDIO / FUNCIONAL ────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Esteira (HIIT)',
     freeDbId: 'Running_Treadmill',
     bodyPart: 'cardio',
@@ -797,7 +797,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Burpee',
     freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
@@ -816,7 +816,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Mountain Climber',
     freeDbId: 'Mountain_Climbers',
     bodyPart: 'cardio',
@@ -833,7 +833,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Jumping Jacks',
     freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
@@ -852,7 +852,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   // ─── CASA ─────────────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento Livre (Peso Corporal)',
     freeDbId: 'Bodyweight_Squat',
     bodyPart: 'perna',
@@ -870,7 +870,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Glúteo 4 Apoios (Donkey Kick)',
     freeDbId: 'Glute_Kickback',
     bodyPart: 'glúteo',
@@ -888,7 +888,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Flexão Diamante',
     freeDbId: 'Incline_Push-Up_Close-Grip',
     bodyPart: 'tríceps',
@@ -908,7 +908,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── PEITO (adicionais) ──────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Supino Inclinado com Barra',
     freeDbId: 'Barbell_Incline_Bench_Press_-_Medium_Grip',
     bodyPart: 'peito',
@@ -924,7 +924,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantenha a escápula retraída e os pés no chão.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Supino Declinado com Halteres',
     freeDbId: 'Decline_Dumbbell_Flyes',
     bodyPart: 'peito',
@@ -940,7 +940,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ligeiro cotovelo dobrado protege a articulação do ombro.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Pullover com Haltere',
     freeDbId: 'Bent-Arm_Dumbbell_Pullover',
     bodyPart: 'peito',
@@ -956,7 +956,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Inspire fundo durante a descida para expandir a caixa torácica.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Flexão Inclinada (Declinada)',
     freeDbId: 'Decline_Push-Up',
     bodyPart: 'peito',
@@ -971,7 +971,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Quanto mais alto os pés, maior o recrutamento do peitoral superior.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento com Salto (Jump Squat)',
     freeDbId: 'Bodyweight_Squat',
     bodyPart: 'perna',
@@ -989,7 +989,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── COSTAS (adicionais) ─────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Puxada na Polia Alta (Close Grip)',
     freeDbId: 'Close-Grip_Front_Lat_Pulldown',
     bodyPart: 'costas',
@@ -1005,7 +1005,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Incline levemente o tronco para trás e priorize apertar o dorsal.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada Sentada no Cabo',
     freeDbId: 'Seated_Cable_Rows',
     bodyPart: 'costas',
@@ -1021,7 +1021,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Não curve a lombar — mantenha coluna neutra.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada T-Bar',
     freeDbId: 'Lying_T-Bar_Row',
     bodyPart: 'costas',
@@ -1037,7 +1037,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantenha o core contraído para proteger a lombar.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Bom Dia (Good Morning)',
     freeDbId: 'Good_Morning',
     bodyPart: 'costas',
@@ -1053,7 +1053,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Nunca arredonde a lombar. Carga leve no aprendizado.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Hiperextensão Lombar',
     freeDbId: 'Hyperextensions_Back_Extensions',
     bodyPart: 'costas',
@@ -1069,7 +1069,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Peso no peito aumenta a intensidade gradualmente.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada com Elástico',
     freeDbId: 'Bent_Over_Two-Dumbbell_Row',
     bodyPart: 'costas',
@@ -1087,7 +1087,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── PERNA (adicionais) ───────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Extensão de Perna na Máquina',
     freeDbId: 'Leg_Extensions',
     bodyPart: 'perna',
@@ -1103,7 +1103,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Não trave o joelho com impacto — estenda suavemente.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Hack Squat na Máquina',
     freeDbId: 'Hack_Squat',
     bodyPart: 'perna',
@@ -1119,7 +1119,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Posição dos pés na plataforma muda o enfoque muscular.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento Frontal',
     freeDbId: 'Front_Squat_Clean_Grip',
     bodyPart: 'perna',
@@ -1135,7 +1135,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Exige boa mobilidade de tornozelo e ombro.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Afundo com Barra',
     freeDbId: 'Barbell_Lunge',
     bodyPart: 'perna',
@@ -1151,7 +1151,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Joelho da frente não deve ultrapassar a ponta do pé.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento Búlgaro',
     freeDbId: 'Split_Squat_with_Dumbbells',
     bodyPart: 'perna',
@@ -1167,7 +1167,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantenha o tronco ereto; quanto mais longe o pé, mais glúteo.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Elevação de Panturrilha em Pé',
     freeDbId: 'Rocking_Standing_Calf_Raise',
     bodyPart: 'perna',
@@ -1182,7 +1182,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Adicione peso para progressão; amplitude total é fundamental.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento Sumo',
     freeDbId: 'Plie_Dumbbell_Squat',
     bodyPart: 'perna',
@@ -1198,7 +1198,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Pontas dos pés seguem a direção dos joelhos.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Cadeira Adutora',
     freeDbId: 'Adductor',
     bodyPart: 'perna',
@@ -1214,7 +1214,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Execute em cadência lenta para ativar melhor os adutores.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento Livre (Peso Corporal)',
     freeDbId: 'Bodyweight_Squat',
     bodyPart: 'perna',
@@ -1232,7 +1232,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── GLÚTEO (adicionais) ──────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Glúteo no Cabo (Kickback)',
     freeDbId: 'One-Legged_Cable_Kickback',
     bodyPart: 'glúteo',
@@ -1248,7 +1248,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Não gire o quadril — mova só a perna.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Ponte de Glúteo',
     freeDbId: 'Barbell_Glute_Bridge',
     bodyPart: 'glúteo',
@@ -1264,7 +1264,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Adicione peso no quadril para progredir.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Abdução com Elástico (Monster Walk)',
     freeDbId: 'Monster_Walk',
     bodyPart: 'glúteo',
@@ -1279,7 +1279,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantenha os pés paralelos — evite rodar os quadris.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Abdução na Máquina',
     freeDbId: 'Thigh_Adductor',
     bodyPart: 'glúteo',
@@ -1295,7 +1295,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ponta do pé para dentro recruta mais glúteo médio.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Afundo Reverso',
     freeDbId: 'Dumbbell_Rear_Lunge',
     bodyPart: 'glúteo',
@@ -1313,7 +1313,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── OMBRO (adicionais) ───────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Desenvolvimento com Barra (Press Militar)',
     freeDbId: 'Seated_Barbell_Military_Press',
     bodyPart: 'ombro',
@@ -1329,7 +1329,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Núcleo ativado; evite hiperestender a lombar.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Arnold Press',
     freeDbId: 'Kettlebell_Arnold_Press',
     bodyPart: 'ombro',
@@ -1345,7 +1345,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['O giro trabalha todos os feixes do deltóide.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Face Pull no Cabo',
     freeDbId: 'Face_Pull',
     bodyPart: 'ombro',
@@ -1361,7 +1361,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Essencial para saúde do ombro — não negligencie.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Elevação Frontal com Halteres',
     freeDbId: 'Front_Raise_And_Pullover',
     bodyPart: 'ombro',
@@ -1377,7 +1377,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Evite usar o tronco para balançar os pesos.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rotação Interna/Externa com Elástico',
     freeDbId: 'External_Rotation_with_Band',
     bodyPart: 'ombro',
@@ -1392,7 +1392,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Exercício preventivo fundamental — use carga mínima.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Encolhimento de Ombros com Halteres',
     freeDbId: 'Dumbbell_Shrug',
     bodyPart: 'ombro',
@@ -1408,7 +1408,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Sem girar os ombros — movimento vertical puro.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Encolhimento de Ombros na Polia',
     freeDbId: 'Cable_Shrugs',
     bodyPart: 'ombro',
@@ -1424,7 +1424,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['A tensão constante do cabo dificulta a "cola" no topo — controle a descida.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Encolhimento de Ombros com Barra',
     freeDbId: 'Barbell_Shrug',
     bodyPart: 'ombro',
@@ -1440,7 +1440,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Permite cargas maiores que o halter — priorize controle sobre peso.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada Alta no Cabo',
     freeDbId: 'Kneeling_High_Pulley_Row',
     bodyPart: 'ombro',
@@ -1458,7 +1458,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── BÍCEPS (adicionais) ──────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca Inclinada com Halteres',
     freeDbId: 'Alternate_Incline_Dumbbell_Curl',
     bodyPart: 'bíceps',
@@ -1473,7 +1473,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['O alongamento inicial recruta mais fibras do bíceps.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca Concentrada',
     freeDbId: 'Concentration_Curls',
     bodyPart: 'bíceps',
@@ -1489,7 +1489,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Máxima isolação do bíceps; pronação no final aumenta o pico.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca com Elástico',
     freeDbId: 'Cable_Preacher_Curl',
     bodyPart: 'bíceps',
@@ -1507,7 +1507,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── TRÍCEPS (adicionais) ────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tríceps Pulley (Pushdown)',
     freeDbId: 'Triceps_Pushdown',
     bodyPart: 'tríceps',
@@ -1523,7 +1523,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Cotovelos fixos ao lado do corpo durante todo o movimento.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Fundinho (Bench Dip)',
     freeDbId: 'Bench_Dips',
     bodyPart: 'tríceps',
@@ -1539,7 +1539,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Quanto mais longe os pés, maior a dificuldade.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Extensão de Tríceps com Haltere Unilateral',
     freeDbId: 'Dumbbell_One-Arm_Triceps_Extension',
     bodyPart: 'tríceps',
@@ -1557,7 +1557,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── ANTEBRAÇO/PUNHO ─────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca de Punho',
     freeDbId: 'Palms-Down_Dumbbell_Wrist_Curl_Over_A_Bench',
     bodyPart: 'antebraço',
@@ -1572,7 +1572,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Movimento pequeno e controlado; nunca use carga excessiva.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Extensão de Punho',
     freeDbId: 'Palms-Down_Dumbbell_Wrist_Curl_Over_A_Bench',
     bodyPart: 'antebraço',
@@ -1587,7 +1587,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Importante para prevenção de epicondilite.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Pronação e Supinação com Haltere',
     freeDbId: 'Seated_Dumbbell_Palms-Down_Wrist_Curl',
     bodyPart: 'antebraço',
@@ -1602,7 +1602,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Escopo de movimento completo; peso leve.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Strengthener de Pegada (Gripper)',
     bodyPart: 'antebraço',
     targetMuscle: 'Flexores dos dedos',
@@ -1618,7 +1618,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── ABDÔMEN / CORE (adicionais) ──────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Prancha',
     freeDbId: 'Plank',
     bodyPart: 'abdômen',
@@ -1634,7 +1634,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Respire normalmente; não segure a respiração.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Elevação de Pernas Suspensa',
     freeDbId: 'Hanging_Leg_Raise',
     bodyPart: 'abdômen',
@@ -1649,7 +1649,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Evite usar impulso — controle total.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Twist Russo',
     freeDbId: 'Russian_Twist',
     bodyPart: 'abdômen',
@@ -1664,7 +1664,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Pés no chão para iniciantes; elevados para avançados.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Mountain Climber',
     freeDbId: 'Mountain_Climbers',
     bodyPart: 'abdômen',
@@ -1679,7 +1679,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantenha os quadris baixos e o core ativado.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Abdominal Bicicleta',
     freeDbId: 'Cross-Body_Crunch',
     bodyPart: 'abdômen',
@@ -1694,7 +1694,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Não puxe o pescoço — o movimento parte do abdômen.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Dead Bug',
     freeDbId: 'Dead_Bug',
     bodyPart: 'abdômen',
@@ -1710,7 +1710,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Lombar deve estar em contato com o chão durante todo o movimento.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Prancha Lateral',
     freeDbId: 'Push_Up_to_Side_Plank',
     bodyPart: 'abdômen',
@@ -1725,7 +1725,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Execute dos dois lados igualmente.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Crunch com Cabo',
     freeDbId: 'Cable_Crunch',
     bodyPart: 'abdômen',
@@ -1741,7 +1741,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Não use o peso do quadril — o movimento deve partir do abdômen.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Hollow Body Hold',
     freeDbId: 'Plank',
     bodyPart: 'abdômen',
@@ -1757,7 +1757,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Iniciantes: joelhos dobrados; avançados: pernas estendidas.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Leg Raise Deitado',
     freeDbId: 'Flat_Bench_Lying_Leg_Raise',
     bodyPart: 'abdômen',
@@ -1774,7 +1774,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── CARDIO / HIIT ────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Corrida na Esteira',
     freeDbId: 'Jogging_Treadmill',
     bodyPart: 'cardio',
@@ -1789,7 +1789,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Inclinação de 1% simula corrida ao ar livre na esteira.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Pular Corda',
     freeDbId: 'Battling_Ropes',
     bodyPart: 'cardio',
@@ -1804,7 +1804,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Comece com séries de 30s e vá aumentando gradualmente.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Burpee',
     freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
@@ -1820,7 +1820,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantenha a sequência fluida; regule o ritmo para manter a forma.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Polichinelo (Jumping Jack)',
     freeDbId: 'Freehand_Jump_Squat',
     bodyPart: 'cardio',
@@ -1836,7 +1836,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ideal para aquecimento ou intervalos de recuperação ativa.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Sprint Curto (Tiro)',
     freeDbId: 'Running_Treadmill',
     bodyPart: 'cardio',
@@ -1851,7 +1851,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Aquecimento adequado antes de sprints é obrigatório.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remo Ergométrico',
     freeDbId: 'Rowing_Stationary',
     bodyPart: 'cardio',
@@ -1867,7 +1867,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['60% do trabalho vem das pernas; 20% core; 20% braços.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Skipping (Corrida no Lugar)',
     freeDbId: 'Running_Treadmill',
     bodyPart: 'cardio',
@@ -1882,7 +1882,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Aumente a intensidade elevando mais os joelhos.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Box Jump',
     freeDbId: 'Front_Box_Jump',
     bodyPart: 'cardio',
@@ -1900,7 +1900,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── FUNCIONAL / CASA ─────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Flexão de Braço Larga',
     freeDbId: 'Incline_Push-Up_Wide',
     bodyPart: 'peito',
@@ -1915,7 +1915,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Maior abertura = mais peitoral lateral.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Flexão de Braço Fechada',
     freeDbId: 'Incline_Push-Up_Close-Grip',
     bodyPart: 'tríceps',
@@ -1930,7 +1930,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Cotovelos próximos ao corpo = mais tríceps.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Dip em Barras Paralelas',
     freeDbId: 'Parallel_Bar_Dip',
     bodyPart: 'tríceps',
@@ -1946,7 +1946,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Tronco ereto = mais tríceps; tronco inclinado = mais peito.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Prancha com Toque no Ombro',
     freeDbId: 'Plank',
     bodyPart: 'abdômen',
@@ -1961,7 +1961,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Pés mais abertos aumentam estabilidade para iniciantes.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Stepup no Banco',
     freeDbId: 'Barbell_Step_Ups',
     bodyPart: 'perna',
@@ -1977,7 +1977,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Adicione halteres para progressão.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Superman (Extensão Dorsal no Chão)',
     freeDbId: 'Hyperextensions_With_No_Hyperextension_Bench',
     bodyPart: 'costas',
@@ -1993,7 +1993,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Movimento gentil — não force o pescoço.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Bear Crawl',
     freeDbId: 'Bear_Crawl_Sled_Drags',
     bodyPart: 'abdômen',
@@ -2009,7 +2009,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Quadril nunca acima do nível da coluna.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Handstand Hold (Parada de Mão)',
     freeDbId: 'Handstand_Push-Ups',
     bodyPart: 'ombro',
@@ -2025,7 +2025,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Progrida de encostar na parede a estabilizar no centro.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Pike Push-Up',
     freeDbId: 'Incline_Push-Up',
     bodyPart: 'ombro',
@@ -2041,7 +2041,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Progressão para handstand push-up.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Dip em Cadeira',
     freeDbId: 'Bench_Dips',
     bodyPart: 'tríceps',
@@ -2057,7 +2057,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Versão mais simples do fundinho para iniciantes.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Pistol Squat (Agachamento Unilateral)',
     freeDbId: 'Kettlebell_Pistol_Squat',
     bodyPart: 'perna',
@@ -2075,7 +2075,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── MOBILIDADE ───────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rotação Torácica',
     freeDbId: 'External_Rotation',
     bodyPart: 'mobilidade',
@@ -2091,7 +2091,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Expirar na rotação aumenta amplitude.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Hip 90/90 (Mobilidade de Quadril)',
     freeDbId: 'Kneeling_Hip_Flexor',
     bodyPart: 'mobilidade',
@@ -2107,7 +2107,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Progressão gradual; não force a amplitude.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'World Greatest Stretch',
     freeDbId: 'Worlds_Greatest_Stretch',
     bodyPart: 'mobilidade',
@@ -2123,7 +2123,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Um dos melhores exercícios de mobilidade total do corpo.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Alongamento de Isquiotibiais (Faixa)',
     freeDbId: 'Chair_Leg_Extended_Stretch',
     bodyPart: 'mobilidade',
@@ -2138,7 +2138,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Respire profundamente e relaxe o músculo na expiração.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Cat-Cow (Mobilidade de Coluna)',
     bodyPart: 'mobilidade',
     targetMuscle: 'Coluna (toda extensão)',
@@ -2152,7 +2152,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ótimo para aquecimento e alívio de tensão lombar.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Ankle Mobility Drill',
     freeDbId: 'Standing_Hip_Flexors',
     bodyPart: 'mobilidade',
@@ -2168,7 +2168,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Essencial para agachamento profundo e saúde do joelho.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rolamento em Espuma (Foam Roll Costas)',
     bodyPart: 'mobilidade',
     targetMuscle: 'Coluna torácica',
@@ -2182,7 +2182,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Pause em pontos de tensão por 30-60s.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Pigeon Pose (Pombo — Quadril)',
     freeDbId: 'Kneeling_Hip_Flexor',
     bodyPart: 'mobilidade',
@@ -2200,7 +2200,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── AQUECIMENTO ATIVO ────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rotação de Braços',
     freeDbId: 'Chest_And_Front_Of_Shoulder_Stretch',
     bodyPart: 'aquecimento',
@@ -2215,7 +2215,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Comece pequeno e aumente progressivamente o raio.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Corrida Elevada no Lugar',
     freeDbId: 'Running_Treadmill',
     bodyPart: 'aquecimento',
@@ -2227,7 +2227,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ótimo para elevar temperatura central antes de treino.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento com Rotação de Ombro',
     freeDbId: 'Overhead_Squat',
     bodyPart: 'aquecimento',
@@ -2241,7 +2241,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ative mobilidade total em um único movimento.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Leg Swing (Balanço de Perna)',
     freeDbId: 'Chair_Leg_Extended_Stretch',
     bodyPart: 'aquecimento',
@@ -2256,7 +2256,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Amplitude progressiva; nunca force.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Inchworm',
     freeDbId: 'Inchworm',
     bodyPart: 'aquecimento',
@@ -2272,7 +2272,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantenha os joelhos estendidos para máximo alongamento dos isquiotibiais.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Lateral Shuffle',
     freeDbId: 'Side_Leg_Raises',
     bodyPart: 'aquecimento',
@@ -2289,7 +2289,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── LEVANTAMENTO COMPOSTO ────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Levantamento Terra',
     freeDbId: 'Barbell_Deadlift',
     bodyPart: 'costas',
@@ -2306,7 +2306,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Coluna neutra é obrigatória. Comece com carga técnica.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Power Clean',
     freeDbId: 'Power_Clean',
     bodyPart: 'costas',
@@ -2321,7 +2321,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Exercício técnico — aprenda com progressões e coach.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Supino Reto com Halteres',
     freeDbId: 'Dumbbell_Bench_Press',
     bodyPart: 'peito',
@@ -2337,7 +2337,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Maior amplitude que o supino com barra.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Terra Sumo',
     freeDbId: 'Sumo_Deadlift',
     bodyPart: 'perna',
@@ -2352,7 +2352,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Variação de terra com mais ativação de adutores e menos lombar.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Clean and Press',
     freeDbId: 'Clean_and_Press',
     bodyPart: 'ombro',
@@ -2370,7 +2370,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── CALISTENIA AVANÇADA ──────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Muscle-Up',
     freeDbId: 'Muscle_Up',
     bodyPart: 'costas',
@@ -2386,7 +2386,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Requer barra fixa sólida e força de pull + dip combinados.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'L-Sit',
     freeDbId: 'Plank',
     bodyPart: 'abdômen',
@@ -2401,7 +2401,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Progrida de pernas dobradas a completamente estendidas.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Front Lever',
     freeDbId: 'Hanging_Leg_Raise',
     bodyPart: 'costas',
@@ -2416,7 +2416,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Progressão: tuck → half-tuck → straddle → full.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Skin the Cat',
     freeDbId: 'Muscle_Up',
     bodyPart: 'ombro',
@@ -2431,7 +2431,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Excelente para mobilidade de ombro; progrida aos poucos.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'One-Arm Push-Up',
     freeDbId: 'One_Arm_Dumbbell_Bench_Press',
     bodyPart: 'peito',
@@ -2447,7 +2447,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Progrida com apoio lateral antes do movimento completo.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Handstand Push-Up',
     freeDbId: 'Handstand_Push-Ups',
     bodyPart: 'ombro',
@@ -2465,7 +2465,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── BÍCEPS (mais) ────────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca 21 com Barra',
     freeDbId: 'Barbell_Curl',
     bodyPart: 'bíceps',
@@ -2479,7 +2479,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Técnica de sobrecarga — use carga mais leve que a usual.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Rosca com Cabo (Cross Body)',
     freeDbId: 'Cross_Body_Hammer_Curl',
     bodyPart: 'bíceps',
@@ -2495,7 +2495,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── TRÍCEPS (mais) ───────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tríceps Coice com Haltere',
     freeDbId: 'Tricep_Dumbbell_Kickback',
     bodyPart: 'tríceps',
@@ -2511,7 +2511,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Cotovelo paralelo ao solo e fixo durante todo o movimento.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tríceps com Elástico',
     freeDbId: 'Speed_Band_Overhead_Triceps',
     bodyPart: 'tríceps',
@@ -2528,7 +2528,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── CARDIO MÁQUINAS ──────────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Bicicleta Ergométrica',
     freeDbId: 'Elliptical_Trainer',
     bodyPart: 'cardio',
@@ -2543,7 +2543,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ideal para quem tem impacto articular reduzido.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Elíptico',
     freeDbId: 'Elliptical_Trainer',
     bodyPart: 'cardio',
@@ -2559,7 +2559,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── LEVANTAMENTO COMPOSTO (mais) ─────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Kettlebell Swing',
     freeDbId: 'One-Arm_Kettlebell_Swings',
     bodyPart: 'glúteo',
@@ -2575,7 +2575,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Movimento de quadril (hip hinge), não agachamento.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Snatch com Haltere',
     freeDbId: 'Power_Clean',
     bodyPart: 'ombro',
@@ -2590,7 +2590,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Exercício de potência — priorize técnica à carga.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Thruster (Agachamento + Press)',
     freeDbId: 'Barbell_Hip_Thrust',
     bodyPart: 'perna',
@@ -2607,7 +2607,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── FUNCIONAL/CASA (mais) ────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Prancha com Elevação de Quadril (Pike)',
     freeDbId: 'Push_Up_to_Side_Plank',
     bodyPart: 'abdômen',
@@ -2622,7 +2622,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mantém a tensão no core durante toda a execução.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Escalador com Torção',
     freeDbId: 'Mountain_Climbers',
     bodyPart: 'abdômen',
@@ -2638,7 +2638,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Versão mais intensa do mountain climber com foco nos oblíquos.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Swing Lateral com Elástico',
     freeDbId: 'External_Rotation_with_Band',
     bodyPart: 'glúteo',
@@ -2653,7 +2653,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Controle o retorno para não deixar o elástico puxar de volta rápido.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Superman com Alternância',
     freeDbId: 'Hyperextensions_With_No_Hyperextension_Bench',
     bodyPart: 'costas',
@@ -2668,7 +2668,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Versão mais desafiadora que o superman bilateral.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Chair Squat (Agachamento na Cadeira)',
     freeDbId: 'Chair_Squat',
     bodyPart: 'perna',
@@ -2683,7 +2683,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Excelente ponto de partida para iniciantes aprenderem o padrão de agachamento.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Glute Kickback de Joelhos',
     freeDbId: 'Glute_Kickback',
     bodyPart: 'glúteo',
@@ -2698,7 +2698,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Pode adicionar elástico acima dos joelhos para mais intensidade.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tuck Jump',
     freeDbId: 'Knee_Tuck_Jump',
     bodyPart: 'cardio',
@@ -2713,7 +2713,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Pouso amortecido é essencial para proteger os joelhos.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Frog Jump (Salto Sapo)',
     freeDbId: 'Weighted_Jump_Squat',
     bodyPart: 'perna',
@@ -2728,7 +2728,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ótimo para potência e trabalho aeróbico simultâneo.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Wall Sit (Cadeira na Parede)',
     freeDbId: 'Sit_Squats',
     bodyPart: 'perna',
@@ -2743,7 +2743,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Não deixe os joelhos ultrapassarem a ponta dos pés.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Cossack Squat (Agachamento Lateral)',
     freeDbId: 'Barbell_Side_Split_Squat',
     bodyPart: 'perna',
@@ -2758,7 +2758,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Exige mobilidade de quadril e tornozelo; progrida gradualmente.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Nordic Curl (Curl Nórdico)',
     freeDbId: 'Lying_Machine_Squat',
     bodyPart: 'perna',
@@ -2774,7 +2774,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Um dos melhores exercícios preventivos de lesão de isquiotibiais.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Tempo Push-Up (Flexão Lenta)',
     freeDbId: 'Clock_Push-Up',
     bodyPart: 'peito',
@@ -2788,7 +2788,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Maior tempo sob tensão mesmo sem adição de peso.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Staggered Push-Up (Flexão Assimétrica)',
     freeDbId: 'Clock_Push-Up',
     bodyPart: 'peito',
@@ -2804,7 +2804,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Progressão intermediária rumo ao one-arm push-up.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Agachamento com Haltere (Goblet)',
     freeDbId: 'Goblet_Squat',
     bodyPart: 'perna',
@@ -2822,7 +2822,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
 
   // ─── POSTURA / PREVENÇÃO ──────────────────────────────────────────────────
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Band Pull-Apart',
     freeDbId: 'Band_Pull_Apart',
     bodyPart: 'ombro',
@@ -2838,7 +2838,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Faça em todos os treinos de empurrar para equilibrar o ombro.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Remada com Elástico na Porta',
     freeDbId: 'Alternating_Kettlebell_Row',
     bodyPart: 'costas',
@@ -2852,7 +2852,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Tensão constante — ótimo substituto da remada em máquina para casa.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Extensão de Quadril em Pé',
     freeDbId: 'Hip_Extension_with_Bands',
     bodyPart: 'glúteo',
@@ -2867,7 +2867,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Mova o quadril, não apenas a perna.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Chest Stretch (Alongamento de Peitoral)',
     freeDbId: 'Chin_To_Chest_Stretch',
     bodyPart: 'mobilidade',
@@ -2882,7 +2882,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     tips: ['Ótimo para correção postural após treinos de empurrar.'],
   },
   {
-    source: 'metacore',
+    source: 'corefit',
     name: 'Mobilidade de Ombro (Towel Stretch)',
     freeDbId: 'Chest_And_Front_Of_Shoulder_Stretch',
     bodyPart: 'mobilidade',

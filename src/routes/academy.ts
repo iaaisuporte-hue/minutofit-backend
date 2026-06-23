@@ -47,14 +47,14 @@ import { sanitizeBrandingText } from '../utils/htmlSanitize';
 import pool from '../config/database';
 import { getAcademyNetworkPolicy, upsertAcademyNetworkPolicy } from '../services/professionalNetworkService';
 
-const ALLOWED_LOGO_ORIGINS = ['s3.amazonaws.com', 'minutofit.com.br', 'cdn.minutofit.com.br'];
+const ALLOWED_LOGO_ORIGINS = ['s3.amazonaws.com', 'corefit.com.br', 'cdn.corefit.com.br'];
 
 function validateLogoUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:') return 'Logo URL deve usar HTTPS.';
     const isAllowed = ALLOWED_LOGO_ORIGINS.some((origin) => parsed.hostname.endsWith(origin));
-    if (!isAllowed) return 'Logo deve estar hospedado no MinutoFit (S3 ou CDN).';
+    if (!isAllowed) return 'Logo deve estar hospedado no S2Core (S3 ou CDN).';
     return null;
   } catch {
     return 'Logo URL inválida.';

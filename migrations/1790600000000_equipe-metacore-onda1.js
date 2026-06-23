@@ -1,5 +1,5 @@
 /**
- * Onda 1 — Minha Equipe MetaCore
+ * Onda 1 — Minha Equipe CoreFit
  *
  * Cria: student_professional_requests, user_data_consents, data_access_audit
  * Altera: personal_student_assignments (initiated_by + status 'revoked')

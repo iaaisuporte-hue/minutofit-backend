@@ -1,5 +1,5 @@
 /**
- * Cria a tabela de mídia associada aos exercícios da biblioteca MetaCore.
+ * Cria a tabela de mídia associada aos exercícios da biblioteca CoreFit.
  * media_type: 'gif' | 'image' | 'video' | 'youtube'
  *
  * Idempotente: ifNotExists em createTable/createIndex protege contra

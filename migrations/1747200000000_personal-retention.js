@@ -2,7 +2,7 @@
  * Retention Intelligence — tabelas relacionais do módulo Personal.
  *
  * personal_relationship_actions : timeline de ações do personal sobre cada aluno
- * personal_message_templates    : templates de mensagem (metacore / academia / personal)
+ * personal_message_templates    : templates de mensagem (corefit / academia / personal)
  */
 
 /** @type {import('node-pg-migrate').MigrationBuilder} */
@@ -92,7 +92,7 @@ exports.up = (pgm) => {
       scope: {
         type: 'varchar(20)',
         notNull: true,
-        check: `scope IN ('personal','academy','metacore')`,
+        check: `scope IN ('personal','academy','corefit')`,
       },
       category: { type: 'varchar(40)', notNull: true },
       title: { type: 'varchar(120)', notNull: true },

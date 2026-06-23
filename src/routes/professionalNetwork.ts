@@ -62,7 +62,7 @@ router.put('/network-profile', async (req: Request, res: Response) => {
       input: {
         professionalRole: role,
         credentialCode: body.credentialCode ?? '',
-        displayName: body.displayName ?? req.user!.email ?? 'Profissional MetaCore',
+        displayName: body.displayName ?? req.user!.email ?? 'Profissional S2Core',
         bio: body.bio,
         photoUrl: body.photoUrl,
         specialties: body.specialties,

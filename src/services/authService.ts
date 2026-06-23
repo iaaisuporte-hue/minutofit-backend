@@ -807,7 +807,7 @@ export async function refreshWithRefreshToken(
 /**
  * Retorna o contexto de academia ativa para incluir no JWT.
  * - 1 academia ativa → retorna id + roleSlug do papel nessa academia.
- * - 0 ou >1 → retorna undefined em ambos (seletor no frontend ou Admin MetaCore global).
+ * - 0 ou >1 → retorna undefined em ambos (seletor no frontend ou Admin CoreFit global).
  */
 export async function resolveActiveAcademyId(userId: number): Promise<number | undefined> {
   const ctx = await resolveAcademyContext(userId);

@@ -31,7 +31,7 @@ export async function backfillUserProducts(): Promise<void> {
   // Produto 'app' para todos os usuários não-admin
   await pool.query(`
     INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
-    SELECT u.id, 'app', 'active', 'metacore', 'Backfill inicial — produto app para todos os usuários'
+    SELECT u.id, 'app', 'active', 'corefit', 'Backfill inicial — produto app para todos os usuários'
     FROM users u
     WHERE u.role IN ('user', 'personal', 'nutri')
     ON CONFLICT (user_id, product_key) DO NOTHING
@@ -40,7 +40,7 @@ export async function backfillUserProducts(): Promise<void> {
   // Produto 'personal' para personal trainers
   await pool.query(`
     INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
-    SELECT u.id, 'personal', 'active', 'metacore', 'Backfill inicial — produto personal para personal trainers'
+    SELECT u.id, 'personal', 'active', 'corefit', 'Backfill inicial — produto personal para personal trainers'
     FROM users u
     WHERE u.role = 'personal'
     ON CONFLICT (user_id, product_key) DO NOTHING
@@ -49,7 +49,7 @@ export async function backfillUserProducts(): Promise<void> {
   // Produto 'nutri' para nutricionistas
   await pool.query(`
     INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
-    SELECT u.id, 'nutri', 'active', 'metacore', 'Backfill inicial — produto nutri para nutricionistas'
+    SELECT u.id, 'nutri', 'active', 'corefit', 'Backfill inicial — produto nutri para nutricionistas'
     FROM users u
     WHERE u.role = 'nutri'
     ON CONFLICT (user_id, product_key) DO NOTHING
@@ -58,7 +58,7 @@ export async function backfillUserProducts(): Promise<void> {
   // Produto 'metabolismo' para todos os usuários (engine é universal na base atual)
   await pool.query(`
     INSERT INTO user_product_memberships (user_id, product_key, status, source, notes)
-    SELECT u.id, 'metabolismo', 'active', 'metacore', 'Backfill inicial — metabolismo universal'
+    SELECT u.id, 'metabolismo', 'active', 'corefit', 'Backfill inicial — metabolismo universal'
     FROM users u
     WHERE u.role IN ('user', 'personal', 'nutri')
     ON CONFLICT (user_id, product_key) DO NOTHING

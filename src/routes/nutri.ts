@@ -116,7 +116,7 @@ router.post('/direct-invites', roleCheckMiddleware('nutri'), inviteLimiter, asyn
     );
 
     const row = result.rows[0];
-    const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://app.corefit.com.br';
     const inviteUrl = `${frontendUrl}/convite-nutri/${token}`;
 
     res.status(201).json({ success: true, data: { ...row, inviteUrl } });
@@ -129,7 +129,7 @@ router.post('/direct-invites', roleCheckMiddleware('nutri'), inviteLimiter, asyn
 router.get('/direct-invites', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
   try {
     const nutriId = req.user!.id;
-    const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://app.corefit.com.br';
 
     await pool.query(
       `UPDATE nutri_direct_invites

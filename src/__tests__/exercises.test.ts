@@ -11,7 +11,7 @@ const VALID_UUID = '11111111-1111-1111-1111-111111111111';
 const mockExerciseRow = {
   id: VALID_UUID,
   external_id: null,
-  source: 'metacore',
+  source: 'corefit',
   name: 'Supino Reto',
   normalized_name: 'supino reto',
   body_part: 'peito',

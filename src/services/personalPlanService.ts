@@ -134,7 +134,7 @@ export async function createPlatformCheckout(
   startDate.setMinutes(startDate.getMinutes() + 5);
 
   const mpPayload = {
-    reason: `MetaCore Personal — ${plan === 'pro' ? 'Pro' : 'Starter'}`,
+    reason: `S2Core Personal — ${plan === 'pro' ? 'Pro' : 'Starter'}`,
     auto_recurring: {
       frequency: 1,
       frequency_type: 'months',

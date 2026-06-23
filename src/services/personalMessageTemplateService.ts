@@ -1,6 +1,6 @@
 import pool from '../config/database';
 
-export type TemplateScope = 'personal' | 'academy' | 'metacore';
+export type TemplateScope = 'personal' | 'academy' | 'corefit';
 
 export type MessageTemplate = {
   id: number;
@@ -23,8 +23,8 @@ export type CreateTemplateInput = {
 };
 
 // ---------------------------------------------------------------------------
-// List: metacore (global) + academy (if context) + personal (own)
-// Deduplicado por title; ordenado metacore first, depois academy, depois personal.
+// List: corefit (global) + academy (if context) + personal (own)
+// Deduplicado por title; ordenado corefit first, depois academy, depois personal.
 // ---------------------------------------------------------------------------
 
 export async function listVisibleTemplates(
@@ -35,9 +35,9 @@ export async function listVisibleTemplates(
     `SELECT
        id, personal_id, academy_id, scope, category, title, body, is_default,
        created_at, updated_at,
-       CASE scope WHEN 'metacore' THEN 0 WHEN 'academy' THEN 1 ELSE 2 END AS sort_order
+       CASE scope WHEN 'corefit' THEN 0 WHEN 'academy' THEN 1 ELSE 2 END AS sort_order
      FROM personal_message_templates
-     WHERE scope = 'metacore'
+     WHERE scope = 'corefit'
         OR (scope = 'personal' AND personal_id = $1)
         OR (scope = 'academy' AND ($2::int IS NULL OR academy_id = $2))
      ORDER BY sort_order, is_default DESC, title ASC`,

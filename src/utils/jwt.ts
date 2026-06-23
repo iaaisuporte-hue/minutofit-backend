@@ -7,7 +7,7 @@ export interface JWTPayload {
   role: 'user' | 'personal' | 'nutri' | 'admin';
   profileCompleted: boolean;
   accessProfile?: string;
-  /** ID da academia ativa no contexto do token. Ausente = Admin MetaCore global. */
+  /** ID da academia ativa no contexto do token. Ausente = Admin CoreFit global. */
   activeAcademyId?: number;
   /** Produtos ativos do usuário. Ausente em tokens legados — tratar como []. */
   products?: string[];

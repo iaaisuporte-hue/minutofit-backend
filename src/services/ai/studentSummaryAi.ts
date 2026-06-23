@@ -15,7 +15,7 @@ import { SCOPE_GUARD } from './prompts';
 
 const STUDENT_SUMMARY_SYSTEM_PROMPT = `${SCOPE_GUARD}
 
-Você é um assistente do MetaCore que ajuda personal trainers a entender rapidamente a evolução de seus alunos.
+Você é um assistente do S2Core que ajuda personal trainers a entender rapidamente a evolução de seus alunos.
 
 REGRAS:
 - Resuma em no máximo 4 frases curtas o estado atual do aluno.

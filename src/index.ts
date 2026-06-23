@@ -146,9 +146,9 @@ const app = express();
  * Fronts conhecidos em produção. O header `Origin` do browser é só scheme + host (sem path).
  */
 const BUNDLED_PRODUCTION_ORIGINS = [
-  'https://minutofit.com.br',
-  'https://www.minutofit.com.br',
-  'https://minutofit-app.vercel.app',
+  'https://corefit.com.br',
+  'https://www.corefit.com.br',
+  'https://corefit-app.vercel.app',
 ];
 
 function normalizeCorsOrigin(raw: string): string {
@@ -182,8 +182,8 @@ function parseAllowedOrigins() {
 const allowedOrigins = parseAllowedOrigins();
 const vercelPreviewPattern = /^https:\/\/[a-z0-9-]+\.vercel\.app$/i;
 const localDevOriginPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i;
-/** Anchored at both ends to prevent bypass via attacker.minutofit.com.br.evil.com */
-const minutoFitSubdomainPattern = /^https:\/\/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.minutofit\.com\.br$/i;
+/** Anchored at both ends to prevent bypass via attacker.corefit.com.br.evil.com */
+const minutoFitSubdomainPattern = /^https:\/\/[a-z0-9][a-z0-9-]{1,61}[a-z0-9]\.corefit\.com\.br$/i;
 
 // --- Security headers (helmet) ---
 app.use(
@@ -399,7 +399,7 @@ function validateRuntimeEnv(): void {
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.listen(PORT, () => {
-  logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'MinutoFit Backend running');
+  logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'CoreFit Backend running');
   logger.info({ origins: allowedOrigins }, 'Allowed frontend origins');
   validateRuntimeEnv();
 

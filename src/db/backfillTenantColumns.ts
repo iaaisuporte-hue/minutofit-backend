@@ -1,7 +1,7 @@
 import pool from '../config/database';
 import logger from '../lib/logger';
 
-const DEFAULT_ACADEMY_SLUG = 'minutofit-direto';
+const DEFAULT_ACADEMY_SLUG = 'corefit-direto';
 
 /**
  * Preenche academy_id = <id da academia padrão> em todos os registros
@@ -9,7 +9,7 @@ const DEFAULT_ACADEMY_SLUG = 'minutofit-direto';
  *
  * Idempotente: usa WHERE academy_id IS NULL.
  * Decisão operacional registrada: todos os dados históricos pertencem
- * à academia padrão "MinutoFit Direto" enquanto o modelo multi-tenant
+ * à academia padrão "CoreFit Direto" enquanto o modelo multi-tenant
  * não está 100% estabilizado. Refinar por academia real é uma tarefa
  * futura de saneamento (ver plano_2026-05-12_1.md).
  *

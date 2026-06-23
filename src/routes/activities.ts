@@ -73,7 +73,7 @@ router.get('/', async (req: Request, res: Response) => {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
 
     // When academy context is available, use withTenant() for dev-time guard.
-    // Falls back to user_id-only for MetaCore sessions without tenant context.
+    // Falls back to user_id-only for CoreFit sessions without tenant context.
     const result = academyId
       ? await withTenant(
           pool,

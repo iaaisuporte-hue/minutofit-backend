@@ -3,17 +3,17 @@
  * com matrículas, check-ins, treinos, lab (movement), tracker (activity), pagamentos
  * e alguns snapshots de metabolismo — para visualizar dashboard, financeiro e retenção.
  *
- * Uso (na pasta minutofit-backend, com DATABASE_URL no .env):
+ * Uso (na pasta corefit-backend, com DATABASE_URL no .env):
  *   npm run db:seed-phgym-demo
  *
- * Idempotente: remove antes usuários com email `phgym-demo-*@minutofit.invalid` (CASCADE).
+ * Idempotente: remove antes usuários com email `phgym-demo-*@corefit.invalid` (CASCADE).
  */
 
 import bcrypt from 'bcryptjs';
 import pool from '../config/database';
 import { ensureAcademyRoles } from '../db/academyRoles';
 
-const DEMO_LIKE = 'phgym-demo-%@minutofit.invalid';
+const DEMO_LIKE = 'phgym-demo-%@corefit.invalid';
 
 const NAMES = [
   'Ana Beatriz', 'Bruno Costa', 'Carla Dias', 'Diego Fernandes', 'Elena Gomes',
@@ -114,7 +114,7 @@ async function main() {
 
     for (let i = 0; i < 30; i += 1) {
       const n = String(i + 1).padStart(2, '0');
-      const email = `phgym-demo-${n}@minutofit.invalid`;
+      const email = `phgym-demo-${n}@corefit.invalid`;
       const name = NAMES[i] ?? `Aluno Demo ${n}`;
 
       // CPF fictício único: 9 dígitos base + 2 dígitos índice (não passa validação matemática — só demo)
@@ -278,7 +278,7 @@ async function main() {
   }
 
   console.log(`[phgym-demo] OK — ${userIds.length} alunos. Senha demo (todos): DemoPhGym2026!`);
-  console.log('[phgym-demo] Emails: phgym-demo-01@minutofit.invalid … phgym-demo-30@minutofit.invalid');
+  console.log('[phgym-demo] Emails: phgym-demo-01@corefit.invalid … phgym-demo-30@corefit.invalid');
 }
 
 main()

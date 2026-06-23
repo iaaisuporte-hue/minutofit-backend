@@ -3,13 +3,13 @@ import logger from '../lib/logger';
 import { ensureAcademyRoles, roleSlugFromUserRole } from './academyRoles';
 
 /**
- * Idempotente — cria a academia padrão "MinutoFit Direto", os roles do sistema
+ * Idempotente — cria a academia padrão "CoreFit Direto", os roles do sistema
  * e migra todos os usuários existentes para academy_users com o role correspondente.
  *
  * Deve rodar APÓS ensureAcademiesSchema() e ensureUsersCoreColumns().
  */
 
-const DEFAULT_ACADEMY_SLUG = 'minutofit-direto';
+const DEFAULT_ACADEMY_SLUG = 'corefit-direto';
 
 export async function seedDefaultAcademy(): Promise<void> {
   const client = await pool.connect();
@@ -22,7 +22,7 @@ export async function seedDefaultAcademy(): Promise<void> {
        VALUES ($1, $2, $3, 'active')
        ON CONFLICT (slug) DO NOTHING
        RETURNING id`,
-      [DEFAULT_ACADEMY_SLUG, 'MinutoFit Direto', 'MinutoFit Direto']
+      [DEFAULT_ACADEMY_SLUG, 'S2Core Direto', 'S2Core Direto']
     );
 
     let academyId: number;
@@ -38,9 +38,9 @@ export async function seedDefaultAcademy(): Promise<void> {
       logger.info(`[seed] Academia padrão já existe (id=${academyId})`);
     }
 
-    // 2. Marcar usuários admin como is_metacore_admin
+    // 2. Marcar usuários admin como is_corefit_admin
     await client.query(
-      `UPDATE users SET is_metacore_admin = TRUE WHERE role = 'admin' AND is_metacore_admin = FALSE`
+      `UPDATE users SET is_corefit_admin = TRUE WHERE role = 'admin' AND is_corefit_admin = FALSE`
     );
 
     // 3. Criar/garantir roles do sistema para esta academia

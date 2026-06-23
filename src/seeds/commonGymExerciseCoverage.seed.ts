@@ -35,7 +35,7 @@ function aliasTags(input: CommonExerciseInput): string[] {
 
 function makeExercise(input: CommonExerciseInput): ExerciseSeed {
   return {
-    source: 'metacore',
+    source: 'corefit',
     name: input.name,
     freeDbId: input.freeDbId,
     bodyPart: input.bodyPart,

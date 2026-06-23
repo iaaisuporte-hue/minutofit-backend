@@ -8,8 +8,8 @@ export interface SystemRole {
 
 export const SYSTEM_ROLES: SystemRole[] = [
   {
-    slug: 'metacore_admin',
-    label: 'Admin MetaCore',
+    slug: 'corefit_admin',
+    label: 'Admin S2Core',
     permissions: [
       'admin.dashboard', 'admin.users', 'admin.users.detail',
       'admin.personals', 'admin.personals.detail', 'admin.nutris',
@@ -112,7 +112,7 @@ export async function ensureAcademyRoles(
 }
 
 export function roleSlugFromUserRole(role: string, accessProfile: string | null): string {
-  if (role === 'admin') return 'metacore_admin';
+  if (role === 'admin') return 'corefit_admin';
   if (role === 'personal') return 'academy_personal';
   if (role === 'nutri') return 'academy_nutri';
   if (accessProfile === 'clientes_sb') return 'academy_student';

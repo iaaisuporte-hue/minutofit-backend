@@ -1,6 +1,6 @@
 /**
  * Script de backfill: mapeia exercícios em personal_workout_plans e workout_protocols
- * pelo nome para exercise_id UUID da biblioteca MetaCore.
+ * pelo nome para exercise_id UUID da biblioteca CoreFit.
  *
  * Itens resolvidos: exerciseId = UUID, legacy_exercise_id = original
  * Itens não resolvidos: exerciseId = original mantido, legacy: true

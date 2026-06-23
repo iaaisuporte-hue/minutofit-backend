@@ -134,12 +134,12 @@ router.post('/register', async (req: Request, res: Response) => {
 
 // GET /auth/branding — public, no auth required.
 // Returns branding for the academy that owns the request subdomain (via req.tenantHost).
-// Returns 204 when accessed from app.minutofit.com.br (no tenant context).
+// Returns 204 when accessed from app.corefit.com.br (no tenant context).
 // Returns 404 when slug exists but subdomain is inactive / academy not found.
 router.get('/branding', async (req: Request, res: Response) => {
   try {
     if (!req.tenantHost) {
-      // No subdomain context — generic login (app.minutofit.com.br)
+      // No subdomain context — generic login (app.corefit.com.br)
       return res.status(204).end();
     }
 

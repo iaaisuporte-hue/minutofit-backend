@@ -110,8 +110,8 @@ describe('pauseMembership', () => {
 describe('getActiveMemberships', () => {
   test('returns rows from user_product_memberships', async () => {
     const rows = [
-      { product_key: 'app', status: 'active', source: 'metacore', granted_at: new Date().toISOString(), expires_at: null, ended_at: null, academy_id: null, professional_id: null, plan_id: null, metadata: {} },
-      { product_key: 'personal', status: 'active', source: 'metacore', granted_at: new Date().toISOString(), expires_at: null, ended_at: null, academy_id: null, professional_id: 7, plan_id: null, metadata: {} },
+      { product_key: 'app', status: 'active', source: 'corefit', granted_at: new Date().toISOString(), expires_at: null, ended_at: null, academy_id: null, professional_id: null, plan_id: null, metadata: {} },
+      { product_key: 'personal', status: 'active', source: 'corefit', granted_at: new Date().toISOString(), expires_at: null, ended_at: null, academy_id: null, professional_id: 7, plan_id: null, metadata: {} },
     ];
     mockPool.query.mockResolvedValueOnce({ rows });
 

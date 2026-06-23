@@ -1,5 +1,5 @@
 /**
- * Rotas da biblioteca global de exercícios MetaCore.
+ * Rotas da biblioteca global de exercícios CoreFit.
  *
  * GET  /api/exercises          — search (autenticado)
  * GET  /api/exercises/batch    — batch by IDs (autenticado)
@@ -112,7 +112,7 @@ router.post('/', authMiddleware, roleCheckMiddleware('admin'), async (req: Reque
       instructions: Array.isArray(instructions) ? instructions.map(String) : [],
       tips: Array.isArray(tips) ? tips.map(String) : [],
       externalId: externalId ? String(externalId) : null,
-      source: source ? String(source) : 'metacore',
+      source: source ? String(source) : 'corefit',
     });
 
     res.status(201).json({ exercise });

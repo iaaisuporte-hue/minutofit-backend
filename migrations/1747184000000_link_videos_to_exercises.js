@@ -1,7 +1,7 @@
 /**
  * Adiciona coluna exercise_id opcional na tabela videos.
  * Permite vincular vídeos institucionais (com flags de acessibilidade) a
- * exercícios da biblioteca MetaCore sem quebrar vídeos legados.
+ * exercícios da biblioteca CoreFit sem quebrar vídeos legados.
  *
  * Idempotente: IF NOT EXISTS protege contra execução em BDs onde
  * a coluna/índice já existem.

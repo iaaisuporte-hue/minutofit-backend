@@ -540,7 +540,7 @@ router.post('/professionals', authMiddleware, adminMiddleware, async (req: Reque
     // Concede o produto profissional correspondente via serviço centralizado.
     const adminUserId = (req as any).user?.id ?? null;
     await grantMembership(userId, role as 'personal' | 'nutri', {
-      source: 'metacore',
+      source: 'corefit',
       grantedByUserId: adminUserId,
     });
 
@@ -724,11 +724,11 @@ router.get('/dashboard/pmf-metrics', authMiddleware, adminMiddleware, async (req
       FROM cohort
     `);
 
-    // H3: Academia mostra retenção? — memberships MetaCore ativos em academias
+    // H3: Academia mostra retenção? — memberships CoreFit ativos em academias
     const h3 = await pool.query(`
       SELECT
         COUNT(DISTINCT upm.user_id)
-          FILTER (WHERE upm.status = 'active' AND upm.product_key = 'metacore_app') AS metacore_active,
+          FILTER (WHERE upm.status = 'active' AND upm.product_key = 'corefit_app') AS corefit_active,
         COUNT(DISTINCT upm.user_id)
           FILTER (WHERE upm.status = 'active' AND upm.product_key = 'personal') AS personal_active,
         COUNT(DISTINCT a.id)
@@ -741,7 +741,7 @@ router.get('/dashboard/pmf-metrics', authMiddleware, adminMiddleware, async (req
     // Simplified H3: just counts
     const h3Simple = await pool.query(`
       SELECT
-        (SELECT COUNT(DISTINCT user_id) FROM user_product_memberships WHERE status = 'active' AND product_key = 'metacore_app') AS metacore_app_active,
+        (SELECT COUNT(DISTINCT user_id) FROM user_product_memberships WHERE status = 'active' AND product_key = 'corefit_app') AS corefit_app_active,
         (SELECT COUNT(*) FROM personal_student_subscriptions WHERE status = 'active') AS personal_billing_active,
         (SELECT COUNT(*) FROM academies WHERE status = 'active') AS academies_active
     `);
@@ -760,7 +760,7 @@ router.get('/dashboard/pmf-metrics', authMiddleware, adminMiddleware, async (req
   }
 });
 
-// ─── Academias (MetaCore Admin) ──────────────────────────────────────────────
+// ─── Academias (CoreFit Admin) ──────────────────────────────────────────────
 
 // GET /admin/academies — lista todas as academias
 router.get('/academies', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
@@ -1115,7 +1115,7 @@ router.patch('/academies/:id/status', authMiddleware, adminMiddleware, async (re
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// Product management (MetaCore admin only)
+// Product management (CoreFit admin only)
 // ──────────────────────────────────────────────────────────────────────────────
 
 // GET /admin/users/:userId/products — list user's active products
@@ -1168,7 +1168,7 @@ router.post('/users/:userId/products/grant', authMiddleware, adminMiddleware, as
     }
 
     await grantMembership(userId, productKey as ProductKey, {
-      source: 'metacore',
+      source: 'corefit',
       grantedByUserId: req.user!.id,
       expiresAt: expiresAt ? new Date(expiresAt) : null,
       notes: notes ?? null,

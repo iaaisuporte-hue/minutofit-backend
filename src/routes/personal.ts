@@ -127,7 +127,7 @@ router.post('/plan/checkout', roleCheckMiddleware('personal'), async (req: Reque
     if (plan !== 'pro' && plan !== 'starter') {
       return res.status(400).json({ success: false, error: 'Plano inválido para checkout' });
     }
-    const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://app.corefit.com.br';
     const { initPoint } = await createPlatformCheckout(req.user!.id, plan, {
       payerEmail: req.user!.email,
       frontendUrl: `${frontendUrl}/app/personal?upgrade=ok`,
@@ -1247,7 +1247,7 @@ router.post(
       );
 
       const row = result.rows[0];
-      const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+      const frontendUrl = process.env.FRONTEND_URL || 'https://app.corefit.com.br';
       const inviteUrl = `${frontendUrl}/convite-personal/${token}`;
 
       res.status(201).json({ success: true, data: { ...row, inviteUrl } });
@@ -1263,7 +1263,7 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const personalId = req.user!.id;
-      const frontendUrl = process.env.FRONTEND_URL || 'https://app.minutofit.com.br';
+      const frontendUrl = process.env.FRONTEND_URL || 'https://app.corefit.com.br';
 
       // Expire pending tokens past expiry date
       await pool.query(
@@ -1603,7 +1603,7 @@ router.post(
       }
 
       const frontendUrl =
-        (process.env.FRONTEND_URL ?? '').split(',')[0]?.trim() || 'https://app.minutofit.com.br';
+        (process.env.FRONTEND_URL ?? '').split(',')[0]?.trim() || 'https://app.corefit.com.br';
 
       const result = await subscribeStudent(personalId, studentId, academyId, planId, {
         discountCents,

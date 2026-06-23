@@ -127,7 +127,7 @@ async function main() {
     const demoRes = await client.query<{ id: number }>(
       `SELECT u.id FROM users u
        JOIN academy_users au ON au.user_id = u.id AND au.academy_id = $1
-       WHERE u.email LIKE 'phgym-demo-%@minutofit.invalid'
+       WHERE u.email LIKE 'phgym-demo-%@corefit.invalid'
        ORDER BY u.id ASC LIMIT 20`,
       [academyId],
     );

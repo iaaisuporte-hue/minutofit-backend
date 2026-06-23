@@ -1,6 +1,6 @@
-# MinutoFit Backend
+# CoreFit Backend
 
-Node.js/Express/TypeScript backend for the MinutoFit Fitness SaaS platform with JWT authentication, OAuth (Google + Apple), and Mercado Pago payment integration.
+Node.js/Express/TypeScript backend for the CoreFit Fitness SaaS platform with JWT authentication, OAuth (Google + Apple), and Mercado Pago payment integration.
 
 ## Features
 
@@ -49,11 +49,11 @@ Create PostgreSQL database:
 psql -U postgres
 
 # Create database and user
-CREATE DATABASE minutofitdb;
-CREATE USER minutofit WITH PASSWORD 'your_secure_password';
-ALTER ROLE minutofit SET client_encoding TO 'utf8';
-ALTER ROLE minutofit SET default_transaction_isolation TO 'read committed';
-GRANT ALL PRIVILEGES ON DATABASE minutofitdb TO minutofit;
+CREATE DATABASE corefitdb;
+CREATE USER corefit WITH PASSWORD 'your_secure_password';
+ALTER ROLE corefit SET client_encoding TO 'utf8';
+ALTER ROLE corefit SET default_transaction_isolation TO 'read committed';
+GRANT ALL PRIVILEGES ON DATABASE corefitdb TO corefit;
 ```
 
 ### 3. Environment Configuration
@@ -70,7 +70,7 @@ cp .env.example .env
 # Server
 PORT=3000
 NODE_ENV=development
-DATABASE_URL=postgresql://minutofit:your_password@localhost:5432/minutofitdb
+DATABASE_URL=postgresql://corefit:your_password@localhost:5432/corefitdb
 FRONTEND_URL=http://localhost:5173
 
 # JWT (generate random strings)
@@ -82,7 +82,7 @@ GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your_google_client_secret
 
 # OAuth - Apple (from Apple Developer)
-APPLE_CLIENT_ID=com.minutofit.app
+APPLE_CLIENT_ID=com.corefit.app
 APPLE_TEAM_ID=your_apple_team_id
 APPLE_KEY_ID=your_apple_key_id
 APPLE_PRIVATE_KEY=your_apple_private_key_pem
@@ -296,7 +296,7 @@ curl http://localhost:3000/api/subscriptions/tiers
 
 ```bash
 heroku login
-heroku create minutofit-backend
+heroku create corefit-backend
 heroku addons:create heroku-postgresql:standard-0
 git push heroku main
 heroku run npm run db:seed

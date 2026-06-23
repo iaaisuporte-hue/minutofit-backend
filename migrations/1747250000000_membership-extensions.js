@@ -37,8 +37,8 @@ exports.up = (pgm) => {
       product_key         VARCHAR(40) NOT NULL REFERENCES products(key),
       status              VARCHAR(20) NOT NULL DEFAULT 'active'
                             CHECK (status IN ('active', 'paused', 'suspended', 'cancelled', 'expired')),
-      source              VARCHAR(30) NOT NULL DEFAULT 'metacore'
-                            CHECK (source IN ('metacore', 'academy_bootstrap', 'direct_purchase')),
+      source              VARCHAR(30) NOT NULL DEFAULT 'corefit'
+                            CHECK (source IN ('corefit', 'academy_bootstrap', 'direct_purchase')),
       source_academy_id   INTEGER REFERENCES academies(id),
       granted_by_user_id  INTEGER REFERENCES users(id),
       granted_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -133,7 +133,7 @@ exports.up = (pgm) => {
       psa.student_id,
       'personal',
       'active',
-      'metacore',
+      'corefit',
       psa.personal_id,
       psa.academy_id,
       COALESCE(psa.created_at, NOW())

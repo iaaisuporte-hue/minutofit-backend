@@ -4,7 +4,7 @@ import { ensureAcademiesSchema } from '../db/ensureAcademiesSchema';
 import { seedDefaultAcademy } from '../db/seedDefaultAcademy';
 
 async function getDefaultAcademyId(): Promise<number | null> {
-  const res = await pool.query(`SELECT id FROM academies WHERE slug = 'minutofit-direto' LIMIT 1`);
+  const res = await pool.query(`SELECT id FROM academies WHERE slug = 'corefit-direto' LIMIT 1`);
   return res.rows[0]?.id ?? null;
 }
 
@@ -488,7 +488,7 @@ async function seedUsers() {
     {
       email: 'admin@treinai.com',
       password: '123456',
-      name: 'Admin MinutoFit',
+      name: 'Admin S2Core',
       role: 'admin',
       cpf: '52998224725',
       phone: '85999990001',
@@ -496,7 +496,7 @@ async function seedUsers() {
     {
       email: 'personal@treinai.com',
       password: '123456',
-      name: 'Personal MinutoFit',
+      name: 'Personal S2Core',
       role: 'personal',
       cpf: '11144477735',
       phone: '85999990002',
@@ -511,9 +511,9 @@ async function seedUsers() {
       tierName: 'Premium',
     },
     {
-      email: 'gerencia@minutofit.com.br',
+      email: 'gerencia@corefit.com.br',
       password: '123456',
-      name: 'Gerencia MinutoFit',
+      name: 'Gerencia S2Core',
       role: 'admin',
       accessProfile: 'admin_owner',
       cpf: '98765432100',
@@ -667,11 +667,11 @@ async function seedUsers() {
   await pool.query(`UPDATE users SET cpf = '52998224725' WHERE email = 'admin@treinai.com' AND (cpf IS NULL OR cpf = '')`);
   await pool.query(`UPDATE users SET cpf = '11144477735' WHERE email = 'personal@treinai.com' AND (cpf IS NULL OR cpf = '')`);
   await pool.query(`UPDATE users SET cpf = '12345678909' WHERE email = 'teste1@treinai.com' AND (cpf IS NULL OR cpf = '')`);
-  await pool.query(`UPDATE users SET cpf = '98765432100' WHERE email = 'gerencia@minutofit.com.br' AND (cpf IS NULL OR cpf = '')`);
+  await pool.query(`UPDATE users SET cpf = '98765432100' WHERE email = 'gerencia@corefit.com.br' AND (cpf IS NULL OR cpf = '')`);
   await pool.query(`UPDATE users SET phone = '85999990001' WHERE email = 'admin@treinai.com' AND (phone IS NULL OR phone = '')`);
   await pool.query(`UPDATE users SET phone = '85999990002' WHERE email = 'personal@treinai.com' AND (phone IS NULL OR phone = '')`);
   await pool.query(`UPDATE users SET phone = '85999990003' WHERE email = 'teste1@treinai.com' AND (phone IS NULL OR phone = '')`);
-  await pool.query(`UPDATE users SET phone = '85999990009' WHERE email = 'gerencia@minutofit.com.br' AND (phone IS NULL OR phone = '')`);
+  await pool.query(`UPDATE users SET phone = '85999990009' WHERE email = 'gerencia@corefit.com.br' AND (phone IS NULL OR phone = '')`);
   // Conta demo: sem perfil restrito + assinatura Premium para liberar todas as features nas telas de aluno (QA)
   await pool.query(`UPDATE users SET access_profile = NULL WHERE email = 'teste1@treinai.com'`);
   await pool.query(
@@ -683,7 +683,7 @@ async function seedUsers() {
        AND us.status = 'active'
        AND st.name = 'Premium'`,
   );
-  await pool.query(`UPDATE users SET role = 'admin', access_profile = 'admin_owner' WHERE email = 'gerencia@minutofit.com.br'`);
+  await pool.query(`UPDATE users SET role = 'admin', access_profile = 'admin_owner' WHERE email = 'gerencia@corefit.com.br'`);
   await pool.query(`UPDATE users SET sem_historico_hipertensao = TRUE WHERE sem_historico_hipertensao IS NULL`);
   await pool.query(`UPDATE users SET sem_historico_cardiaco = TRUE WHERE sem_historico_cardiaco IS NULL`);
   await pool.query(`UPDATE users SET sem_restricao_medica_exercicio = TRUE WHERE sem_restricao_medica_exercicio IS NULL`);

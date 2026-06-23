@@ -50,7 +50,7 @@ export async function createPreapprovalSubscription(
 ): Promise<{ preapprovalId: string; initPoint: string }> {
   try {
     const subscriptionData: MercadoPagoSubscriptionData = {
-      reason: `MinutoFit ${subscriptionTierName} Subscription`,
+      reason: `S2Core ${subscriptionTierName} Subscription`,
       auto_recurring: {
         frequency: 1,
         frequency_type: 'months',

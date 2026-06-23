@@ -1,5 +1,5 @@
 /**
- * Seed de protocolos da plataforma MetaCore (scope='platform').
+ * Seed de protocolos da plataforma CoreFit (scope='platform').
  * Requer que a tabela exercises já tenha sido populada (npm run seed:exercises).
  *
  * Idempotente: usa ON CONFLICT (title, scope) DO NOTHING.
@@ -20,7 +20,7 @@ async function findExerciseByNormalizedName(name: string): Promise<string | null
     .trim();
 
   const res = await pool.query(
-    `SELECT id FROM exercises WHERE normalized_name = $1 AND source = 'metacore' LIMIT 1`,
+    `SELECT id FROM exercises WHERE normalized_name = $1 AND source = 'corefit' LIMIT 1`,
     [normalized]
   );
   return res.rows[0]?.id ?? null;

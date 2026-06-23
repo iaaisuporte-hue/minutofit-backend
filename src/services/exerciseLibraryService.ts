@@ -1,5 +1,5 @@
 /**
- * Serviço de acesso à biblioteca global de exercícios MetaCore.
+ * Serviço de acesso à biblioteca global de exercícios CoreFit.
  * Exercícios são globais (sem academy_id) e cacheados em memória por 5 minutos.
  */
 
@@ -351,7 +351,7 @@ export async function adminCreateExercise(input: {
        updated_at = NOW()
      RETURNING *`,
     [
-      input.source ?? 'metacore',
+      input.source ?? 'corefit',
       input.externalId ?? null,
       input.name,
       normalized,

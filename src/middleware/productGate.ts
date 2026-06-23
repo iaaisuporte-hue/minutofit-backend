@@ -4,7 +4,7 @@ import { Request, Response, NextFunction } from 'express';
  * Middleware de gate de produto.
  *
  * Verifica se o usuário autenticado possui o produto ativo no JWT.
- * Admin role (MetaCore) é bypassado por padrão.
+ * Admin role (CoreFit) é bypassado por padrão.
  *
  * Uso:
  *   router.get('/my-feature', authMiddleware, requireProduct('personal'), handler)

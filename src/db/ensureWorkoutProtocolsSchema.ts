@@ -99,9 +99,9 @@ export async function ensureWorkoutProtocolsSchema() {
       `INSERT INTO workout_protocols
         (scope, academy_id, owner_personal_id, title, description, tags, week_preset, selected_group, payload_json)
        VALUES
-        ('platform', NULL, NULL, 'Descarga regenerativa (MetaCore)', 'Modelo curado para semanas de baixa recuperação ou fadiga acumulada.',
+        ('platform', NULL, NULL, 'Descarga regenerativa (S2Core)', 'Modelo curado para semanas de baixa recuperação ou fadiga acumulada.',
          $1::jsonb, '4', 'Perna', $2::jsonb),
-        ('platform', NULL, NULL, 'Base hipertrofia membros (MetaCore)', 'Volume moderado com ênfase em pernas e peito — progressão linear.',
+        ('platform', NULL, NULL, 'Base hipertrofia membros (S2Core)', 'Volume moderado com ênfase em pernas e peito — progressão linear.',
          $3::jsonb, '5', 'Perna', $4::jsonb)`,
       [
         JSON.stringify({

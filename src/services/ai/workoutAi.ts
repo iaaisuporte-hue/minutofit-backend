@@ -1,7 +1,7 @@
 /**
  * Geração de planos de treino semanais via OpenAI Responses API.
  * Retorna plano com dias (Dia A, Dia B…) e suporte a técnicas avançadas.
- * Os exercícios usam exercise_id UUID da biblioteca MetaCore — validados na resposta.
+ * Os exercícios usam exercise_id UUID da biblioteca CoreFit — validados na resposta.
  */
 
 import { aiCall, TOKEN_BUDGET } from '../../lib/ai/openai';

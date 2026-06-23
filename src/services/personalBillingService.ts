@@ -15,7 +15,7 @@ export type BillingSettings = {
   personalId: number;
   defaultTicketCents: number | null;
   defaultPeriod: BillingPeriod;
-  metacoreFeeBps: number;
+  corefitFeeBps: number;
 };
 
 export type BillingPlan = {
@@ -69,19 +69,19 @@ export async function getBillingSettings(personalId: number): Promise<BillingSet
 
 export async function upsertBillingSettings(
   personalId: number,
-  input: Partial<Pick<BillingSettings, 'defaultTicketCents' | 'defaultPeriod' | 'metacoreFeeBps'>>
+  input: Partial<Pick<BillingSettings, 'defaultTicketCents' | 'defaultPeriod' | 'corefitFeeBps'>>
 ): Promise<BillingSettings> {
   const r = await pool.query(
     `INSERT INTO personal_billing_settings
-       (personal_id, default_ticket_cents, default_period, metacore_fee_bps, updated_at)
+       (personal_id, default_ticket_cents, default_period, corefit_fee_bps, updated_at)
      VALUES ($1, $2, $3, $4, NOW())
      ON CONFLICT (personal_id) DO UPDATE
        SET default_ticket_cents = COALESCE($2, personal_billing_settings.default_ticket_cents),
            default_period = COALESCE($3, personal_billing_settings.default_period),
-           metacore_fee_bps = COALESCE($4, personal_billing_settings.metacore_fee_bps),
+           corefit_fee_bps = COALESCE($4, personal_billing_settings.corefit_fee_bps),
            updated_at = NOW()
      RETURNING *`,
-    [personalId, input.defaultTicketCents ?? null, input.defaultPeriod ?? null, input.metacoreFeeBps ?? null]
+    [personalId, input.defaultTicketCents ?? null, input.defaultPeriod ?? null, input.corefitFeeBps ?? null]
   );
   return mapSettings(r.rows[0]);
 }
@@ -172,14 +172,14 @@ export async function subscribeStudent(
   const plan = mapPlan(planRow.rows[0]);
 
   const settings = await getBillingSettings(personalId);
-  const feeBps = settings?.metacoreFeeBps ?? 0;
+  const feeBps = settings?.corefitFeeBps ?? 0;
   const finalCents = Math.max(0, plan.priceCents - (opts.discountCents ?? 0));
   const amountBrl = finalCents / 100;
 
   // Create subscription row (pending)
   const subRow = await pool.query(
     `INSERT INTO personal_student_subscriptions
-       (personal_id, student_id, academy_id, plan_id, price_cents, status, discount_cents, metacore_fee_bps_snapshot)
+       (personal_id, student_id, academy_id, plan_id, price_cents, status, discount_cents, corefit_fee_bps_snapshot)
      VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7)
      RETURNING *`,
     [personalId, studentId, academyId, planId, finalCents, opts.discountCents ?? 0, feeBps]
@@ -405,7 +405,7 @@ function mapSettings(row: any): BillingSettings {
     personalId: row.personal_id,
     defaultTicketCents: row.default_ticket_cents,
     defaultPeriod: row.default_period ?? 'monthly',
-    metacoreFeeBps: row.metacore_fee_bps ?? 0,
+    corefitFeeBps: row.corefit_fee_bps ?? 0,
   };
 }
 
@@ -436,6 +436,6 @@ function mapSubscription(row: any): StudentSubscription {
     currentPeriodEnd: row.current_period_end ? new Date(row.current_period_end).toISOString() : null,
     nextChargeAt: row.next_charge_at ? new Date(row.next_charge_at).toISOString() : null,
     discountCents: row.discount_cents ?? 0,
-    metaCoreFeeSnapshot: row.metacore_fee_bps_snapshot ?? 0,
+    metaCoreFeeSnapshot: row.corefit_fee_bps_snapshot ?? 0,
   };
 }

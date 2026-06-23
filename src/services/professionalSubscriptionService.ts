@@ -31,7 +31,7 @@ export interface ProfessionalSubscription {
   offeringId: string;
   priceCentsSnapshot: number;
   periodSnapshot: OfferingPeriod;
-  metacoreFeeBpsSnapshot: number;
+  corefitFeeBpsSnapshot: number;
   status: SubscriptionStatus;
   mpPreapprovalId: string | null;
   currentPeriodStart: string | null;
@@ -56,7 +56,7 @@ function mapRow(row: Record<string, unknown>): ProfessionalSubscription {
     offeringId: row.offering_id as string,
     priceCentsSnapshot: row.price_cents_snapshot as number,
     periodSnapshot: row.period_snapshot as OfferingPeriod,
-    metacoreFeeBpsSnapshot: row.metacore_fee_bps_snapshot as number,
+    corefitFeeBpsSnapshot: row.corefit_fee_bps_snapshot as number,
     status: row.status as SubscriptionStatus,
     mpPreapprovalId: (row.mp_preapproval_id as string | null) ?? null,
     currentPeriodStart: row.current_period_start ? new Date(row.current_period_start as string).toISOString() : null,

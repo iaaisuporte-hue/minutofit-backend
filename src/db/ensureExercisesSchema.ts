@@ -9,7 +9,7 @@ export async function ensureExercisesSchema(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS exercises (
       id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      source       VARCHAR(64)  NOT NULL DEFAULT 'metacore',
+      source       VARCHAR(64)  NOT NULL DEFAULT 'corefit',
       external_id  VARCHAR(255),
       name         VARCHAR(255) NOT NULL,
       normalized_name VARCHAR(255) NOT NULL,

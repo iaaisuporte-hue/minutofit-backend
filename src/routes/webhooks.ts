@@ -13,9 +13,24 @@ import {
 } from '../services/personalPlanService';
 import { grantMembership, cancelMembership } from '../services/membershipService';
 import { getPreapprovalStatus } from '../services/mercadoPagoService';
+import { logAcademyAction } from '../services/auditService';
 import logger from '../lib/logger';
 
 const router = Router();
+
+/**
+ * Auditoria persistente de mudança de membership disparada por webhook MP.
+ * Antes esses grant/cancel por pagamento só deixavam log efêmero do pino —
+ * impossível reconstruir "por que esse usuário ganhou/perdeu acesso".
+ * logAcademyAction é fire-and-forget e nunca propaga erro.
+ */
+function auditMpMembership(
+  userId: number,
+  action: 'product.grant' | 'product.revoke',
+  meta: Record<string, unknown>
+) {
+  logAcademyAction({ academyId: null, userId, action, entityType: 'product', meta });
+}
 
 /**
  * Validates the Mercado Pago webhook signature.
@@ -159,11 +174,13 @@ async function handlePaymentNotification(data: any) {
             planId: subscription.tier_id ?? null,
             metadata: { source: 'mp_payment_approved', mp_preapproval_id: preapprovalId, payment_id: paymentId },
           }).catch((err) => logger.error({ err }, '[webhook] grantMembership app failed'));
+          auditMpMembership(subscription.user_id, 'product.grant', { productKey: 'app', via: 'mp_payment', paymentId, mpStatus: status });
         } else if (status === 'rejected' || status === 'cancelled') {
           await subscriptionService.updateUserSubscription(subscription.id, undefined, 'expired');
           await cancelMembership(subscription.user_id, 'app', {
             reason: `mp_payment_${status}`,
           }).catch((err) => logger.error({ err }, '[webhook] cancelMembership app failed'));
+          auditMpMembership(subscription.user_id, 'product.revoke', { productKey: 'app', via: 'mp_payment', paymentId, mpStatus: status });
         }
       }
     }
@@ -245,10 +262,12 @@ async function handleSubscriptionNotification(data: any) {
         await grantMembership(subscription.user_id, 'app', {
           metadata: { source: 'mp_subscription', mp_preapproval_id: preapprovalId, mp_status: status },
         }).catch((err) => logger.error({ err }, '[webhook] grantMembership app (subscription) failed'));
+        auditMpMembership(subscription.user_id, 'product.grant', { productKey: 'app', via: 'mp_subscription', preapprovalId, mpStatus: status });
       } else if (localStatus === 'cancelled' || localStatus === 'expired') {
         await cancelMembership(subscription.user_id, 'app', {
           reason: `mp_subscription_${status}`,
         }).catch((err) => logger.error({ err }, '[webhook] cancelMembership app (subscription) failed'));
+        auditMpMembership(subscription.user_id, 'product.revoke', { productKey: 'app', via: 'mp_subscription', preapprovalId, mpStatus: status });
       }
     }
   } catch (error) {

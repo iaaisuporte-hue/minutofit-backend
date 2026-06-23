@@ -109,8 +109,8 @@ export async function listAcademyAudit(
  * to the caller. Safe to fire-and-forget in route handlers.
  */
 export function logAcademyAction(entry: AuditEntry): void {
-  pool
-    .query(
+  try {
+    const result = pool.query(
       `INSERT INTO academy_audit_log
          (academy_id, user_id, action, entity_type, entity_id, meta, ip_address)
        VALUES ($1, $2, $3, $4, $5, $6, $7::inet)`,
@@ -123,8 +123,16 @@ export function logAcademyAction(entry: AuditEntry): void {
         entry.meta ? JSON.stringify(entry.meta) : null,
         entry.ipAddress ?? null,
       ]
-    )
-    .catch((err) => {
-      logger.error({ err }, '[audit] logAcademyAction failed');
-    });
+    ) as Promise<unknown> | undefined;
+    // Defensivo: honra o contrato "nunca propaga". Em testes o pool.query é
+    // mockado e pode não retornar uma Promise — sem esta guarda, o .catch
+    // encadeado lançava (quebrava grant/cancelMembership nos testes).
+    if (result && typeof result.catch === 'function') {
+      result.catch((err) => {
+        logger.error({ err }, '[audit] logAcademyAction failed');
+      });
+    }
+  } catch (err) {
+    logger.error({ err }, '[audit] logAcademyAction failed');
+  }
 }

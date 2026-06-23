@@ -52,6 +52,7 @@ import pool from '../config/database';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
 import { getSportProfile } from '../services/sportProfileService';
 import { getReadinessToday } from '../services/sportReadinessService';
+import { getStudentExecutionSummary } from '../services/workoutSessionService';
 import { listCamps } from '../services/campService';
 import { getFatigue7d, getLastRecoveryGap } from '../services/postWorkoutService';
 import { findOrCreateUserFromContext } from '../services/userIdentityService';
@@ -825,6 +826,26 @@ router.get(
         return res.status(403).json({ success: false, error: error.message });
       }
       res.status(500).json({ success: false, error: error.message || 'Failed to list workout plans' });
+    }
+  }
+);
+
+// Resumo de EXECUÇÃO do aluno (Spec 010 V1.1) — aderência real (séries feitas ÷
+// prescritas) + frequência. Consent 'workouts' (mesma leitura de treino).
+router.get(
+  '/students/:studentId/training-summary',
+  roleCheckMiddleware('personal', 'admin'),
+  requireActiveConsent('workouts'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      const data = await getStudentExecutionSummary(studentId);
+      res.json({ success: true, data });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: 'Failed to load training summary' });
     }
   }
 );

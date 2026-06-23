@@ -266,6 +266,53 @@ export async function getWorkoutStats(userId: number) {
   };
 }
 
+/**
+ * Resumo de execução de um aluno para o cockpit do personal (Spec 010 V1.1).
+ * Aderência real = séries feitas ÷ séries prescritas (do snapshot), sobre as
+ * últimas sessões. Consent('workouts') é aplicado na rota.
+ */
+export async function getStudentExecutionSummary(studentId: number, limit = 8) {
+  const { rows } = await pool.query(
+    `SELECT ws.id, ws.started_at, ws.status, ws.source, ws.readiness_level, ws.prescribed_snapshot,
+            (SELECT COUNT(*) FROM workout_set_logs sl WHERE sl.session_id = ws.id AND sl.status = 'done')::int AS sets_done
+       FROM workout_sessions ws
+      WHERE ws.user_id = $1 AND ws.status IN ('completed', 'partial')
+      ORDER BY ws.started_at DESC
+      LIMIT $2`,
+    [studentId, Math.min(30, Math.max(1, limit))],
+  );
+
+  let totalDone = 0;
+  let totalPrescribed = 0;
+  const sessions = rows.map((r) => {
+    const presc = Array.isArray(r.prescribed_snapshot) ? r.prescribed_snapshot : [];
+    const prescribedSets = presc.reduce((acc: number, it: { sets?: string }) => acc + parseSetCount(it?.sets), 0);
+    totalDone += r.sets_done;
+    totalPrescribed += prescribedSets;
+    return {
+      id: r.id,
+      date: r.started_at,
+      status: r.status,
+      source: r.source,
+      readinessLevel: r.readiness_level,
+      setsDone: r.sets_done,
+      prescribedSets,
+    };
+  });
+
+  const adherencePct = totalPrescribed > 0 ? Math.round((totalDone / totalPrescribed) * 100) : null;
+
+  const freq = await pool.query(
+    `SELECT COUNT(*) FILTER (WHERE started_at >= now() - interval '7 days')::int AS last_7d,
+            COUNT(*)::int AS total
+       FROM workout_sessions
+      WHERE user_id = $1 AND status IN ('completed', 'partial')`,
+    [studentId],
+  );
+
+  return { adherencePct, last7d: freq.rows[0].last_7d, total: freq.rows[0].total, sessions };
+}
+
 export async function getSession(userId: number, sessionId: number) {
   const head = await pool.query(`SELECT * FROM workout_sessions WHERE id = $1 AND user_id = $2`, [sessionId, userId]);
   if (head.rows.length === 0) return null;

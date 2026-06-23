@@ -415,7 +415,7 @@ export async function handleMpPreapprovalWebhook(
   mpPreapprovalId: string,
   mpStatus: string,
   externalReference: string | undefined,
-  payload: Record<string, unknown>
+  _payload: Record<string, unknown>
 ): Promise<void> {
   let subId: string | null = null;
 
@@ -482,7 +482,8 @@ export async function handleMpPreapprovalWebhook(
       logger.info({ subId: sub.id, mpStatus }, '[proNetwork] unhandled MP status');
   }
 
-  logger.info({ subId: sub.id, mpStatus, payload }, '[proNetwork] webhook processed');
+  // Não logar o payload completo do MP (contém PII do pagador: e-mail, ids, valores).
+  logger.info({ subId: sub.id, mpStatus }, '[proNetwork] webhook processed');
 }
 
 // ---------------------------------------------------------------------------

@@ -221,6 +221,14 @@ router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
       academyIdFromHost
     );
 
+    logAcademyAction({
+      academyId: academyIdFromHost ?? null,
+      userId: user.id,
+      action: 'auth.login',
+      meta: { email, viaTenant: Boolean(academyIdFromHost) },
+      ipAddress: req.ip,
+    });
+
     res.json({
       success: true,
       data: {
@@ -233,6 +241,13 @@ router.post('/login', loginRateLimit, async (req: Request, res: Response) => {
     logger.error({ err: error }, 'Login error');
     const msg = String(error?.message || 'Nao foi possivel entrar.');
     const status = msg.includes('Sem acesso') ? 403 : 401;
+    logAcademyAction({
+      academyId: req.tenantHost?.academyId ?? null,
+      userId: null,
+      action: 'auth.login_failed',
+      meta: { email: String(req.body?.email || '').trim().toLowerCase(), reason: msg },
+      ipAddress: req.ip,
+    });
     res.status(status).json({ success: false, error: msg });
   }
 });
@@ -534,6 +549,12 @@ router.post('/logout', authMiddleware, async (req: Request, res: Response) => {
         // Token already expired or invalid — nothing to revoke; logout still succeeds
       }
     }
+    logAcademyAction({
+      academyId: req.user?.activeAcademyId ?? null,
+      userId: req.user?.id ?? null,
+      action: 'auth.logout',
+      ipAddress: req.ip,
+    });
     res.json({ success: true, message: 'Logged out successfully' });
   } catch {
     res.json({ success: true, message: 'Logged out' });

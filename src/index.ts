@@ -134,7 +134,9 @@ async function runBootChain(): Promise<void> {
   logger.info({ total_ms: Date.now() - totalStart }, '[boot] schema chain complete');
 }
 
-void runBootChain();
+// O boot chain (migrations + ensure*) agora gateia o app.listen() no final
+// deste arquivo: uma migration que falha ABORTA o startup (process.exit) em vez
+// de subir o servidor com schema parcial servindo 500s silenciosos.
 
 // ---------------------------------------------------------------------------
 // Express app
@@ -398,14 +400,25 @@ function validateRuntimeEnv(): void {
 // ---------------------------------------------------------------------------
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-app.listen(PORT, () => {
-  logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'CoreFit Backend running');
-  logger.info({ origins: allowedOrigins }, 'Allowed frontend origins');
-  validateRuntimeEnv();
+// Gateia o listen pelo boot chain. runMigrations() lança em falha (fatal);
+// os ensure* são resilientes (try/catch interno) e não chegam aqui como rejeição.
+// Logo: migration ruim => process.exit(1) (fail-fast); ensure* ruim => server sobe.
+runBootChain()
+  .then(() => {
+    app.listen(PORT, () => {
+      logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'CoreFit Backend running');
+      logger.info({ origins: allowedOrigins }, 'Allowed frontend origins');
+      validateRuntimeEnv();
 
-  // Inicializa Redis (não bloqueia o boot — falha silenciosa com fallback in-memory)
-  getRedisClient();
+      // Inicializa Redis (não bloqueia o boot — falha silenciosa com fallback in-memory)
+      getRedisClient();
 
-  // Job de retenção de dados — LGPD (executa 30s após boot, depois a cada 24h)
-  scheduleDataRetention();
-});
+      // Job de retenção de dados — LGPD (executa 30s após boot, depois a cada 24h)
+      scheduleDataRetention();
+    });
+  })
+  .catch((err) => {
+    logger.fatal({ err }, '[boot] erro fatal no boot chain (migration) — abortando startup');
+    Sentry.captureException(err, { tags: { boot_step: 'boot_chain_fatal' } });
+    process.exit(1);
+  });

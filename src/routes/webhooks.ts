@@ -12,6 +12,7 @@ import {
   PLATFORM_SUB_EXTERNAL_REF_PREFIX,
 } from '../services/personalPlanService';
 import { grantMembership, cancelMembership } from '../services/membershipService';
+import { getPreapprovalStatus } from '../services/mercadoPagoService';
 import logger from '../lib/logger';
 
 const router = Router();
@@ -113,8 +114,11 @@ router.post('/mercadopago', async (req: Request, res: Response) => {
     res.json({ success: true });
   } catch (error: any) {
     logger.error({ err: error }, 'Webhook error');
-    // Still return 200 to prevent Mercado Pago from retrying on processing errors
-    res.json({ success: true, error: error.message });
+    // Devolve 500 para o Mercado Pago re-tentar. Os handlers são idempotentes
+    // (UPSERT/UPDATE determinístico), então o retry é seguro — e necessário:
+    // antes devolvíamos 200 e perdíamos ativações em falhas transitórias
+    // (ex.: erro de rede ao buscar o preapproval ou DB momentâneo).
+    res.status(500).json({ success: false });
   }
 });
 
@@ -175,9 +179,23 @@ async function handlePlanNotification(data: any) {
 
 async function handleSubscriptionNotification(data: any) {
   try {
-    const preapprovalId = data.id;
-    const status = data.status;
-    const externalReference: string | undefined = data.external_reference;
+    const preapprovalId = data?.id != null ? String(data.id) : undefined;
+    if (!preapprovalId) {
+      logger.warn({ data }, '[webhook] subscription notification without preapproval id — ignoring');
+      return;
+    }
+
+    // O Mercado Pago envia apenas { id } nas notificações de preapproval —
+    // `status` e `external_reference` NÃO chegam de forma confiável no corpo.
+    // Sem buscar o objeto real na API, o roteamento (platform-sub:, etc.)
+    // nunca casa e o plano nunca ativa (personal paga e fica preso em pending).
+    let status = data?.status;
+    let externalReference: string | undefined = data?.external_reference;
+    if (!status || !externalReference) {
+      const preapproval = await getPreapprovalStatus(preapprovalId);
+      status = preapproval?.status ?? status;
+      externalReference = preapproval?.external_reference ?? externalReference;
+    }
 
     logger.info({ preapprovalId, status, externalReference }, 'Subscription notification');
 

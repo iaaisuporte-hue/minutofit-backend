@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import logger from '../lib/logger';
+import { logAcademyAction } from './auditService';
 import { type ProductKey } from '../db/ensureProductsSchema';
 
 /**
@@ -137,6 +138,16 @@ export async function grantMembership(
     { userId, productKey, source, academyId: opts.academyId, professionalId: opts.professionalId },
     '[membership] granted'
   );
+
+  // Auditoria persistente (academy_audit_log) — cobre TODA concessão, inclusive
+  // via webhook MP e convite, que antes só deixavam log efêmero do pino.
+  logAcademyAction({
+    academyId: opts.academyId ?? null,
+    userId,
+    action: 'product.grant',
+    entityType: 'product',
+    meta: { productKey, source, professionalId: opts.professionalId ?? null },
+  });
 }
 
 /**
@@ -192,6 +203,15 @@ export async function cancelMembership(userId: number, productKey: ProductKey, o
   const affected = (result.rowCount ?? 0) > 0;
   if (affected) {
     logger.info({ userId, productKey, revokedByUserId: opts.revokedByUserId }, '[membership] cancelled');
+
+    // Auditoria persistente — cobre cancelamento via webhook MP (antes só pino).
+    logAcademyAction({
+      academyId: null,
+      userId,
+      action: 'product.revoke',
+      entityType: 'product',
+      meta: { productKey, reason: opts.reason ?? null, revokedByUserId: opts.revokedByUserId ?? null },
+    });
 
     if (APP_BONUS_PARENT_PRODUCTS.includes(productKey)) {
       try {

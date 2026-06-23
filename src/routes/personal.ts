@@ -385,6 +385,7 @@ router.post(
 router.get(
   '/students/:studentId/notes',
   roleCheckMiddleware('personal'),
+  requireActiveConsent('workouts'),
   async (req: Request, res: Response) => {
     try {
       const studentId = Number(req.params.studentId);
@@ -809,6 +810,7 @@ router.get(
 router.get(
   '/students/:studentId/workout-plans',
   roleCheckMiddleware('personal', 'admin'),
+  requireActiveConsent('workouts'),
   async (req: Request, res: Response) => {
     try {
       const studentId = Number(req.params.studentId);

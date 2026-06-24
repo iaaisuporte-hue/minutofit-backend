@@ -2,7 +2,11 @@ import axios from 'axios';
 import logger from '../lib/logger';
 
 const MERCADO_PAGO_API_BASE = 'https://api.mercadopago.com';
-const ACCESS_TOKEN = process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
+// Aceita o nome canônico (MERCADOPAGO_*, validado no boot/CLAUDE.md) e o legado
+// (MERCADO_PAGO_*). Sem este fallback, getPreapprovalStatus — do qual o webhook
+// depende p/ ativar o plano — chamaria o MP com Bearer vazio se prod só setasse
+// MERCADOPAGO_ACCESS_TOKEN → 500 em loop → plano nunca ativa.
+const ACCESS_TOKEN = process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
 
 interface MercadoPagoSubscriptionData {
   reason: string;

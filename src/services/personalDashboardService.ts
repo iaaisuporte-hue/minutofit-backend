@@ -636,7 +636,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
             FROM user_workout_logs uwl7
             WHERE uwl7.user_id = u.id
               AND uwl7.completed_at >= CURRENT_TIMESTAMP - INTERVAL '7 days'
-              AND ($2::integer IS NULL OR uwl7.academy_id = $2)
+              AND ($2::integer IS NULL OR uwl7.academy_id IS NULL OR uwl7.academy_id = $2)
             UNION
             SELECT psl7.session_at::date AS day
             FROM personal_session_logs psl7
@@ -652,7 +652,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
             FROM user_workout_logs uwl30
             WHERE uwl30.user_id = u.id
               AND uwl30.completed_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
-              AND ($2::integer IS NULL OR uwl30.academy_id = $2)
+              AND ($2::integer IS NULL OR uwl30.academy_id IS NULL OR uwl30.academy_id = $2)
             UNION
             SELECT psl30.session_at::date AS day
             FROM personal_session_logs psl30
@@ -667,7 +667,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
             (SELECT MAX(uwll.completed_at)
              FROM user_workout_logs uwll
              WHERE uwll.user_id = u.id
-               AND ($2::integer IS NULL OR uwll.academy_id = $2)),
+               AND ($2::integer IS NULL OR uwll.academy_id IS NULL OR uwll.academy_id = $2)),
             (SELECT MAX(psll.session_at)
              FROM personal_session_logs psll
              WHERE psll.student_id = u.id
@@ -680,13 +680,13 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
           FROM user_daily_checkins udc7
           WHERE udc7.user_id = u.id
             AND udc7.date_key >= CURRENT_DATE - INTERVAL '6 days'
-            AND ($2::integer IS NULL OR udc7.academy_id = $2)
+            AND ($2::integer IS NULL OR udc7.academy_id IS NULL OR udc7.academy_id = $2)
         ) AS checkins_7d,
         (
           SELECT udcl.date_key
           FROM user_daily_checkins udcl
           WHERE udcl.user_id = u.id
-            AND ($2::integer IS NULL OR udcl.academy_id = $2)
+            AND ($2::integer IS NULL OR udcl.academy_id IS NULL OR udcl.academy_id = $2)
           ORDER BY udcl.date_key DESC
           LIMIT 1
         ) AS last_checkin_date,
@@ -694,7 +694,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
           SELECT udc_last.slept_well
           FROM user_daily_checkins udc_last
           WHERE udc_last.user_id = u.id
-            AND ($2::integer IS NULL OR udc_last.academy_id = $2)
+            AND ($2::integer IS NULL OR udc_last.academy_id IS NULL OR udc_last.academy_id = $2)
           ORDER BY udc_last.date_key DESC, udc_last.created_at DESC
           LIMIT 1
         ) AS latest_slept_well,
@@ -724,7 +724,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       WHERE psa.personal_id = $1
         AND psa.status = 'active'
         AND u.role = 'user'
-        AND ($2::integer IS NULL OR psa.academy_id = $2)
+        AND ($2::integer IS NULL OR psa.academy_id IS NULL OR psa.academy_id = $2)
       ORDER BY u.name ASC`,
     [personalId, academyId ?? null]
   );
@@ -945,7 +945,7 @@ export async function getPersonalStudentSnapshot(
          LEFT JOIN subscription_tiers st
            ON st.id = active_subscription.tier_id
          WHERE u.id = $2
-           AND ($3::integer IS NULL OR psa.academy_id = $3)
+           AND ($3::integer IS NULL OR psa.academy_id IS NULL OR psa.academy_id = $3)
          LIMIT 1`,
         [personalId, studentId, academyId ?? null]
       ),
@@ -1322,7 +1322,7 @@ export async function getPersonalConsulting(personalId: number, academyId?: numb
       WHERE psa.personal_id = $1
         AND psa.status = 'active'
         AND u.role = 'user'
-        AND ($2::integer IS NULL OR psa.academy_id = $2)
+        AND ($2::integer IS NULL OR psa.academy_id IS NULL OR psa.academy_id = $2)
       ORDER BY u.name ASC`,
     [personalId, academyId ?? null]
   );

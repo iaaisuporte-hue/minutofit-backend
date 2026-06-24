@@ -59,11 +59,12 @@ describe('Personal invite flow — email already exists (dedup)', () => {
 
     expect(result.isNew).toBe(false);
     expect(result.user.id).toBe(existingUser.id);
-    // Should NOT have issued an INSERT
-    const insertCalls = (mockPool.query as jest.Mock).mock.calls.filter(
-      (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).toUpperCase().startsWith('INSERT')
+    // Should NOT have created a user (auditoria de identidade pode inserir em
+    // data_access_audit — o que importa é que NÃO houve INSERT INTO users).
+    const userInsertCalls = (mockPool.query as jest.Mock).mock.calls.filter(
+      (call: unknown[]) => typeof call[0] === 'string' && /INSERT\s+INTO\s+users/i.test(call[0] as string)
     );
-    expect(insertCalls).toHaveLength(0);
+    expect(userInsertCalls).toHaveLength(0);
   });
 });
 

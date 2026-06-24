@@ -45,7 +45,9 @@ export type DataAccessEventType =
   | 'training.adaptation.viewed'
   | 'training.policy.updated'
   | 'push.checkin_reminder'
-  | 'student.session_touchpoint.viewed';
+  | 'student.session_touchpoint.viewed'
+  | 'identity.user_created'
+  | 'identity.user_reused';
 
 export interface DataAccessAuditEntry {
   actorId: number;

@@ -3,6 +3,7 @@ import bcryptjs from 'bcryptjs';
 import logger from '../lib/logger';
 import { normalizeCpf, normalizePhone, isValidCpf } from './authService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
+import { logDataAccessEvent } from './dataAccessAuditService';
 
 export type MatchedBy = 'email' | 'cpf' | 'phone' | 'none';
 export type MatchKey = 'email' | 'cpf' | 'phone';
@@ -133,6 +134,14 @@ export async function findOrCreateUserFromContext(input: {
       { userId: found.user.id, matchedBy: found.matchedBy },
       '[identity] reusing existing user'
     );
+    // Auditoria durável de identidade (sem PII no payload — só matchedBy + flags).
+    // Útil para disputas "esse cadastro não sou eu" e merge por cpf/phone.
+    void logDataAccessEvent({
+      actorId: found.user.id,
+      subjectUserId: found.user.id,
+      eventType: 'identity.user_reused',
+      eventPayload: { matchedBy: found.matchedBy, hasCpf: Boolean(cpf), hasPhone: Boolean(phone) },
+    });
     return { user: found.user, isNew: false, matchedBy: found.matchedBy };
   }
 
@@ -157,6 +166,14 @@ export async function findOrCreateUserFromContext(input: {
 
   const newUser = res.rows[0];
   logger.info({ userId: newUser.id, email }, '[identity] created new user');
+
+  // Auditoria durável de identidade (sem PII no payload — só estratégia + flags).
+  void logDataAccessEvent({
+    actorId: newUser.id,
+    subjectUserId: newUser.id,
+    eventType: 'identity.user_created',
+    eventPayload: { matchBy: input.matchBy ?? null, hasCpf: Boolean(cpf), hasPhone: Boolean(phone) },
+  });
 
   return { user: newUser, isNew: true, matchedBy: 'none' };
 }

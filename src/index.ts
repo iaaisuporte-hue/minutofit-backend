@@ -29,6 +29,7 @@ import studentTeamRoutes from './routes/studentTeam';
 import professionalNetworkRoutes from './routes/professionalNetwork';
 import sportRoutes from './routes/sport';
 import trainingRoutes from './routes/training';
+import waitlistRoutes from './routes/waitlist';
 import { tenantResolverMiddleware } from './middleware/tenantResolver';
 import { sanitize5xxResponses } from './middleware/sanitize5xx';
 import pool from './config/database';
@@ -302,6 +303,8 @@ app.use('/api/student', studentTeamRoutes);
 app.use('/api/professional', professionalNetworkRoutes);
 app.use('/api/sport', sportRoutes);
 app.use('/api/training', trainingRoutes);
+// Público (pré-auth) — captura de interesse B2C; sem tenant, sem auth.
+app.use('/api/waitlist', waitlistRoutes);
 
 // ---------------------------------------------------------------------------
 // Health check real — valida DB e presença de secrets críticos

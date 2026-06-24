@@ -22,7 +22,7 @@ import {
 } from '../services/workoutProtocolService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
-import { setPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
+import { setPersonalPlan, getPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
 
 const router = Router();
 
@@ -1019,6 +1019,16 @@ router.post('/users/:id/reset-password', authMiddleware, adminMiddleware, async 
 
     await pool.query('UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2', [hash, userId]);
 
+    logAcademyAction({
+      academyId: null,
+      userId: (req.user as { id: number }).id,
+      action: 'auth.password_reset',
+      entityType: 'user',
+      entityId: userId,
+      meta: { adminId: (req.user as { id: number }).id, targetUserId: userId },
+      ipAddress: req.ip,
+    });
+
     res.json({
       success: true,
       data: {
@@ -1227,6 +1237,18 @@ router.post('/users/:userId/products/revoke', authMiddleware, adminMiddleware, a
   }
 });
 
+// GET /admin/users/:userId/personal-plan — lê o plano SaaS atual do personal (suporte)
+router.get('/users/:userId/personal-plan', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) return res.status(400).json({ success: false, error: 'Invalid userId' });
+    const plan = await getPersonalPlan(userId);
+    res.json({ success: true, data: plan });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // POST /admin/users/:userId/personal-plan — seta plano SaaS do personal (Free/Starter/Pro)
 router.post('/users/:userId/personal-plan', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
@@ -1417,7 +1439,7 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, async (req: Request
       return res.status(400).json({ success: false, error: 'Não é possível excluir a própria conta.' });
     }
 
-    const userRes = await pool.query(`SELECT id, role FROM users WHERE id = $1 LIMIT 1`, [targetId]);
+    const userRes = await pool.query(`SELECT id, role, email FROM users WHERE id = $1 LIMIT 1`, [targetId]);
     if (!userRes.rows.length) {
       return res.status(404).json({ success: false, error: 'Usuário não encontrado.' });
     }
@@ -1439,6 +1461,18 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, async (req: Request
       await client.query(`DELETE FROM users WHERE id = $1`, [targetId]);
 
       await client.query('COMMIT');
+
+      // Deleção é irreversível (CASCADE) — registrar quem, quando e o alvo.
+      logAcademyAction({
+        academyId: null,
+        userId: req.user!.id,
+        action: 'admin.user_deleted',
+        entityType: 'user',
+        entityId: targetId,
+        meta: { adminId: req.user!.id, targetUserId: targetId, targetRole: target.role, targetEmail: target.email },
+        ipAddress: req.ip,
+      });
+
       return res.json({ success: true, data: { deleted: true, userId: targetId } });
     } catch (e) {
       await client.query('ROLLBACK');

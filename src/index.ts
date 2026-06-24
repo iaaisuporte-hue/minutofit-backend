@@ -66,6 +66,7 @@ import { seedExercisesIfEmpty } from './db/seedExercisesIfEmpty';
 import { ensureProductsSchema } from './db/ensureProductsSchema';
 import { backfillUserProducts } from './db/backfillUserProducts';
 import { scheduleDataRetention } from './jobs/dataRetention';
+import { scheduleGraceExpiry } from './jobs/graceExpiry';
 import { getRedisClient } from './lib/redisClient';
 import { runMigrations } from './db/runMigrations';
 
@@ -122,6 +123,17 @@ async function runBootChain(): Promise<void> {
     ['backfillUserProducts', backfillUserProducts],
   ];
 
+  // Passos cujo schema é pré-requisito de segurança/gating: se falharem, o app
+  // serviria autenticação/produtos/isolamento de tenant quebrados de forma silenciosa.
+  // Para esses, falhar é fatal (igual às migrations) — aborta o boot via re-throw.
+  // Os demais continuam resilientes (degradar > derrubar).
+  const CRITICAL_STEPS = new Set<string>([
+    'ensureProductsSchema',          // sem user_product_memberships → feature gates quebram
+    'ensureRevokedTokensSchema',     // sem denylist → logout/refresh não revogam
+    'backfillTenantColumns',         // sem backfill, o lock abaixo não aplica NOT NULL
+    'ensureTenantColumnsPhase2Lock', // sem NOT NULL → academy_id nullable → vaza entre tenants
+  ]);
+
   const totalStart = Date.now();
   for (const [name, fn] of steps) {
     const t = Date.now();
@@ -129,8 +141,12 @@ async function runBootChain(): Promise<void> {
       await fn();
       logger.info({ step: name, ms: Date.now() - t }, '[boot] schema ok');
     } catch (err) {
-      logger.error({ step: name, err }, '[boot] schema error — continuing');
       Sentry.captureException(err, { tags: { boot_step: name } });
+      if (CRITICAL_STEPS.has(name)) {
+        logger.fatal({ step: name, err }, '[boot] passo crítico falhou — abortando startup');
+        throw err; // runBootChain().catch() → process.exit(1)
+      }
+      logger.error({ step: name, err }, '[boot] schema error — continuing');
     }
   }
   logger.info({ total_ms: Date.now() - totalStart }, '[boot] schema chain complete');
@@ -345,6 +361,20 @@ app.get('/api/health', async (_req, res) => {
     }
   }
 
+  // --- Checks informativos NÃO-FATAIS (não derrubam o health; só dão visibilidade
+  //     ao operador). "Pagamento fora ≠ app fora": MP ausente não vira 503. ---
+  const isProd = (process.env.NODE_ENV || 'development') === 'production';
+  // Token MP tem fallback silencioso para '' no service — sem ele, checkout dá 500
+  // genérico e o operador não sabe que é config. Surfaceamos aqui.
+  checks.mp_token =
+    process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN ? 'ok' : 'unset';
+  checks.frontend_url = process.env.FRONTEND_URL ? 'ok' : 'unset';
+  checks.backend_url = process.env.BACKEND_URL ? 'ok' : 'unset';
+  // Bypass de captcha jamais deveria estar ligado em produção.
+  if (isProd && process.env.SKIP_CAPTCHA === 'true') {
+    checks.captcha_bypass = 'fail';
+  }
+
   // Last migration applied
   let lastMigration: string | null = null;
   try {
@@ -427,6 +457,9 @@ runBootChain()
 
       // Job de retenção de dados — LGPD (executa 30s após boot, depois a cada 24h)
       scheduleDataRetention();
+
+      // Job de expiração de graça — fecha o App bônus vencido (idempotente, 1×/dia)
+      scheduleGraceExpiry();
     });
   })
   .catch((err) => {

@@ -32,6 +32,9 @@ export type AuditAction =
   | 'personal.student.removed'
   | 'membership.expire_graces'
   | 'admin.password_set'
+  | 'admin.user_deleted'
+  | 'auth.password_changed'
+  | 'auth.password_reset'
   | 'personal.plan.set';
 
 export interface AuditEntry {

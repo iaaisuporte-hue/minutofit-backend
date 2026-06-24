@@ -432,6 +432,16 @@ router.post("/change-password", authMiddleware, async (req: Request, res: Respon
 
     const user = await authService.changeOwnPassword(req.user!.id, currentPassword, newPassword);
 
+    logAcademyAction({
+      academyId: req.user!.activeAcademyId ?? null,
+      userId: req.user!.id,
+      action: 'auth.password_changed',
+      entityType: 'user',
+      entityId: req.user!.id,
+      meta: { self: true },
+      ipAddress: req.ip,
+    });
+
     res.json({ success: true, data: { user } });
   } catch (error: any) {
     res.status(400).json({

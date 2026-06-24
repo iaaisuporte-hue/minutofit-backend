@@ -41,6 +41,7 @@ const MICROCOPIES: Record<string, string> = {
   'metabolic.drop':       'Metabolismo em queda — sinalize ao seu Personal.',
   'metabolic.moderate_low': 'Metabolismo abaixo do ideal.',
   'nutrition.poor':       'Alimentação ruim compromete a recuperação muscular.',
+  'nutrition.good':       'Boa alimentação hoje favorece energia e recuperação.',
   'state.nominal':        'Sinais dentro do esperado. Bom treino!',
 };
 
@@ -90,6 +91,11 @@ export function computeReadinessLens(input: ReadinessInput): ReadinessLens {
   }
   if (input.nutritionLevel === 'poor') {
     add('nutrition.poor', 'Alimentação ruim hoje', 'caution', 'yellow');
+  }
+  // Simetria (Spec nutri×MaaS): "comer bem conta" — fator positivo informativo,
+  // não muda o nível, mas surfaça a nutrição na leitura do dia.
+  if (input.nutritionLevel === 'good') {
+    add('nutrition.good', 'Alimentação boa hoje', 'info', 'green');
   }
 
   if (factors.length === 0) {

@@ -118,12 +118,18 @@ router.post('/mercadopago', async (req: Request, res: Response) => {
 
     logger.info({ type, data }, 'Mercado Pago webhook received');
 
+    // ID do evento p/ idempotência da plataforma (Spec 011): preferimos o
+    // x-request-id do MP; fallback no data.id da notificação.
+    const eventId =
+      (typeof req.headers['x-request-id'] === 'string' ? (req.headers['x-request-id'] as string) : undefined) ||
+      (data?.id != null ? String(data.id) : undefined);
+
     if (type === 'payment') {
       await handlePaymentNotification(data);
     } else if (type === 'plan') {
       await handlePlanNotification(data);
     } else if (type === 'subscription' || type === 'subscription_preapproval' || type === 'preapproval') {
-      await handleSubscriptionNotification(data);
+      await handleSubscriptionNotification(data, eventId);
     }
 
     res.json({ success: true });
@@ -194,7 +200,7 @@ async function handlePlanNotification(data: any) {
   logger.info({ data }, 'Plan notification');
 }
 
-async function handleSubscriptionNotification(data: any) {
+async function handleSubscriptionNotification(data: any, eventId?: string) {
   try {
     const preapprovalId = data?.id != null ? String(data.id) : undefined;
     if (!preapprovalId) {
@@ -226,7 +232,7 @@ async function handleSubscriptionNotification(data: any) {
     if (externalReference?.startsWith(PLATFORM_SUB_EXTERNAL_REF_PREFIX)) {
       const personalId = Number(externalReference.slice(PLATFORM_SUB_EXTERNAL_REF_PREFIX.length));
       if (Number.isFinite(personalId)) {
-        await handlePlatformPreapprovalWebhook(personalId, status, data);
+        await handlePlatformPreapprovalWebhook(personalId, status, data, eventId);
       }
       return;
     }

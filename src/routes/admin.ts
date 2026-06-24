@@ -22,7 +22,7 @@ import {
 } from '../services/workoutProtocolService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
-import { setPersonalPlan, type PersonalPlan } from '../services/personalPlanService';
+import { setPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
 
 const router = Router();
 
@@ -1258,6 +1258,40 @@ router.post('/users/:userId/personal-plan', authMiddleware, adminMiddleware, asy
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/billing/reconcile/:personalId — safety net (Spec 011):
+// busca o status real do preapproval no MP e ressincroniza a assinatura.
+router.post('/billing/reconcile/:personalId', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const personalId = Number(req.params.personalId);
+    if (!Number.isFinite(personalId)) return res.status(400).json({ success: false, error: 'Invalid personalId' });
+    const result = await reconcilePlatformSubscription(personalId);
+    logAcademyAction({
+      academyId: null,
+      userId: req.user!.id,
+      action: 'personal.plan.set',
+      entityType: 'user',
+      entityId: personalId,
+      meta: { reconcile: true, mpStatus: result.mpStatus, action: result.action },
+      ipAddress: req.ip,
+    });
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: 'Failed to reconcile subscription' });
+  }
+});
+
+// GET /admin/billing/events/:personalId — trilha de eventos de billing (debug/auditoria).
+router.get('/billing/events/:personalId', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const personalId = Number(req.params.personalId);
+    if (!Number.isFinite(personalId)) return res.status(400).json({ success: false, error: 'Invalid personalId' });
+    const rows = await listPlatformBillingEvents(personalId);
+    res.json({ success: true, data: rows });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: 'Failed to load billing events' });
   }
 });
 

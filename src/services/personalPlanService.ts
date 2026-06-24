@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import axios from 'axios';
 import logger from '../lib/logger';
+import { getPreapprovalStatus } from './mercadoPagoService';
 
 const MP_API = 'https://api.mercadopago.com';
 const MP_TOKEN = () => process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
@@ -169,47 +170,124 @@ export async function createPlatformCheckout(
   }
 }
 
+/** Mapeia o status cru do MP para a ação que aplicamos (e o tipo de evento). */
+function actionForMpStatus(mpStatus: string): 'activated' | 'cancelled' | 'ignored_paused' | 'ignored' {
+  if (mpStatus === 'authorized') return 'activated';
+  if (mpStatus === 'cancelled' || mpStatus === 'expired' || mpStatus === 'suspended') return 'cancelled';
+  if (mpStatus === 'paused') return 'ignored_paused';
+  return 'ignored';
+}
+
 /**
- * Webhook do Mercado Pago para a assinatura SaaS do personal.
+ * Webhook do Mercado Pago para a assinatura SaaS do personal (Spec 008/011).
  * Roteado de routes/webhooks.ts pelo prefixo 'platform-sub:{personalId}'.
- * Idempotente: reaplica o estado correspondente ao status atual do MP.
+ *
+ * IDEMPOTENTE de verdade: numa transação, "reivindica" o evento no event log
+ * (UNIQUE em mp_event_id). Se o mesmo evento já foi processado → pula (evita
+ * re-aplicar e inflar current_period_end). Toda passagem fica auditada em
+ * personal_platform_billing_events. Em erro, ROLLBACK → o MP re-tenta limpo.
  */
 export async function handlePlatformPreapprovalWebhook(
   personalId: number,
   mpStatus: string,
-  _payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  eventId?: string | null
 ): Promise<void> {
+  const action = actionForMpStatus(mpStatus);
+  const mpPreapprovalId = payload?.id != null ? String(payload.id) : null;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Dedup + auditoria: registra o evento. ON CONFLICT (mp_event_id) → já visto.
+    const claim = await client.query(
+      `INSERT INTO personal_platform_billing_events
+         (personal_id, mp_preapproval_id, mp_event_id, event_type, mp_status, payload)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+       ON CONFLICT (mp_event_id) WHERE mp_event_id IS NOT NULL DO NOTHING
+       RETURNING id`,
+      [personalId, mpPreapprovalId, eventId ?? null, action, mpStatus, JSON.stringify(payload ?? {})]
+    );
+
+    if (eventId && (claim.rowCount ?? 0) === 0) {
+      await client.query('COMMIT');
+      logger.info({ personalId, eventId, mpStatus }, '[platform-billing] webhook duplicado — ignorado');
+      return;
+    }
+
+    const r = await client.query(
+      `SELECT plan FROM personal_platform_subscriptions WHERE personal_id = $1 FOR UPDATE`,
+      [personalId]
+    );
+    if ((r.rowCount ?? 0) > 0) {
+      const plan = (r.rows[0].plan as PersonalPlan) ?? 'pro';
+      const defaults = PLAN_DEFAULTS[plan];
+
+      if (action === 'activated') {
+        const periodEnd = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000);
+        await client.query(
+          `UPDATE personal_platform_subscriptions SET
+             status = 'active', student_limit = $2, ai_enabled = $3,
+             current_period_end = $4, updated_at = NOW()
+           WHERE personal_id = $1`,
+          [personalId, defaults.studentLimit, defaults.aiEnabled, periodEnd]
+        );
+      } else if (action === 'cancelled') {
+        await client.query(
+          `UPDATE personal_platform_subscriptions SET
+             plan = 'free', status = 'cancelled', student_limit = $2,
+             ai_enabled = $3, current_period_end = NULL, updated_at = NOW()
+           WHERE personal_id = $1`,
+          [personalId, PLAN_DEFAULTS.free.studentLimit, PLAN_DEFAULTS.free.aiEnabled]
+        );
+      }
+      // 'ignored' / 'ignored_paused': sem mudança de estado (só auditado).
+    }
+
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Reconciliação (safety net) — busca o status REAL do preapproval no MP e
+ * ressincroniza a assinatura. Cobre webhook perdido / drift. Admin-triggered.
+ * eventId = null → não deduplica (reconciliação é intencionalmente reprocessável).
+ */
+export async function reconcilePlatformSubscription(
+  personalId: number
+): Promise<{ mpStatus: string | null; action: string }> {
   const r = await pool.query(
-    `SELECT plan FROM personal_platform_subscriptions WHERE personal_id = $1`,
+    `SELECT mp_preapproval_id FROM personal_platform_subscriptions WHERE personal_id = $1`,
     [personalId]
   );
-  if (r.rowCount === 0) return;
-  const plan = (r.rows[0].plan as PersonalPlan) ?? 'pro';
-  const defaults = PLAN_DEFAULTS[plan];
+  const mpId = r.rows[0]?.mp_preapproval_id as string | undefined;
+  if (!mpId) return { mpStatus: null, action: 'no_preapproval' };
 
-  if (mpStatus === 'authorized') {
-    // Pagamento confirmado → ativa o plano pago por 1 mês.
-    const periodEnd = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000);
-    await pool.query(
-      `UPDATE personal_platform_subscriptions SET
-         status = 'active', student_limit = $2, ai_enabled = $3,
-         current_period_end = $4, updated_at = NOW()
-       WHERE personal_id = $1`,
-      [personalId, defaults.studentLimit, defaults.aiEnabled, periodEnd]
-    );
-    return;
-  }
+  const preapproval = await getPreapprovalStatus(mpId);
+  const mpStatus: string | null = preapproval?.status ?? null;
+  if (!mpStatus) return { mpStatus: null, action: 'unknown' };
 
-  if (mpStatus === 'cancelled' || mpStatus === 'expired' || mpStatus === 'suspended') {
-    // Deixou de pagar → reverte para Free (gating volta a Free via getPersonalPlan).
-    await pool.query(
-      `UPDATE personal_platform_subscriptions SET
-         plan = 'free', status = 'cancelled', student_limit = $2,
-         ai_enabled = $3, current_period_end = NULL, updated_at = NOW()
-       WHERE personal_id = $1`,
-      [personalId, PLAN_DEFAULTS.free.studentLimit, PLAN_DEFAULTS.free.aiEnabled]
-    );
-  }
+  await handlePlatformPreapprovalWebhook(personalId, mpStatus, preapproval, null);
+  return { mpStatus, action: actionForMpStatus(mpStatus) };
+}
+
+/** Histórico de eventos de billing do personal (auditoria/debug). */
+export async function listPlatformBillingEvents(personalId: number, limit = 50) {
+  const { rows } = await pool.query(
+    `SELECT id, mp_preapproval_id, mp_event_id, event_type, mp_status, created_at
+       FROM personal_platform_billing_events
+      WHERE personal_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [personalId, Math.min(200, Math.max(1, limit))]
+  );
+  return rows;
 }
 
 export async function countActiveStudents(personalId: number): Promise<number> {

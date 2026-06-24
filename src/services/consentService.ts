@@ -142,6 +142,21 @@ export async function hasActiveConsent(
   return rows.length > 0;
 }
 
+/** Conjunto de escopos ATIVOS (granted) de um par profissional↔aluno.
+ *  Usado para filtrar payloads por consent granular (Spec 012). */
+export async function listActiveConsentScopes(
+  userId: number,
+  professionalId: number,
+  professionalRole: ProfessionalRole
+): Promise<Set<ConsentScope>> {
+  const { rows } = await pool.query(
+    `SELECT scope FROM user_data_consents
+      WHERE user_id = $1 AND professional_id = $2 AND professional_role = $3 AND status = 'granted'`,
+    [userId, professionalId, professionalRole]
+  );
+  return new Set(rows.map((r) => r.scope as ConsentScope));
+}
+
 export async function listConsentsForUser(
   userId: number,
   professionalId: number,

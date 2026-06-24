@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import logger from '../lib/logger';
 import { authMiddleware } from '../middleware/auth';
 import { requireSportActive } from '../middleware/sportGate';
 import { requirePhysicalActivityClearance } from '../middleware/requirePhysicalActivityClearance';
@@ -50,7 +51,7 @@ router.get('/profile', authMiddleware, async (req: Request, res: Response) => {
     }
     res.json({ success: true, profile });
   } catch (err) {
-    console.error('[sport/profile GET]', err);
+    logger.error({ err: err }, '[sport/profile GET]');
     res.status(500).json({ success: false, error: 'Failed to load sport profile' });
   }
 });
@@ -66,7 +67,7 @@ router.put('/profile', authMiddleware, async (req: Request, res: Response) => {
       res.status(400).json({ success: false, error: err.message });
       return;
     }
-    console.error('[sport/profile PUT]', err);
+    logger.error({ err: err }, '[sport/profile PUT]');
     res.status(500).json({ success: false, error: 'Failed to save sport profile' });
   }
 });
@@ -78,7 +79,7 @@ router.delete('/profile', authMiddleware, requireSportActive, async (req: Reques
     void logDataAccessEvent({ actorId: userId, subjectUserId: userId, eventType: 'sport.profile.deactivated', ip: req.ip });
     res.json({ success: true });
   } catch (err) {
-    console.error('[sport/profile DELETE]', err);
+    logger.error({ err: err }, '[sport/profile DELETE]');
     res.status(500).json({ success: false, error: 'Failed to deactivate sport profile' });
   }
 });
@@ -96,7 +97,7 @@ router.post('/checkins/pre-workout', authMiddleware, requireSportActive, require
       res.status(400).json({ success: false, error: 'Valores fora do intervalo permitido (1-5)' });
       return;
     }
-    console.error('[sport/checkins POST]', err);
+    logger.error({ err: err }, '[sport/checkins POST]');
     res.status(500).json({ success: false, error: 'Failed to save check-in' });
   }
 });
@@ -108,7 +109,7 @@ router.get('/checkins/pre-workout', authMiddleware, requireSportActive, async (r
     const checkins = await listPreWorkoutCheckins(req.user!.id, from, to);
     res.json({ success: true, checkins });
   } catch (err) {
-    console.error('[sport/checkins GET]', err);
+    logger.error({ err: err }, '[sport/checkins GET]');
     res.status(500).json({ success: false, error: 'Failed to load check-ins' });
   }
 });
@@ -124,7 +125,7 @@ router.get('/readiness/today', authMiddleware, requireSportActive, async (req: R
     }
     res.json({ success: true, readiness });
   } catch (err) {
-    console.error('[sport/readiness GET]', err);
+    logger.error({ err: err }, '[sport/readiness GET]');
     res.status(500).json({ success: false, error: 'Failed to compute readiness' });
   }
 });
@@ -137,7 +138,7 @@ router.get('/camps', authMiddleware, requireSportActive, async (req: Request, re
     const camps = await listCamps(req.user!.id, status);
     res.json({ success: true, camps });
   } catch (err) {
-    console.error('[sport/camps GET]', err);
+    logger.error({ err: err }, '[sport/camps GET]');
     res.status(500).json({ success: false, error: 'Failed to load camps' });
   }
 });
@@ -154,7 +155,7 @@ router.post('/camps', authMiddleware, requireSportActive, async (req: Request, r
     void logDataAccessEvent({ actorId: userId, subjectUserId: userId, eventType: 'sport.camp.created', ip: req.ip });
     res.status(201).json({ success: true, camp });
   } catch (err) {
-    console.error('[sport/camps POST]', err);
+    logger.error({ err: err }, '[sport/camps POST]');
     res.status(500).json({ success: false, error: 'Failed to create camp' });
   }
 });
@@ -169,7 +170,7 @@ router.patch('/camps/:id', authMiddleware, requireSportActive, async (req: Reque
     }
     res.json({ success: true, camp });
   } catch (err) {
-    console.error('[sport/camps PATCH]', err);
+    logger.error({ err: err }, '[sport/camps PATCH]');
     res.status(500).json({ success: false, error: 'Failed to update camp' });
   }
 });
@@ -192,7 +193,7 @@ router.post('/checkins/post-workout', authMiddleware, requireSportActive, requir
       res.status(400).json({ success: false, error: 'Valores fora do intervalo permitido' });
       return;
     }
-    console.error('[sport/checkins/post-workout POST]', err);
+    logger.error({ err: err }, '[sport/checkins/post-workout POST]');
     res.status(500).json({ success: false, error: 'Failed to save post-workout check-in' });
   }
 });
@@ -204,7 +205,7 @@ router.get('/checkins/post-workout', authMiddleware, requireSportActive, async (
     const checkins = await listPostWorkoutCheckins(req.user!.id, from, to);
     res.json({ success: true, checkins });
   } catch (err) {
-    console.error('[sport/checkins/post-workout GET]', err);
+    logger.error({ err: err }, '[sport/checkins/post-workout GET]');
     res.status(500).json({ success: false, error: 'Failed to load post-workout check-ins' });
   }
 });
@@ -216,7 +217,7 @@ router.get('/fatigue', authMiddleware, requireSportActive, async (req: Request, 
     const fatigue = await getFatigue7d(req.user!.id);
     res.json({ success: true, fatigue });
   } catch (err) {
-    console.error('[sport/fatigue GET]', err);
+    logger.error({ err: err }, '[sport/fatigue GET]');
     res.status(500).json({ success: false, error: 'Failed to load fatigue data' });
   }
 });
@@ -237,7 +238,7 @@ router.get('/has-personal', authMiddleware, async (req: Request, res: Response) 
     }
     res.json({ has_personal: true, personal_id: rows[0].personal_id });
   } catch (err) {
-    console.error('[sport/has-personal GET]', err);
+    logger.error({ err: err }, '[sport/has-personal GET]');
     res.status(500).json({ success: false, error: 'Failed to check personal link' });
   }
 });
@@ -268,7 +269,7 @@ router.get('/dashboard', authMiddleware, requireSportActive, async (req: Request
       },
     });
   } catch (err) {
-    console.error('[sport/dashboard GET]', err);
+    logger.error({ err: err }, '[sport/dashboard GET]');
     res.status(500).json({ success: false, error: 'Failed to load dashboard' });
   }
 });

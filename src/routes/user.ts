@@ -1,4 +1,5 @@
 import { Router, type Request, type Response } from 'express';
+import logger from '../lib/logger';
 import { authMiddleware } from '../middleware/auth';
 import { getProfessionalContextForStudent } from '../services/professionalContextService';
 import { abandonWorkoutPlan } from '../services/personalWorkoutPlanService';
@@ -42,7 +43,7 @@ router.get('/professional-context', authMiddleware, async (req: Request, res: Re
     const context = await getProfessionalContextForStudent(studentId);
     res.json(context);
   } catch (err) {
-    console.error('[user/professional-context]', err);
+    logger.error({ err: err }, '[user/professional-context]');
     res.status(500).json({ success: false, error: 'Failed to load professional context' });
   }
 });
@@ -74,7 +75,7 @@ router.get('/workout-history', authMiddleware, async (req: Request, res: Respons
 
     res.json(entries);
   } catch (err) {
-    console.error('[user/workout-history]', err);
+    logger.error({ err: err }, '[user/workout-history]');
     res.status(500).json({ success: false, error: 'Failed to load workout history' });
   }
 });
@@ -96,7 +97,7 @@ router.post('/workout-plans/:planId/abandon', authMiddleware, async (req: Reques
     }
     return res.json({ success: true, data: { abandoned: true } });
   } catch (err: any) {
-    console.error('[user/workout-plans/abandon]', err);
+    logger.error({ err: err }, '[user/workout-plans/abandon]');
     return res.status(500).json({ success: false, error: err.message || 'Failed to abandon plan' });
   }
 });
@@ -110,7 +111,7 @@ router.get('/nutrition-plan', authMiddleware, async (req: Request, res: Response
     const plan = await getUserActivePlan(req.user!.id);
     res.json({ success: true, data: plan });
   } catch (err: any) {
-    console.error('[user/nutrition-plan]', err);
+    logger.error({ err: err }, '[user/nutrition-plan]');
     res.status(500).json({ success: false, error: 'Failed to load nutrition plan' });
   }
 });
@@ -142,7 +143,7 @@ router.post('/nutrition-adherence-checkins', authMiddleware, async (req: Request
     }
     return res.status(201).json({ success: true, data: result.data });
   } catch (err: any) {
-    console.error('[user/nutrition-adherence-checkins]', err);
+    logger.error({ err: err }, '[user/nutrition-adherence-checkins]');
     return res.status(500).json({ success: false, error: 'Failed to record checkin' });
   }
 });
@@ -166,7 +167,7 @@ router.get('/meals/today', authMiddleware, async (req: Request, res: Response) =
     const timeline = await getMealTimeline(req.user!.id);
     res.json({ success: true, data: timeline });
   } catch (err: any) {
-    console.error('[user/meals/today]', err);
+    logger.error({ err: err }, '[user/meals/today]');
     res.status(500).json({ success: false, error: 'Failed to load meal timeline' });
   }
 });
@@ -210,7 +211,7 @@ router.post('/meals/:mealId/checkins', authMiddleware, async (req: Request, res:
     }
     return res.status(result.updated ? 200 : 201).json({ success: true, data: result.data });
   } catch (err: any) {
-    console.error('[user/meals/:mealId/checkins]', err);
+    logger.error({ err: err }, '[user/meals/:mealId/checkins]');
     return res.status(500).json({ success: false, error: 'Failed to record meal checkin' });
   }
 });
@@ -239,7 +240,7 @@ router.delete('/nutrition-data', authMiddleware, async (req: Request, res: Respo
       deleted: result,
     });
   } catch (err: any) {
-    console.error('[user/nutrition-data DELETE]', err);
+    logger.error({ err: err }, '[user/nutrition-data DELETE]');
     return res.status(500).json({ success: false, error: 'Failed to delete nutrition data' });
   }
 });
@@ -264,7 +265,7 @@ router.post('/push/subscriptions', authMiddleware, async (req: Request, res: Res
     await saveSubscription(userId, { endpoint, keys }, deviceLabel);
     return res.status(201).json({ success: true });
   } catch (err: any) {
-    console.error('[user/push/subscriptions]', err);
+    logger.error({ err: err }, '[user/push/subscriptions]');
     return res.status(500).json({ success: false, error: 'Failed to save subscription' });
   }
 });
@@ -277,7 +278,7 @@ router.delete('/push/subscriptions', authMiddleware, async (req: Request, res: R
     await removeSubscription(userId, endpoint);
     return res.json({ success: true });
   } catch (err: any) {
-    console.error('[user/push/subscriptions DELETE]', err);
+    logger.error({ err: err }, '[user/push/subscriptions DELETE]');
     return res.status(500).json({ success: false, error: 'Failed to remove subscription' });
   }
 });

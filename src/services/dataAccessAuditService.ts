@@ -29,6 +29,8 @@ export type DataAccessEventType =
   | 'sport.camp.created'
   | 'sport.post_checkin.created'
   | 'personal.sport.read'
+  | 'personal.snapshot.read'
+  | 'personal.ai_summary.read'
   | 'nutri.plan.created'
   | 'nutri.plan.updated'
   | 'nutri.plan.ended'

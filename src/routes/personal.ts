@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import { requireActiveConsent } from '../middleware/requireActiveConsent';
+import { listActiveConsentScopes } from '../services/consentService';
+import logger from '../lib/logger';
 import {
   getPersonalConsulting,
   getPersonalDashboard,
@@ -181,6 +183,37 @@ router.get(
 
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       const data = await getPersonalStudentSnapshot(req.user!.id, studentId, academyId);
+
+      // Consent granular (Spec 012): corta os blocos sensíveis que o aluno NÃO
+      // consentiu a ESTE personal. 'profile' (já exigido) cobre o básico; os
+      // dados de saúde exigem o escopo específico, e a revogação tem efeito real.
+      const scopes = await listActiveConsentScopes(studentId, req.user!.id, 'personal');
+      if (!scopes.has('metabolic')) {
+        data.metabolismDetail = null;
+        if (data.today) data.today.metabolism = null;
+        if (data.history) data.history.adherence14d = [];
+      }
+      if (!scopes.has('daily_checkins') && !scopes.has('sleep')) {
+        if (data.today) {
+          data.today.wellbeing = null;
+          data.today.moodAvailable = false;
+          data.today.lastCheckinISO = null;
+          data.today.checkedInToday = false;
+        }
+        if (data.history) data.history.wellbeingHistory14d = [];
+      }
+      if (!scopes.has('chat_history') && data.week) {
+        data.week.latestMessagePreview = null;
+      }
+
+      void logDataAccessEvent({
+        actorId: req.user!.id,
+        subjectUserId: studentId,
+        eventType: 'personal.snapshot.read',
+        eventPayload: { scopes: Array.from(scopes) },
+        ip: req.ip,
+      }).catch(() => {});
+
       res.json({ success: true, data });
     } catch (error: any) {
       if (error?.code === 'ASSIGNMENT_REQUIRED') {
@@ -223,21 +256,35 @@ router.get(
         ? Math.floor((Date.now() - new Date(student.assignedAtISO).getTime()) / (1000 * 60 * 60 * 24 * 7))
         : 0;
 
+      // Consent granular (Spec 012): a IA só recebe metabolismo/sono se o aluno
+      // consentiu esses escopos a este personal.
+      const scopes = await listActiveConsentScopes(studentId, req.user!.id, 'personal');
+      const hasMetabolic = scopes.has('metabolic');
+      const hasCheckins = scopes.has('daily_checkins') || scopes.has('sleep');
+
       const data = await generateStudentSummary(req.user!.id, {
         name: student.name,
         streakDays: student.streakDays,
         adherencePct: student.adherencePct,
         workouts7d: student.workouts7d,
         workouts30d: student.workouts30d,
-        metabolismScore: student.metabolismScore,
-        metabolismTrend: student.metabolismTrend,
-        metabolismDelta7d: student.metabolismDelta7d,
-        latestSleptWell: student.latestSleptWell,
+        metabolismScore: hasMetabolic ? student.metabolismScore : null,
+        metabolismTrend: hasMetabolic ? student.metabolismTrend : null,
+        metabolismDelta7d: hasMetabolic ? student.metabolismDelta7d : null,
+        latestSleptWell: hasCheckins ? student.latestSleptWell : null,
         engagementStatus: student.engagementStatus,
         riskScore: student.riskScore,
         engagementScore: student.engagementScore,
         assignedWeeks,
       });
+
+      void logDataAccessEvent({
+        actorId: req.user!.id,
+        subjectUserId: studentId,
+        eventType: 'personal.ai_summary.read',
+        eventPayload: { scopes: Array.from(scopes) },
+        ip: req.ip,
+      }).catch(() => {});
 
       res.json({ success: true, data });
     } catch (error: any) {
@@ -1751,7 +1798,7 @@ router.get(
         },
       });
     } catch (err) {
-      console.error('[personal/students/sport GET]', err);
+      logger.error({ err: err }, '[personal/students/sport GET]');
       res.status(500).json({ success: false, error: 'Failed to load sport data' });
     }
   },

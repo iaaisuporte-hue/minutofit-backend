@@ -854,8 +854,35 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
   const recognizedMilestones = await loadAlreadyRecognizedMilestones(personalId);
   const needsRecognitionTop = computeRecognitionMilestones(students, recognizedMilestones);
 
+  // Prova de valor (jornada do personal): quantas fichas se ajustaram esta
+  // semana ao check-in dos alunos. Scoped por personal_id (cobre autônomos).
+  const adaptRes = await pool.query(
+    `SELECT COUNT(*)::int AS n
+       FROM workout_adaptation_log
+      WHERE personal_id = $1
+        AND snapshot_date >= date_trunc('week', now())::date
+        AND jsonb_array_length(changes) > 0`,
+    [personalId]
+  );
+  const adaptationsThisWeek = adaptRes.rows[0]?.n ?? 0;
+
+  // Marcos de ativação (checklist do welcome): tem ficha atribuída? algum
+  // check-in? — derivados sem instrumentação extra.
+  const planRes = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM personal_workout_plans
+        WHERE personal_id = $1 AND abandoned_at IS NULL
+     ) AS has_plan`,
+    [personalId]
+  );
+  const activationHasPlan = Boolean(planRes.rows[0]?.has_plan);
+  const activationHasCheckin = students.some((s) => s.lastCheckinISO != null);
+
   const dashboard = {
     summary: {
+      adaptationsThisWeek,
+      activationHasPlan,
+      activationHasCheckin,
       totalStudents,
       total7d,
       total30d,

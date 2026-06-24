@@ -18,7 +18,9 @@ export interface ReceptionStudentSearchRow {
   activePlan: { id: number; name: string; monthlyPrice: number } | null;
   lastAccessAt: string | null;
   daysOverdue: number | null;
-  lastStaffNote: { from: string; preview: string; sentAt: string } | null;
+  // Privacidade (beta academia): só metadado da interação — NUNCA o conteúdo do
+  // chat. A recepção sabe que houve recado de quem/quando, sem ler a mensagem.
+  lastStaffNote: { from: string; sentAt: string } | null;
 }
 
 export interface ReceptionAccessEvent {
@@ -63,7 +65,6 @@ function onlyDigits(value: string): string {
 }
 
 function mapStudent(row: any): ReceptionStudentSearchRow {
-  const noteText = row.staff_note_text as string | null | undefined;
   return {
     userId: row.user_id,
     name: row.name ?? '',
@@ -81,14 +82,12 @@ function mapStudent(row: any): ReceptionStudentSearchRow {
       : null,
     lastAccessAt: row.last_access_at ? new Date(row.last_access_at).toISOString() : null,
     daysOverdue: row.days_overdue != null ? Number(row.days_overdue) : null,
-    lastStaffNote:
-      noteText && row.staff_note_at
-        ? {
-            from: row.staff_note_from ?? 'Equipe',
-            preview: noteText.length > 160 ? `${noteText.slice(0, 157)}…` : noteText,
-            sentAt: new Date(row.staff_note_at).toISOString(),
-          }
-        : null,
+    lastStaffNote: row.staff_note_at
+      ? {
+          from: row.staff_note_from ?? 'Equipe',
+          sentAt: new Date(row.staff_note_at).toISOString(),
+        }
+      : null,
   };
 }
 
@@ -156,7 +155,6 @@ async function getStudentForAccess(academyId: number, userId: number): Promise<R
          )
          ELSE NULL
        END AS days_overdue,
-       sn.staff_note_text,
        sn.staff_note_at,
        sn.staff_note_from
      FROM academy_users au
@@ -180,7 +178,7 @@ async function getStudentForAccess(academyId: number, userId: number): Promise<R
          AND aae.event_type IN ('checkin','exception')
      ) last_event ON TRUE
      LEFT JOIN LATERAL (
-       SELECT cm.text AS staff_note_text, cm.created_at AS staff_note_at, usr.name AS staff_note_from
+       SELECT cm.created_at AS staff_note_at, usr.name AS staff_note_from
        FROM chat_conversations cc
        JOIN chat_messages cm ON cm.conversation_id = cc.id
        JOIN users usr ON usr.id = cm.sender_id
@@ -235,7 +233,6 @@ export async function searchReceptionStudents(
          )
          ELSE NULL
        END AS days_overdue,
-       sn.staff_note_text,
        sn.staff_note_at,
        sn.staff_note_from
      FROM academy_users au
@@ -259,7 +256,7 @@ export async function searchReceptionStudents(
          AND aae.event_type IN ('checkin','exception')
      ) last_event ON TRUE
      LEFT JOIN LATERAL (
-       SELECT cm.text AS staff_note_text, cm.created_at AS staff_note_at, usr.name AS staff_note_from
+       SELECT cm.created_at AS staff_note_at, usr.name AS staff_note_from
        FROM chat_conversations cc
        JOIN chat_messages cm ON cm.conversation_id = cc.id
        JOIN users usr ON usr.id = cm.sender_id

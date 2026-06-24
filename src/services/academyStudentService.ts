@@ -1,7 +1,7 @@
 import pool from '../config/database';
 import crypto from 'crypto';
 import { auditLog } from '../utils/auditLog';
-import { grantMembership } from './membershipService';
+import { grantMembership, cancelMembership } from './membershipService';
 import { findOrCreateUserFromContext } from './userIdentityService';
 import logger from '../lib/logger';
 
@@ -771,6 +771,14 @@ export async function cancelStudent(academyId: number, actorUserId: number, user
      WHERE academy_id = $1 AND user_id = $2 AND status = 'active'`,
     [academyId, userId]
   );
+
+  // Cancela o membership 'academia' → dispara o hook de graça (30d) do App-bônus
+  // documentado no CLAUDE.md (antes o cancel da academia não acionava isso, e o
+  // App ficava 'active' indefinidamente). Idempotente; não cascateia outros produtos.
+  await cancelMembership(userId, 'academia', {
+    revokedByUserId: actorUserId,
+    reason: 'academy_student_cancelled',
+  }).catch((err) => logger.error({ err, userId, academyId }, '[academy] cancelMembership academia failed'));
 }
 
 export async function reactivateStudent(academyId: number, actorUserId: number, userId: number): Promise<void> {

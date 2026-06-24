@@ -242,7 +242,7 @@ async function loadCarteiraMetabolism(studentIds: number[], academyId: number | 
          snapshot_date AS latest_date
        FROM user_metabolism_snapshots
        WHERE user_id = ANY($1::int[])
-         AND ($2::int IS NULL OR academy_id = $2)
+         AND ($2::int IS NULL OR academy_id IS NULL OR academy_id = $2)
        ORDER BY user_id, snapshot_date DESC
      ),
      baseline AS (
@@ -251,7 +251,7 @@ async function loadCarteiraMetabolism(studentIds: number[], academyId: number | 
          score AS baseline_score
        FROM user_metabolism_snapshots
        WHERE user_id = ANY($1::int[])
-         AND ($2::int IS NULL OR academy_id = $2)
+         AND ($2::int IS NULL OR academy_id IS NULL OR academy_id = $2)
          AND snapshot_date <= CURRENT_DATE - INTERVAL '7 days'
        ORDER BY user_id, snapshot_date DESC
      )
@@ -953,7 +953,7 @@ export async function getPersonalStudentSnapshot(
         `SELECT activity_type, distance_km, duration_seconds, intensity, score, calories_estimated, validation_flag, created_at
          FROM activity_sessions
          WHERE user_id = $1
-           AND ($2::integer IS NULL OR academy_id = $2)
+           AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
          ORDER BY created_at DESC
          LIMIT 1`,
         [studentId, academyId ?? null]
@@ -962,7 +962,7 @@ export async function getPersonalStudentSnapshot(
         `SELECT title, completed_at
          FROM user_workout_logs
          WHERE user_id = $1
-           AND ($2::integer IS NULL OR academy_id = $2)
+           AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
          ORDER BY completed_at DESC
          LIMIT 1`,
         [studentId, academyId ?? null]
@@ -987,7 +987,7 @@ export async function getPersonalStudentSnapshot(
            FROM movement_sessions
            WHERE user_id = $1
              AND created_at >= NOW() - INTERVAL '14 days'
-             AND ($2::integer IS NULL OR academy_id = $2)
+             AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
            ORDER BY created_at DESC
            LIMIT 5
          ) recent_movement`,
@@ -1003,19 +1003,19 @@ export async function getPersonalStudentSnapshot(
              SELECT 1 FROM user_workout_logs uwl
              WHERE uwl.user_id = $1
                AND uwl.completed_at::date = days.day
-               AND ($2::integer IS NULL OR uwl.academy_id = $2)
+               AND ($2::integer IS NULL OR uwl.academy_id IS NULL OR uwl.academy_id = $2)
            ) AS worked_out,
            EXISTS (
              SELECT 1 FROM activity_sessions act
              WHERE act.user_id = $1
                AND act.created_at::date = days.day
-               AND ($2::integer IS NULL OR act.academy_id = $2)
+               AND ($2::integer IS NULL OR act.academy_id IS NULL OR act.academy_id = $2)
            ) AS had_gps,
            EXISTS (
              SELECT 1 FROM user_daily_checkins chk
              WHERE chk.user_id = $1
                AND chk.date_key = days.day
-               AND ($2::integer IS NULL OR chk.academy_id = $2)
+               AND ($2::integer IS NULL OR chk.academy_id IS NULL OR chk.academy_id = $2)
            ) AS checked_in
          FROM days
          ORDER BY days.day ASC`,
@@ -1026,7 +1026,7 @@ export async function getPersonalStudentSnapshot(
          FROM activity_sessions
          WHERE user_id = $1
            AND created_at >= NOW() - INTERVAL '14 days'
-           AND ($2::integer IS NULL OR academy_id = $2)
+           AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
          GROUP BY activity_type
          ORDER BY COUNT(*) DESC, activity_type ASC`,
         [studentId, academyId ?? null]
@@ -1045,7 +1045,7 @@ export async function getPersonalStudentSnapshot(
            ON cm.conversation_id = cc.id
          WHERE cc.personal_id = $1
            AND cc.student_id = $2
-           AND ($3::integer IS NULL OR cc.academy_id = $3)
+           AND ($3::integer IS NULL OR cc.academy_id IS NULL OR cc.academy_id = $3)
          ORDER BY cm.created_at DESC
          LIMIT 1`,
         [personalId, studentId, academyId ?? null]
@@ -1059,7 +1059,7 @@ export async function getPersonalStudentSnapshot(
            FROM user_workout_logs
            WHERE user_id = $1
              AND completed_at >= NOW() - INTERVAL '30 days'
-             AND ($2::integer IS NULL OR academy_id = $2)
+             AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
          ) expanded
          WHERE muscle_group IS NOT NULL AND muscle_group <> ''
          GROUP BY muscle_group
@@ -1070,7 +1070,7 @@ export async function getPersonalStudentSnapshot(
         `SELECT feeling, slept_well, in_pain, stressed, notes, date_key::text AS date_key
          FROM user_daily_checkins
          WHERE user_id = $1
-           AND ($2::integer IS NULL OR academy_id = $2)
+           AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
          ORDER BY date_key DESC, created_at DESC
          LIMIT 1`,
         [studentId, academyId ?? null]
@@ -1079,7 +1079,7 @@ export async function getPersonalStudentSnapshot(
         `SELECT date_key::text AS date_key, feeling, slept_well, in_pain, stressed
          FROM user_daily_checkins
          WHERE user_id = $1
-           AND ($2::integer IS NULL OR academy_id = $2)
+           AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
            AND date_key >= CURRENT_DATE - INTERVAL '13 days'
          ORDER BY date_key ASC, created_at ASC`,
         [studentId, academyId ?? null]
@@ -1265,7 +1265,7 @@ export async function listPersonalStudentActivities(
         created_at
      FROM activity_sessions
      WHERE user_id = $1
-       AND ($2::integer IS NULL OR academy_id = $2)
+       AND ($2::integer IS NULL OR academy_id IS NULL OR academy_id = $2)
      ORDER BY created_at DESC
      LIMIT $3`,
     [studentId, academyId ?? null, limit]
@@ -1295,13 +1295,13 @@ export async function getPersonalConsulting(personalId: number, academyId?: numb
           FROM user_workout_logs uwl30
           WHERE uwl30.user_id = u.id
             AND uwl30.completed_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
-            AND ($2::integer IS NULL OR uwl30.academy_id = $2)
+            AND ($2::integer IS NULL OR uwl30.academy_id IS NULL OR uwl30.academy_id = $2)
         ) AS workouts_30d,
         (
           SELECT uwll.completed_at
           FROM user_workout_logs uwll
           WHERE uwll.user_id = u.id
-            AND ($2::integer IS NULL OR uwll.academy_id = $2)
+            AND ($2::integer IS NULL OR uwll.academy_id IS NULL OR uwll.academy_id = $2)
           ORDER BY uwll.completed_at DESC
           LIMIT 1
         ) AS last_workout_at

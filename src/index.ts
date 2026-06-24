@@ -30,6 +30,7 @@ import professionalNetworkRoutes from './routes/professionalNetwork';
 import sportRoutes from './routes/sport';
 import trainingRoutes from './routes/training';
 import { tenantResolverMiddleware } from './middleware/tenantResolver';
+import { sanitize5xxResponses } from './middleware/sanitize5xx';
 import pool from './config/database';
 
 // --- DB schema boot chain (fully sequential, deterministic order) ---
@@ -274,6 +275,9 @@ app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
 // Resolve academy context from Host header
 app.use(tenantResolverMiddleware);
+
+// Sanitiza respostas 500 (não vazar error.message cru) — antes das rotas.
+app.use(sanitize5xxResponses);
 
 // --- Routes ---
 app.use('/api/auth', authRoutes);

@@ -116,7 +116,8 @@ router.post('/mercadopago', async (req: Request, res: Response) => {
   try {
     const { type, data } = req.body;
 
-    logger.info({ type, data }, 'Mercado Pago webhook received');
+    // Não logar o corpo inteiro do MP (pode conter PII do pagador); só o id.
+    logger.info({ type, dataId: data?.id }, 'Mercado Pago webhook received');
 
     // ID do evento p/ idempotência da plataforma (Spec 011): preferimos o
     // x-request-id do MP; fallback no data.id da notificação.
@@ -204,7 +205,7 @@ async function handleSubscriptionNotification(data: any, eventId?: string) {
   try {
     const preapprovalId = data?.id != null ? String(data.id) : undefined;
     if (!preapprovalId) {
-      logger.warn({ data }, '[webhook] subscription notification without preapproval id — ignoring');
+      logger.warn({ dataType: data?.type ?? null }, '[webhook] subscription notification without preapproval id — ignoring');
       return;
     }
 

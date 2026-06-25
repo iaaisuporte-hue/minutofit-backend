@@ -15,6 +15,8 @@ const STATEMENTS = [
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS aceita_responsabilidade_informacoes BOOLEAN DEFAULT TRUE`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS oauth_provider VARCHAR(50)`,
   `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_corefit_admin BOOLEAN NOT NULL DEFAULT FALSE`,
+  // Segregação de função: super_admin (tudo) | support (read + ações reversíveis, sem delete/set-password)
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS admin_sub_role VARCHAR(20) NOT NULL DEFAULT 'super_admin'`,
 ];
 
 export async function ensureUsersCoreColumns(): Promise<void> {

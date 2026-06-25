@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authMiddleware, adminMiddleware } from '../middleware/auth';
+import { authMiddleware, adminMiddleware, requireAdminPermission } from '../middleware/auth';
 import pool from '../config/database';
 import * as subscriptionService from '../services/subscriptionService';
 import { ensureAcademyRoles } from '../db/academyRoles';
@@ -116,62 +116,84 @@ router.get('/dashboard/metrics', authMiddleware, adminMiddleware, async (req: Re
 });
 
 // GET /admin/users - List all users with pagination and filters
+// GET /admin/users — lista usuários com filtros avançados (P0-8)
+// Filtros suportados: role, search (nome/email), cpf, plan (nome do tier), subscriptionStatus
 router.get('/users', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
-    const { limit = 20, offset = 0, role, search } = req.query;
+    const { limit = 20, offset = 0, role, search, cpf, plan, subscriptionStatus } = req.query;
 
-    let query = `SELECT u.id, u.email, u.name, u.role, u.profile_completed, u.created_at, st.name as subscription_tier
-                 FROM users u
-                 LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.status = 'active'
-                 LEFT JOIN subscription_tiers st ON us.tier_id = st.id
-                 WHERE 1=1`;
-
-    const params: any[] = [];
+    const params: unknown[] = [];
+    const conditions: string[] = ['1=1'];
 
     if (role) {
-      query += ` AND u.role = $${params.length + 1}`;
       params.push(role);
+      conditions.push(`u.role = $${params.length}`);
     }
 
     if (search) {
-      query += ` AND (u.email ILIKE $${params.length + 1} OR u.name ILIKE $${params.length + 2})`;
-      params.push(`%${search}%`);
-      params.push(`%${search}%`);
+      params.push(`%${search}%`, `%${search}%`);
+      conditions.push(`(u.email ILIKE $${params.length - 1} OR u.name ILIKE $${params.length})`);
     }
 
-    query += ` ORDER BY u.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(parseInt(limit as string) || 20);
-    params.push(parseInt(offset as string) || 0);
-
-    const result = await pool.query(query, params);
-
-    // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM users WHERE 1=1`;
-    const countParams: any[] = [];
-
-    if (role) {
-      countQuery += ` AND role = $${countParams.length + 1}`;
-      countParams.push(role);
+    // P0-8: filtro por CPF (normalizado: apenas dígitos)
+    if (cpf && typeof cpf === 'string') {
+      const normalized = cpf.replace(/\D/g, '');
+      if (normalized.length >= 3) {
+        params.push(`%${normalized}%`);
+        conditions.push(`REGEXP_REPLACE(u.cpf, '[^0-9]', '', 'g') LIKE $${params.length}`);
+      }
     }
 
-    if (search) {
-      countQuery += ` AND (email ILIKE $${countParams.length + 1} OR name ILIKE $${countParams.length + 2})`;
-      countParams.push(`%${search}%`);
-      countParams.push(`%${search}%`);
+    // P0-8: filtro por nome do plano de assinatura
+    if (plan && typeof plan === 'string') {
+      params.push(plan);
+      conditions.push(`st.name ILIKE $${params.length}`);
     }
 
-    const countResult = await pool.query(countQuery, countParams);
+    // P0-8: filtro por status de assinatura
+    if (subscriptionStatus && typeof subscriptionStatus === 'string') {
+      params.push(subscriptionStatus);
+      conditions.push(`us.status = $${params.length}`);
+    }
+
+    const where = conditions.join(' AND ');
+
+    const countParams = [...params];
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(DISTINCT u.id) as total
+       FROM users u
+       LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.status = 'active'
+       LEFT JOIN subscription_tiers st ON us.tier_id = st.id
+       WHERE ${where}`,
+      countParams
+    );
+
+    const pageLimit = Math.min(parseInt(limit as string) || 20, 100);
+    const pageOffset = Math.max(parseInt(offset as string) || 0, 0);
+    params.push(pageLimit, pageOffset);
+
+    const { rows } = await pool.query(
+      `SELECT u.id, u.email, u.name, u.role, u.profile_completed, u.created_at, u.cpf,
+              st.name as subscription_tier, us.status as subscription_status
+       FROM users u
+       LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.status = 'active'
+       LEFT JOIN subscription_tiers st ON us.tier_id = st.id
+       WHERE ${where}
+       ORDER BY u.created_at DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
 
     res.json({
       success: true,
       data: {
-        users: result.rows,
+        users: rows,
         pagination: {
-          total: countResult.rows[0].total,
-          limit: parseInt(limit as string) || 20,
-          offset: parseInt(offset as string) || 0
-        }
-      }
+          total: Number(countRows[0].total),
+          limit: pageLimit,
+          offset: pageOffset,
+        },
+      },
     });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
@@ -221,21 +243,36 @@ router.get('/subscriptions/report', authMiddleware, adminMiddleware, async (req:
 });
 
 // GET /admin/users/:id - Single user with subscription tier
-router.get('/users/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.get('/users/:id', authMiddleware, adminMiddleware, requireAdminPermission('admin.users.detail'), async (req: Request, res: Response) => {
   try {
-    const { id } = req.params;
+    const userId = Number(req.params.id);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ success: false, error: 'userId inválido.' });
+    }
     const result = await pool.query(
-      `SELECT u.id, u.email, u.name, u.role, u.profile_completed, u.created_at, st.name as subscription_tier
+      `SELECT u.id, u.email, u.name, u.role, u.profile_completed, u.created_at,
+              u.cpf, u.phone, u.admin_sub_role,
+              st.name as subscription_tier
        FROM users u
        LEFT JOIN user_subscriptions us ON u.id = us.user_id AND us.status = 'active'
        LEFT JOIN subscription_tiers st ON us.tier_id = st.id
        WHERE u.id = $1`,
-      [id]
+      [userId]
     );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'User not found' });
     }
+
+    // P0-3: Log de leitura de dado sensível pelo admin (LGPD)
+    const { logDataAccessEvent } = await import('../services/dataAccessAuditService');
+    logDataAccessEvent({
+      actorId: req.user!.id,
+      subjectUserId: userId,
+      eventType: 'personal.snapshot.read',
+      eventPayload: { context: 'admin.users.detail', adminSubRole: req.adminSubRole },
+      ip: req.ip,
+    });
 
     res.json({
       success: true,
@@ -483,7 +520,7 @@ router.get('/dashboard/platform-health', authMiddleware, adminMiddleware, async 
 });
 
 // POST /admin/professionals - Create a professional user (personal or nutri)
-router.post('/professionals', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.post('/professionals', authMiddleware, adminMiddleware, requireAdminPermission('admin.professionals.create'), async (req: Request, res: Response) => {
   try {
     const { name, email, role, phone, cpf, registry, specialty, bio } = req.body;
 
@@ -784,7 +821,7 @@ router.get('/academies', authMiddleware, adminMiddleware, async (req: Request, r
 });
 
 // POST /admin/academies — cria nova academia (com roles e dono opcional)
-router.post('/academies', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.post('/academies', authMiddleware, adminMiddleware, requireAdminPermission('admin.academies.write'), async (req: Request, res: Response) => {
   try {
     const { slug, legalName, displayName, primaryColor, owner } = req.body;
 
@@ -1044,7 +1081,7 @@ router.post('/users/:id/reset-password', authMiddleware, adminMiddleware, async 
 });
 
 // POST /admin/users/:id/set-password — admin define a senha do usuário (sem gerar aleatório)
-router.post('/users/:id/set-password', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.post('/users/:id/set-password', authMiddleware, adminMiddleware, requireAdminPermission('admin.users.set-password'), async (req: Request, res: Response) => {
   try {
     const userId = Number(req.params.id);
     if (!Number.isFinite(userId) || userId <= 0) {
@@ -1097,7 +1134,7 @@ router.post('/users/:id/set-password', authMiddleware, adminMiddleware, async (r
 });
 
 // PATCH /admin/academies/:id/status — ativa / suspende / cancela academia
-router.patch('/academies/:id/status', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.patch('/academies/:id/status', authMiddleware, adminMiddleware, requireAdminPermission('admin.academies.write'), async (req: Request, res: Response) => {
   try {
     const academyId = Number(req.params.id);
     const { status } = req.body;
@@ -1429,7 +1466,7 @@ router.patch(
  *
  * Guards: cannot delete self, cannot delete another admin.
  */
-router.delete('/users/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.delete('/users/:id', authMiddleware, adminMiddleware, requireAdminPermission('admin.users.delete'), async (req: Request, res: Response) => {
   try {
     const targetId = Number(req.params.id);
     if (!Number.isFinite(targetId)) {
@@ -1653,6 +1690,384 @@ router.post(
       res.status(500).json({ success: false, error: err.message });
     }
   },
+);
+
+// ---------------------------------------------------------------------------
+// P0-5: Falhas de pagamento e suporte de cobrança
+// ---------------------------------------------------------------------------
+
+// GET /admin/billing/failures — pagamentos com falha (personal_billing_events + payments)
+router.get(
+  '/billing/failures',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.finance'),
+  async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 200);
+
+      // Eventos de falha em personal billing
+      const { rows: billingFailures } = await pool.query(
+        `SELECT pbe.id, pbe.personal_id, u.name AS personal_name, u.email AS personal_email,
+                pbe.event_type, pbe.payload_json, pbe.occurred_at
+         FROM personal_billing_events pbe
+         JOIN users u ON u.id = pbe.personal_id
+         WHERE pbe.event_type ILIKE '%fail%' OR pbe.event_type ILIKE '%reject%' OR pbe.event_type ILIKE '%error%'
+         ORDER BY pbe.occurred_at DESC
+         LIMIT $1`,
+        [Math.floor(limit / 2)]
+      );
+
+      // Pagamentos gerais com status != approved
+      const { rows: paymentFailures } = await pool.query(
+        `SELECT p.id, p.user_id, u.name AS user_name, u.email AS user_email,
+                p.amount_brl, p.status, p.provider_ref, p.created_at
+         FROM payments p
+         JOIN users u ON u.id = p.user_id
+         WHERE p.status NOT IN ('approved', 'pending')
+         ORDER BY p.created_at DESC
+         LIMIT $1`,
+        [Math.floor(limit / 2)]
+      );
+
+      return res.json({
+        success: true,
+        data: { billingFailures, paymentFailures },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// P0-6: Vínculos personal–aluno e nutri–paciente
+// ---------------------------------------------------------------------------
+
+// GET /admin/professionals/:professionalId/students — alunos vinculados ao personal/nutri
+router.get(
+  '/professionals/:professionalId/students',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.personals.detail'),
+  async (req: Request, res: Response) => {
+    try {
+      const professionalId = Number(req.params.professionalId);
+      if (!Number.isFinite(professionalId)) {
+        return res.status(400).json({ success: false, error: 'professionalId inválido.' });
+      }
+      const [personals, nutris] = await Promise.all([
+        pool.query(
+          `SELECT psa.id, psa.student_id, u.name AS student_name, u.email AS student_email,
+                  psa.status, psa.created_at, psa.academy_id
+           FROM personal_student_assignments psa
+           JOIN users u ON u.id = psa.student_id
+           WHERE psa.personal_id = $1
+           ORDER BY psa.created_at DESC`,
+          [professionalId]
+        ),
+        pool.query(
+          `SELECT npa.id, npa.patient_id AS student_id, u.name AS student_name, u.email AS student_email,
+                  npa.status, npa.created_at
+           FROM nutri_patient_assignments npa
+           JOIN users u ON u.id = npa.patient_id
+           WHERE npa.nutri_id = $1
+           ORDER BY npa.created_at DESC`,
+          [professionalId]
+        ),
+      ]);
+      return res.json({
+        success: true,
+        data: {
+          assignedStudents: personals.rows,
+          assignedPatients: nutris.rows,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// GET /admin/users/:userId/relationships — vínculos do aluno (personal, nutri, academia)
+router.get(
+  '/users/:userId/relationships',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.users.detail'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.params.userId);
+      if (!Number.isFinite(userId)) {
+        return res.status(400).json({ success: false, error: 'userId inválido.' });
+      }
+
+      const [personals, nutris, academies] = await Promise.all([
+        pool.query(
+          `SELECT psa.id, psa.personal_id, u.name AS personal_name, u.email AS personal_email,
+                  psa.status, psa.created_at, psa.academy_id
+           FROM personal_student_assignments psa
+           JOIN users u ON u.id = psa.personal_id
+           WHERE psa.student_id = $1
+           ORDER BY psa.created_at DESC`,
+          [userId]
+        ),
+        pool.query(
+          `SELECT npa.id, npa.nutri_id, u.name AS nutri_name, u.email AS nutri_email,
+                  npa.status, npa.created_at
+           FROM nutri_patient_assignments npa
+           JOIN users u ON u.id = npa.nutri_id
+           WHERE npa.patient_id = $1
+           ORDER BY npa.created_at DESC`,
+          [userId]
+        ),
+        pool.query(
+          `SELECT au.academy_id, a.display_name AS academy_name, a.slug,
+                  au.is_active, au.joined_at
+           FROM academy_users au
+           JOIN academies a ON a.id = au.academy_id
+           WHERE au.user_id = $1
+           ORDER BY au.joined_at DESC`,
+          [userId]
+        ),
+      ]);
+
+      return res.json({
+        success: true,
+        data: {
+          personals: personals.rows,
+          nutris: nutris.rows,
+          academies: academies.rows,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// DELETE /admin/users/:userId/relationships/personal/:assignmentId — remove vínculo errado
+router.delete(
+  '/users/:userId/relationships/personal/:assignmentId',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.users.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.params.userId);
+      const assignmentId = Number(req.params.assignmentId);
+      if (!Number.isFinite(userId) || !Number.isFinite(assignmentId)) {
+        return res.status(400).json({ success: false, error: 'IDs inválidos.' });
+      }
+      const { rowCount } = await pool.query(
+        `UPDATE personal_student_assignments SET status = 'revoked'
+         WHERE id = $1 AND student_id = $2 AND status = 'active'`,
+        [assignmentId, userId]
+      );
+      if (!rowCount) {
+        return res.status(404).json({ success: false, error: 'Vínculo não encontrado ou já revogado.' });
+      }
+      logAcademyAction({
+        academyId: null,
+        userId: req.user!.id,
+        action: 'personal.student.removed',
+        entityType: 'user',
+        entityId: userId,
+        meta: { adminId: req.user!.id, assignmentId, targetUserId: userId },
+        ipAddress: req.ip,
+      });
+      return res.json({ success: true, data: { revoked: true, assignmentId } });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// P0-4: Gate de credencial profissional — lista fila de revisão pendente
+// ---------------------------------------------------------------------------
+
+// GET /admin/professionals/pending-review — profissionais aguardando aprovação de credencial
+router.get(
+  '/professionals/pending-review',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.professionals.review'),
+  async (_req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT pnp.professional_id, u.name, u.email, u.role,
+                pnp.credential_code, pnp.credential_status, pnp.publication_status,
+                pnp.admin_enabled, pnp.review_notes, pnp.updated_at,
+                (SELECT COUNT(*) FROM personal_student_assignments psa
+                 WHERE psa.personal_id = pnp.professional_id AND psa.status = 'active') AS active_students
+         FROM professional_network_profiles pnp
+         JOIN users u ON u.id = pnp.professional_id
+         WHERE pnp.credential_status = 'pending_review'
+         ORDER BY pnp.updated_at ASC`
+      );
+      return res.json({ success: true, data: rows });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// P0-1: Gestão de sub-roles admin (segregação de função)
+// ---------------------------------------------------------------------------
+
+// GET /admin/admin-roles — lista todos os admins com seus sub_roles
+router.get(
+  '/admin-roles',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.accessProfiles'),
+  async (_req: Request, res: Response) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, name, email, admin_sub_role, created_at
+         FROM users WHERE role = 'admin' AND is_corefit_admin = TRUE
+         ORDER BY name`
+      );
+      return res.json({ success: true, data: rows });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// PATCH /admin/admin-roles/:userId — altera sub_role de um admin (só super_admin)
+router.patch(
+  '/admin-roles/:userId',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.accessProfiles'),
+  async (req: Request, res: Response) => {
+    const { subRole } = req.body as { subRole?: string };
+    if (!subRole || !['super_admin', 'support'].includes(subRole)) {
+      return res.status(400).json({ success: false, error: 'subRole deve ser super_admin ou support.' });
+    }
+    const targetId = Number(req.params.userId);
+    if (!Number.isFinite(targetId)) {
+      return res.status(400).json({ success: false, error: 'userId inválido.' });
+    }
+    if (targetId === req.user!.id) {
+      return res.status(400).json({ success: false, error: 'Não é possível alterar o próprio sub_role.' });
+    }
+    try {
+      const { rowCount } = await pool.query(
+        `UPDATE users SET admin_sub_role = $1 WHERE id = $2 AND role = 'admin' AND is_corefit_admin = TRUE`,
+        [subRole, targetId]
+      );
+      if (!rowCount) {
+        return res.status(404).json({ success: false, error: 'Admin não encontrado.' });
+      }
+      logAcademyAction({
+        academyId: null,
+        userId: req.user!.id,
+        action: 'team.role_update',
+        entityType: 'admin_user',
+        entityId: targetId,
+        meta: { adminId: req.user!.id, targetUserId: targetId, newSubRole: subRole },
+        ipAddress: req.ip,
+      });
+      return res.json({ success: true, data: { userId: targetId, adminSubRole: subRole } });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// P0-2: Audit log viewer (plataforma) — apenas super_admin via permission check
+// ---------------------------------------------------------------------------
+
+// GET /admin/audit — trilha de ações admin na plataforma (academy_audit_log + filtros)
+router.get(
+  '/audit',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.audit'),
+  async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 100);
+      const offset = Math.max(parseInt((req.query.offset as string) || '0', 10), 0);
+      const subjectUserId = req.query.subjectUserId ? Number(req.query.subjectUserId) : undefined;
+      const actorId = req.query.actorId ? Number(req.query.actorId) : undefined;
+      const action = typeof req.query.action === 'string' ? req.query.action : undefined;
+
+      const params: unknown[] = [];
+      const conditions: string[] = [];
+
+      if (subjectUserId && Number.isFinite(subjectUserId)) {
+        params.push(subjectUserId);
+        conditions.push(`aal.entity_id = $${params.length} AND aal.entity_type = 'user'`);
+      }
+      if (actorId && Number.isFinite(actorId)) {
+        params.push(actorId);
+        conditions.push(`aal.user_id = $${params.length}`);
+      }
+      if (action && /^[a-z_.]+$/.test(action)) {
+        params.push(`${action}%`);
+        conditions.push(`aal.action::text LIKE $${params.length}`);
+      }
+
+      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+      params.push(limit, offset);
+      const limIdx = params.length - 1;
+      const offIdx = params.length;
+
+      const { rows } = await pool.query(
+        `SELECT aal.id, aal.academy_id, aal.user_id, u.name AS actor_name,
+                aal.action, aal.entity_type, aal.entity_id, aal.meta, aal.created_at
+         FROM academy_audit_log aal
+         LEFT JOIN users u ON u.id = aal.user_id
+         ${where}
+         ORDER BY aal.created_at DESC
+         LIMIT $${limIdx} OFFSET $${offIdx}`,
+        params
+      );
+
+      // Total count (sem limit/offset)
+      const countParams = params.slice(0, params.length - 2);
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*) AS total FROM academy_audit_log aal ${where}`,
+        countParams
+      );
+
+      return res.json({
+        success: true,
+        data: {
+          entries: rows,
+          pagination: { total: Number(countRows[0].total), limit, offset },
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// GET /admin/users/:userId/audit-trail — trilha LGPD de acesso a dado de um usuário
+router.get(
+  '/users/:userId/audit-trail',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.audit'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.params.userId);
+      if (!Number.isFinite(userId)) {
+        return res.status(400).json({ success: false, error: 'userId inválido.' });
+      }
+      const { getAuditTrailForUser } = await import('../services/dataAccessAuditService');
+      const trail = await getAuditTrailForUser(userId, 100);
+      return res.json({ success: true, data: trail });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  }
 );
 
 export default router;

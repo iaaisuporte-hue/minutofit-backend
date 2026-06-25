@@ -35,15 +35,31 @@ export async function loadActivityMetrics(userId: number): Promise<{
   cardioSessionsLast14Days: number;
   daysSinceLastActivity: number | null;
 }> {
+  // Frequência de treino conta DIAS DISTINTOS de duas fontes, sem dobrar (padrão
+  // Spec 009): o check-in de gamificação (user_workout_logs) E a execução real
+  // (workout_sessions, status completed/partial). Antes só contava o primeiro —
+  // sessões reais viravam "dado fantasma" para o score metabólico.
   const [w7, w28, muscles, minutes, cardio, lastActivity] = await Promise.all([
     pool.query(
-      `SELECT COUNT(*)::int AS count FROM user_workout_logs
-       WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '7 days'`,
+      `SELECT COUNT(*)::int AS count FROM (
+         SELECT date_trunc('day', completed_at) AS day FROM user_workout_logs
+           WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '7 days'
+         UNION
+         SELECT date_trunc('day', started_at) AS day FROM workout_sessions
+           WHERE user_id = $1 AND status IN ('completed', 'partial')
+             AND started_at >= NOW() - INTERVAL '7 days'
+       ) d`,
       [userId],
     ),
     pool.query(
-      `SELECT COUNT(*)::int AS count FROM user_workout_logs
-       WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '28 days'`,
+      `SELECT COUNT(*)::int AS count FROM (
+         SELECT date_trunc('day', completed_at) AS day FROM user_workout_logs
+           WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '28 days'
+         UNION
+         SELECT date_trunc('day', started_at) AS day FROM workout_sessions
+           WHERE user_id = $1 AND status IN ('completed', 'partial')
+             AND started_at >= NOW() - INTERVAL '28 days'
+       ) d`,
       [userId],
     ),
     pool.query(
@@ -65,14 +81,19 @@ export async function loadActivityMetrics(userId: number): Promise<{
          AND created_at >= NOW() - INTERVAL '14 days'`,
       [userId],
     ),
+    // Dias desde a atividade MAIS RECENTE entre as três fontes (workout log,
+    // sessão executada, atividade). Corrige também o agregado anterior, que usava
+    // GREATEST de dois MAX (retornava a atividade MENOS recente).
     pool.query(
-      `SELECT GREATEST(
-         EXTRACT(EPOCH FROM (NOW() - MAX(completed_at))) / 86400,
-         EXTRACT(EPOCH FROM (NOW() - MAX(al.created_at))) / 86400
-       )::int AS days
-       FROM user_workout_logs wl
-       FULL OUTER JOIN user_activity_logs al ON al.user_id = wl.user_id AND al.user_id = $1
-       WHERE wl.user_id = $1 OR al.user_id = $1`,
+      `SELECT (EXTRACT(EPOCH FROM (NOW() - MAX(ts))) / 86400)::int AS days
+       FROM (
+         SELECT completed_at AS ts FROM user_workout_logs WHERE user_id = $1
+         UNION ALL
+         SELECT started_at AS ts FROM workout_sessions
+           WHERE user_id = $1 AND status IN ('completed', 'partial')
+         UNION ALL
+         SELECT created_at AS ts FROM user_activity_logs WHERE user_id = $1
+       ) t`,
       [userId],
     ),
   ]);

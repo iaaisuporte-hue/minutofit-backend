@@ -574,6 +574,38 @@ router.get(
   }
 );
 
+// POST /academy/students/:userId/billing-reminder — registra o touchpoint de cobrança
+// (régua observável; o envio é SEMPRE manual via wa.me no front). Feature Pro.
+router.post(
+  '/students/:userId/billing-reminder',
+  requireTenantPermission('academy.students.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = Number(req.params.userId);
+      if (!Number.isFinite(userId)) return res.status(400).json({ success: false, error: 'Invalid userId' });
+
+      const { intelligenceEnabled } = await getAcademySubscription(req.tenant!.academyId);
+      if (!intelligenceEnabled) {
+        return res.status(403).json({ success: false, code: 'PRO_REQUIRED', error: 'Régua de cobrança é um recurso Pro.' });
+      }
+
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'student.billing_reminder',
+        entityType: 'user',
+        entityId: userId,
+        meta: { channel: 'whatsapp' },
+        ipAddress: req.ip,
+      });
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
 // PATCH /academy/students/:userId
 router.patch(
   '/students/:userId',

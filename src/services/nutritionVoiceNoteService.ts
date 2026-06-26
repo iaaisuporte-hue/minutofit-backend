@@ -80,7 +80,7 @@ export async function listPendingVoiceNotesForPatient(
     anchor_meal_id: string | null; published_at: string; read_at: string | null;
     nutri_name: string; nutri_photo: string | null;
   }>(
-    `SELECT vn.*, u.name AS nutri_name, u.profile_picture AS nutri_photo
+    `SELECT vn.*, u.name AS nutri_name, u.avatar_url AS nutri_photo
      FROM nutrition_voice_notes vn
      JOIN users u ON u.id = vn.nutri_id
      WHERE vn.patient_id = $1

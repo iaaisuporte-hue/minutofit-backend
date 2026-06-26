@@ -98,6 +98,28 @@ import {
 } from '../services/personalBillingService';
 
 const router = Router();
+
+// ── Rota do ALUNO (precede o gate de produto) ──────────────────────────────
+// O aluno lê a PRÓPRIA ficha atribuída pelo personal. Não pode exigir o produto
+// 'personal' (que é do profissional / bônus do aluno) — senão o aluno novato leva
+// 403 e a tela do "treino do dia" rebate para o Hoje. Registrada ANTES do
+// router.use(requireProduct('personal')) para ficar isenta do gate; escopo é
+// garantido por req.user.id (só a própria ficha) + roleCheckMiddleware.
+router.get(
+  '/my/workout-plans',
+  authMiddleware,
+  roleCheckMiddleware('user', 'personal', 'nutri', 'admin'),
+  async (req: Request, res: Response) => {
+    try {
+      const limitRaw = Number(req.query.limit);
+      const rows = await listWorkoutPlansForStudent(req.user!.id, Number.isFinite(limitRaw) ? limitRaw : 20);
+      res.json({ success: true, data: rows });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to list my workout plans' });
+    }
+  }
+);
+
 // requireAcademyContext removed from router level — personal autônomo (academy_id IS NULL)
 // is a valid case; individual routes resolve academyId internally with ?? null.
 router.use(authMiddleware, requireProduct('personal'));
@@ -1011,20 +1033,6 @@ router.post(
     } catch (error: any) {
       res.status(500).json({ success: false, error: error.message || 'Failed to reactivate plan' });
     }
-  }
-);
-
-router.get(
-  '/my/workout-plans',
-  roleCheckMiddleware('user', 'personal', 'nutri', 'admin'),
-  async (req: Request, res: Response) => {
-  try {
-    const limitRaw = Number(req.query.limit);
-    const rows = await listWorkoutPlansForStudent(req.user!.id, Number.isFinite(limitRaw) ? limitRaw : 20);
-    res.json({ success: true, data: rows });
-  } catch (error: any) {
-    res.status(500).json({ success: false, error: error.message || 'Failed to list my workout plans' });
-  }
   }
 );
 

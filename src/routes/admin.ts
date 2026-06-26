@@ -23,6 +23,7 @@ import {
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
 import { setPersonalPlan, getPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
+import { getAcademySubscription, setAcademySubscription, reconcileAcademySubscription, listAcademyBillingEvents, type AcademySaasPlan } from '../services/academySubscriptionService';
 
 const router = Router();
 
@@ -1315,6 +1316,82 @@ router.post('/users/:userId/personal-plan', authMiddleware, adminMiddleware, asy
     });
 
     res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Academy SaaS Billing (Spec 015) ──────────────────────────────────────────
+
+// GET /admin/academies/:academyId/plan — lê a assinatura SaaS da academia (suporte)
+router.get('/academies/:academyId/plan', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.academyId);
+    if (!Number.isFinite(academyId)) return res.status(400).json({ success: false, error: 'Invalid academyId' });
+    const plan = await getAcademySubscription(academyId);
+    res.json({ success: true, data: plan });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/academies/:academyId/plan — concede plano SaaS da academia (Free/Pro) sem cobrança
+router.post('/academies/:academyId/plan', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.academyId);
+    if (!Number.isFinite(academyId)) return res.status(400).json({ success: false, error: 'Invalid academyId' });
+
+    const { plan, periodDays, priceCents, trialDays, notes } = req.body;
+    const validPlans: AcademySaasPlan[] = ['free', 'pro'];
+    if (!validPlans.includes(plan as AcademySaasPlan)) {
+      return res.status(400).json({ success: false, error: `Invalid plan. Valid: ${validPlans.join(', ')}` });
+    }
+
+    await setAcademySubscription(academyId, plan as AcademySaasPlan, {
+      periodDays: typeof periodDays === 'number' ? periodDays : undefined,
+      priceCents: typeof priceCents === 'number' ? priceCents : undefined,
+      trialDays:  typeof trialDays  === 'number' ? trialDays  : undefined,
+      notes:      typeof notes      === 'string' ? notes      : undefined,
+      setBy: req.user!.id,
+    });
+
+    logAcademyAction({
+      academyId,
+      userId: req.user!.id,
+      action: 'academy.plan.set',
+      entityType: 'academy',
+      entityId: academyId,
+      meta: { plan, periodDays: periodDays ?? null, trialDays: trialDays ?? null },
+      ipAddress: req.ip,
+    });
+
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/academies/:academyId/billing/reconcile — safety net (Spec 015):
+// busca o status real do preapproval no MP e ressincroniza a assinatura da academia.
+router.post('/academies/:academyId/billing/reconcile', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.academyId);
+    if (!Number.isFinite(academyId)) return res.status(400).json({ success: false, error: 'Invalid academyId' });
+    const result = await reconcileAcademySubscription(academyId);
+    res.json({ success: true, data: result });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /admin/academies/:academyId/billing/events — trilha de eventos de billing (debug/auditoria).
+router.get('/academies/:academyId/billing/events', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const academyId = Number(req.params.academyId);
+    if (!Number.isFinite(academyId)) return res.status(400).json({ success: false, error: 'Invalid academyId' });
+    const limit = Number(req.query.limit) || 50;
+    const events = await listAcademyBillingEvents(academyId, limit);
+    res.json({ success: true, data: events });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

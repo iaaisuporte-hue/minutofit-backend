@@ -11,6 +11,10 @@ import {
   handlePlatformPreapprovalWebhook,
   PLATFORM_SUB_EXTERNAL_REF_PREFIX,
 } from '../services/personalPlanService';
+import {
+  handleAcademyPreapprovalWebhook,
+  ACADEMY_SUB_EXTERNAL_REF_PREFIX,
+} from '../services/academySubscriptionService';
 import { grantMembership, cancelMembership } from '../services/membershipService';
 import { getPreapprovalStatus } from '../services/mercadoPagoService';
 import { logAcademyAction } from '../services/auditService';
@@ -234,6 +238,15 @@ async function handleSubscriptionNotification(data: any, eventId?: string) {
       const personalId = Number(externalReference.slice(PLATFORM_SUB_EXTERNAL_REF_PREFIX.length));
       if (Number.isFinite(personalId)) {
         await handlePlatformPreapprovalWebhook(personalId, status, data, eventId);
+      }
+      return;
+    }
+
+    // Route academy-sub webhooks (academia paga o plano SaaS) ao academySubscriptionService
+    if (externalReference?.startsWith(ACADEMY_SUB_EXTERNAL_REF_PREFIX)) {
+      const academyId = Number(externalReference.slice(ACADEMY_SUB_EXTERNAL_REF_PREFIX.length));
+      if (Number.isFinite(academyId)) {
+        await handleAcademyPreapprovalWebhook(academyId, status, data, eventId);
       }
       return;
     }

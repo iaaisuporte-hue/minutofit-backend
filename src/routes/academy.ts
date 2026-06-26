@@ -46,6 +46,7 @@ import { calcPrimaryHover, calcPrimarySoft, calcCtaTextColor } from '../utils/co
 import { sanitizeBrandingText } from '../utils/htmlSanitize';
 import pool from '../config/database';
 import { getAcademyNetworkPolicy, upsertAcademyNetworkPolicy } from '../services/professionalNetworkService';
+import { getAcademySubscription, createAcademyCheckout } from '../services/academySubscriptionService';
 
 const ALLOWED_LOGO_ORIGINS = ['s3.amazonaws.com', 'corefit.com.br', 'cdn.corefit.com.br'];
 
@@ -1129,6 +1130,11 @@ router.get(
       peakHour:      freqRow.peak_hour != null ? Number(freqRow.peak_hour) : null,
     };
 
+    // Spec 015 — Free=operação · Pro=inteligência. Sem Pro, o bloco de inteligência
+    // (risco/score/sinais/aderência/pico) vem vazio com intelligenceLocked=true.
+    // Operacional (totais, membros, presenças hoje/mês, aderência básica) sempre visível.
+    const { intelligenceEnabled } = await getAcademySubscription(academyId);
+
     res.json({
       success: true,
       data: {
@@ -1137,19 +1143,68 @@ router.get(
         membersByRole,
         totalMembers: Object.values(membersByRole).reduce((a, b) => a + b, 0),
         professionalsActive: Number(professionalRes.rows[0]?.count ?? 0),
-        retention,
-        atRiskStudents,
-        averageMetabolismScore,
-        topPersonals,
-        adoption,
-        commercialSignals,
-        frequency,
+        retention: intelligenceEnabled ? retention : {
+          totalStudents:  retention.totalStudents,
+          studentsActive: retention.studentsActive,
+          studentsAtRisk: null,
+          noWorkout14d:   null,
+          adherence7dPct: null,
+        },
+        atRiskStudents:         intelligenceEnabled ? atRiskStudents : [],
+        averageMetabolismScore: intelligenceEnabled ? averageMetabolismScore : null,
+        topPersonals:           intelligenceEnabled ? topPersonals : [],
+        adoption:               intelligenceEnabled ? adoption : null,
+        commercialSignals:      intelligenceEnabled ? commercialSignals : null,
+        frequency: intelligenceEnabled ? frequency : {
+          checkinsToday: frequency.checkinsToday,
+          checkinsMonth: frequency.checkinsMonth,
+          peakHour: null,
+        },
+        intelligenceLocked: !intelligenceEnabled,
       },
     });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// ─── Plano SaaS da academia (Spec 015) ────────────────────────────────────────
+
+// GET /academy/plan — status do plano (Free default se sem linha)
+router.get(
+  '/plan',
+  requireTenantPermission('academy.dashboard'),
+  async (req: Request, res: Response) => {
+    try {
+      const plan = await getAcademySubscription(req.tenant!.academyId);
+      res.json({ success: true, data: plan });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
+
+// POST /academy/plan/checkout — dono assina o Pro (MP pre-approval recorrente)
+router.post(
+  '/plan/checkout',
+  requireTenantPermission('academy.plan.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const payerEmail = req.user!.email;
+      const base = process.env.FRONTEND_URL || 'http://localhost:5173';
+      const { initPoint } = await createAcademyCheckout(req.tenant!.academyId, {
+        payerEmail,
+        frontendUrl: `${base}/app/academy/dashboard?upgrade=ok`,
+      });
+      res.json({ success: true, data: { initPoint } });
+    } catch (err: any) {
+      if (err?.code === 'PRICE_NOT_CONFIGURED' || err?.code === 'PAYMENTS_UNAVAILABLE') {
+        return res.status(503).json({ success: false, error: 'Pagamento indisponível no momento' });
+      }
+      res.status(500).json({ success: false, error: err.message });
+    }
+  }
+);
 
 // ─── Recepção MVP ─────────────────────────────────────────────────────────────
 

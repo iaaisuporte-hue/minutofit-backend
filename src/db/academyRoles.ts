@@ -34,6 +34,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.reports.read', 'academy.branding', 'academy.audit.read',
       'academy.invitations.write', 'academy.recepcao.dashboard',
       'academy.checkin.write', 'academy.billing.operate',
+      'academy.plan.write',
     ],
   },
   {

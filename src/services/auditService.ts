@@ -35,7 +35,8 @@ export type AuditAction =
   | 'admin.user_deleted'
   | 'auth.password_changed'
   | 'auth.password_reset'
-  | 'personal.plan.set';
+  | 'personal.plan.set'
+  | 'academy.plan.set';
 
 export interface AuditEntry {
   academyId: number | null;

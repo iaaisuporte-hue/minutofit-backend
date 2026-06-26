@@ -811,8 +811,19 @@ router.get(
   try {
     const { academyId } = req.tenant!;
 
+    // Recência de engajamento = check-in diário (user_daily_checkins) OU presença
+    // física (academy_access_events). Presença física ('checkin'/'exception') passa a
+    // contar como aderência no motor de risco — mesmo idioma da Spec 009 (personal como
+    // sensor). Storage segue separado; a união acontece só aqui, na leitura.
+    const ENGAGEMENT_RECENCY = `SELECT user_id, MAX(ts) AS last_checkin FROM (
+             SELECT user_id, created_at AS ts FROM user_daily_checkins WHERE academy_id = $1
+             UNION ALL
+             SELECT user_id, created_at AS ts FROM academy_access_events
+             WHERE academy_id = $1 AND user_id IS NOT NULL AND event_type IN ('checkin','exception')
+           ) eng GROUP BY user_id`;
+
     const [membersRes, academyRes, brandingRes, retentionRes, atRiskRes, professionalRes,
-           metabolismRes, topPersonalsRes, adoptionRes, commercialRes] = await Promise.all([
+           metabolismRes, topPersonalsRes, adoptionRes, commercialRes, frequencyRes] = await Promise.all([
       pool.query(
         `SELECT ar.slug, COUNT(*) AS count
          FROM academy_users au
@@ -852,10 +863,7 @@ router.get(
          FROM academy_users au
          JOIN users u ON u.id = au.user_id
          LEFT JOIN (
-           SELECT user_id, MAX(created_at) AS last_checkin
-           FROM user_daily_checkins
-           WHERE academy_id = $1
-           GROUP BY user_id
+           ${ENGAGEMENT_RECENCY}
          ) udc ON udc.user_id = au.user_id
          LEFT JOIN (
            SELECT user_id, MAX(completed_at) AS last_workout
@@ -885,10 +893,7 @@ router.get(
          FROM academy_users au
          JOIN users u ON u.id = au.user_id
          LEFT JOIN (
-           SELECT user_id, MAX(created_at) AS last_checkin
-           FROM user_daily_checkins
-           WHERE academy_id = $1
-           GROUP BY user_id
+           ${ENGAGEMENT_RECENCY}
          ) udc ON udc.user_id = au.user_id
          LEFT JOIN (
            SELECT user_id, MAX(completed_at) AS last_workout
@@ -951,10 +956,7 @@ router.get(
          FROM personal_student_assignments psa
          JOIN users u ON u.id = psa.personal_id
          LEFT JOIN (
-           SELECT user_id, MAX(created_at) AS last_checkin
-           FROM user_daily_checkins
-           WHERE academy_id = $1
-           GROUP BY user_id
+           ${ENGAGEMENT_RECENCY}
          ) udc ON udc.user_id = psa.student_id
          WHERE psa.academy_id = $1 AND psa.status = 'active'
          GROUP BY u.id, u.name
@@ -1025,10 +1027,7 @@ router.get(
              ) AS has_external_personal
            FROM base b
            LEFT JOIN (
-             SELECT user_id, MAX(created_at) AS last_checkin
-             FROM user_daily_checkins
-             WHERE academy_id = $1
-             GROUP BY user_id
+             ${ENGAGEMENT_RECENCY}
            ) udc ON udc.user_id = b.user_id
            LEFT JOIN LATERAL (
              SELECT start_date FROM academy_enrollments
@@ -1047,6 +1046,26 @@ router.get(
          FROM signals`,
         [academyId]
       ).catch(() => ({ rows: [{ upgrade_candidates: 0, no_workout_plan: 0, external_personal: 0 }] })),
+      // Mov.2: agregados de presença física (check-ins hoje/mês + horário de pico 30d)
+      pool.query(
+        `SELECT
+           COUNT(*) FILTER (WHERE created_at >= date_trunc('day',   NOW())) AS checkins_today,
+           COUNT(*) FILTER (WHERE created_at >= date_trunc('month', NOW())) AS checkins_month,
+           (
+             SELECT EXTRACT(HOUR FROM created_at)::int AS hr
+             FROM academy_access_events
+             WHERE academy_id = $1 AND user_id IS NOT NULL
+               AND event_type IN ('checkin','exception')
+               AND created_at >= NOW() - INTERVAL '30 days'
+             GROUP BY hr
+             ORDER BY COUNT(*) DESC, hr
+             LIMIT 1
+           ) AS peak_hour
+         FROM academy_access_events
+         WHERE academy_id = $1 AND user_id IS NOT NULL
+           AND event_type IN ('checkin','exception')`,
+        [academyId]
+      ).catch(() => ({ rows: [{ checkins_today: 0, checkins_month: 0, peak_hour: null }] })),
     ]);
 
     const membersByRole: Record<string, number> = {};
@@ -1103,6 +1122,13 @@ router.get(
       externalPersonal:  Number(commRow.external_personal  ?? 0),
     };
 
+    const freqRow = frequencyRes.rows[0] ?? {};
+    const frequency = {
+      checkinsToday: Number(freqRow.checkins_today ?? 0),
+      checkinsMonth: Number(freqRow.checkins_month ?? 0),
+      peakHour:      freqRow.peak_hour != null ? Number(freqRow.peak_hour) : null,
+    };
+
     res.json({
       success: true,
       data: {
@@ -1117,6 +1143,7 @@ router.get(
         topPersonals,
         adoption,
         commercialSignals,
+        frequency,
       },
     });
   } catch (err: any) {

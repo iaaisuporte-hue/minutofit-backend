@@ -149,11 +149,19 @@ export async function listStudents(
   }
   if (opts.atRisk) {
     conditions.push(`au.student_status = 'active'`);
+    // Em risco = sem engajamento em 14d, onde engajamento = check-in diário OU presença
+    // física (academy_access_events). Mantém a lista alinhada à contagem do dashboard.
     conditions.push(`
       NOT EXISTS (
         SELECT 1 FROM user_daily_checkins c
         WHERE c.user_id = u.id AND c.academy_id = au.academy_id
           AND c.created_at >= NOW() - INTERVAL '14 days'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM academy_access_events aae
+        WHERE aae.user_id = u.id AND aae.academy_id = au.academy_id
+          AND aae.event_type IN ('checkin','exception')
+          AND aae.created_at >= NOW() - INTERVAL '14 days'
       )
     `);
   }
@@ -269,6 +277,7 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
   activity: {
     lastWorkout: string | null;
     lastCheckin: string | null;
+    lastPhysicalPresence: string | null;
     workouts30d: number;
     checkins30d: number;
     adherence30dPct: number | null;
@@ -322,13 +331,16 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
       `SELECT
          (SELECT MAX(completed_at) FROM user_workout_logs WHERE user_id = $1) AS last_workout,
          (SELECT MAX(created_at)   FROM user_daily_checkins WHERE user_id = $1) AS last_checkin,
+         (SELECT MAX(created_at)   FROM academy_access_events
+          WHERE user_id = $1 AND academy_id = $2
+            AND event_type IN ('checkin','exception')) AS last_physical_presence,
          (SELECT COUNT(*)          FROM user_workout_logs
           WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '30 days') AS workouts_30d,
          (SELECT COUNT(*)          FROM user_daily_checkins
           WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '30 days') AS checkins_30d,
          (SELECT COUNT(DISTINCT date_key) FROM user_daily_checkins
           WHERE user_id = $1 AND date_key >= (CURRENT_DATE - INTERVAL '6 days')::date) AS checkins_7d`,
-      [userId]
+      [userId, academyId]
     ),
     pool.query(
       `SELECT
@@ -374,8 +386,9 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
   const checkins30d  = Number(ar.checkins_30d  ?? 0);
   const checkins7d   = Number(ar.checkins_7d   ?? 0);
   const activity = {
-    lastWorkout:     ar.last_workout ? new Date(ar.last_workout).toISOString() : null,
-    lastCheckin:     ar.last_checkin ? new Date(ar.last_checkin).toISOString() : null,
+    lastWorkout:           ar.last_workout ? new Date(ar.last_workout).toISOString() : null,
+    lastCheckin:           ar.last_checkin ? new Date(ar.last_checkin).toISOString() : null,
+    lastPhysicalPresence:  ar.last_physical_presence ? new Date(ar.last_physical_presence).toISOString() : null,
     workouts30d,
     checkins30d,
     // Target: ~3 workouts/week = 12/month; capped at 100%

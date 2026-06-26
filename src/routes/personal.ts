@@ -3,6 +3,8 @@ import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import { requireActiveConsent } from '../middleware/requireActiveConsent';
 import { listActiveConsentScopes } from '../services/consentService';
+import { listMetabolicCheckins } from '../services/metabolicCheckinService';
+import { getWorkoutStats } from '../services/workoutSessionService';
 import logger from '../lib/logger';
 import {
   getPersonalConsulting,
@@ -132,6 +134,32 @@ router.use(
   '/students/:studentId',
   roleCheckMiddleware('personal'),
   requireActiveConsent('profile'),
+);
+
+// Evolução metabólica do aluno (Spec 014) — read-only, consent-gated.
+// `body_metrics` cobre composição/vitais; `workoutStats` só com `workouts` ativo
+// (consent granular). Sem vínculo/consent, o prefixo já barra com 403.
+router.get(
+  '/students/:studentId/evolution',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('body_metrics'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      const checkins = await listMetabolicCheckins(studentId, 100);
+      const scopes = await listActiveConsentScopes(studentId, req.user!.id, 'personal');
+      const workoutStats = scopes.has('workouts') ? await getWorkoutStats(studentId) : null;
+      res.json({
+        success: true,
+        data: { checkins, workoutStats, scopes: { bodyMetrics: true, workouts: scopes.has('workouts') } },
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to load student evolution' });
+    }
+  }
 );
 
 // ── Plano SaaS do Personal ─────────────────────────────────────────────────

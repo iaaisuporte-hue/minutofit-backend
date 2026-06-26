@@ -24,6 +24,9 @@ import {
   listVoiceNotesForNutri,
   computePatientInsights,
 } from '../services/nutritionVoiceNoteService';
+import { listActiveConsentScopes } from '../services/consentService';
+import { listMetabolicCheckins } from '../services/metabolicCheckinService';
+import { getWorkoutStats } from '../services/workoutSessionService';
 
 const router = Router();
 
@@ -91,6 +94,31 @@ router.use(
   roleCheckMiddleware('nutri'),
   requireNutriAssignment,
   requireActiveConsent('profile'),
+);
+
+// Evolução metabólica do paciente (Spec 014) — read-only, consent-gated.
+// `body_metrics` cobre composição/vitais; `workoutStats` só com `workouts` ativo
+// (nutri normalmente não tem esse escopo → gráfico mostra só peso).
+router.get(
+  '/patients/:patientId/evolution',
+  requireActiveConsent('body_metrics'),
+  async (req: Request, res: Response) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'Invalid patient id' });
+      }
+      const checkins = await listMetabolicCheckins(patientId, 100);
+      const scopes = await listActiveConsentScopes(patientId, req.user!.id, 'nutri');
+      const workoutStats = scopes.has('workouts') ? await getWorkoutStats(patientId) : null;
+      res.json({
+        success: true,
+        data: { checkins, workoutStats, scopes: { bodyMetrics: true, workouts: scopes.has('workouts') } },
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message || 'Failed to load patient evolution' });
+    }
+  }
 );
 
 // ===========================================================================

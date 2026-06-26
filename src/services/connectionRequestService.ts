@@ -1,4 +1,5 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 import { logDataAccessEvent } from './dataAccessAuditService';
 import {
   grantConsents,
@@ -9,6 +10,7 @@ import {
   type ProfessionalRole,
 } from './consentService';
 import { assertProfessionalCanReceiveDiscoveryRequest } from './professionalNetworkService';
+import { grantMembership, cancelMembership } from './membershipService';
 
 export type RequestStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled' | 'expired';
 export type RequestedVia = 'email' | 'code' | 'link' | 'discovery';
@@ -206,6 +208,27 @@ export async function acceptConnectionRequest(opts: {
     );
 
     await client.query('COMMIT');
+
+    // Concede o produto correspondente ao vínculo (personal | nutri) + app.
+    // Invariante do produto: assignment ativo ⇒ produto ativo. Sem isso, o aluno
+    // aparece "Ativo" em Minha Equipe mas leva 403 ('produto não habilitado') ao
+    // abrir a ficha. Fora da transação porque grantMembership usa o pool (idempotente).
+    // Vínculo via request é autônomo (sem academia) por design — academyId fica null.
+    try {
+      await grantMembership(req.student_id, req.professional_role, {
+        professionalId,
+        metadata: { source: 'connection_request_accept', requestId },
+      });
+      await grantMembership(req.student_id, 'app', {
+        professionalId,
+        metadata: { source: 'connection_request_accept', requestId },
+      });
+    } catch (grantErr) {
+      logger.error(
+        { err: grantErr, studentId: req.student_id, professionalId, role: req.professional_role },
+        '[connectionRequest] grantMembership após accept falhou — vínculo criado sem produto'
+      );
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -316,6 +339,21 @@ export async function revokeConnection(opts: {
     );
 
     await client.query('COMMIT');
+
+    // Simetria do invariante: vínculo encerrado ⇒ produto encerrado. cancelMembership
+    // dispara o hook de graça do App bônus (30d) automaticamente. Fora da transação
+    // (usa o pool, idempotente). Falha aqui não reverte a revogação já confirmada.
+    try {
+      await cancelMembership(studentId, professionalRole, {
+        revokedByUserId: studentId,
+        reason: 'connection_revoked',
+      });
+    } catch (cancelErr) {
+      logger.error(
+        { err: cancelErr, studentId, professionalId, role: professionalRole },
+        '[connectionRequest] cancelMembership após revoke falhou — produto pode persistir'
+      );
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;

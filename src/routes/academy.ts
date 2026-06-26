@@ -564,7 +564,7 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const userId = Number(req.params.userId);
-      const student = await getStudent(req.tenant!.academyId, userId);
+      const student = await getStudent(req.tenant!.academyId, userId, { id: req.user!.id });
       res.json({ success: true, data: student });
     } catch (err: any) {
       // Return 404 to prevent IDOR leakage

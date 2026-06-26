@@ -271,17 +271,43 @@ export async function listStudents(
 
 // ─── Get single student ───────────────────────────────────────────────────────
 
-export async function getStudent(academyId: number, userId: number): Promise<Student & {
+/**
+ * Vínculo profissional explícito entre o requisitante e o aluno.
+ * Regra híbrida do pacto de dados: roster operacional é amplo (academy_id), mas
+ * dado sensível/fisiológico individual só com vínculo (personal/nutri atribuído).
+ * Papéis de liderança (owner/manager) operam o painel AGREGADO; dado sensível
+ * individual exige ser o profissional vinculado àquele aluno.
+ */
+async function hasProfessionalLink(requesterId: number, studentId: number): Promise<boolean> {
+  const res = await pool.query(
+    `SELECT 1 FROM personal_student_assignments
+       WHERE personal_id = $1 AND student_id = $2 AND status = 'active'
+     UNION ALL
+     SELECT 1 FROM nutri_patient_assignments
+       WHERE nutri_id = $1 AND patient_id = $2 AND status = 'active'
+     LIMIT 1`,
+    [requesterId, studentId]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+export async function getStudent(
+  academyId: number,
+  userId: number,
+  requester: { id: number }
+): Promise<Student & {
   enrollments: Enrollment[];
   auditHistory: AuditEntry[];
   activity: {
-    lastWorkout: string | null;
-    lastCheckin: string | null;
-    lastPhysicalPresence: string | null;
-    workouts30d: number;
-    checkins30d: number;
-    adherence30dPct: number | null;
-    adherence7dPct: number | null;
+    /** true → bloco sensível blindado por falta de vínculo profissional. */
+    restricted: boolean;
+    lastPhysicalPresence: string | null;  // operacional — sempre visível
+    lastWorkout: string | null;           // sensível
+    lastCheckin: string | null;           // sensível
+    workouts30d: number | null;           // sensível
+    checkins30d: number | null;           // sensível
+    adherence30dPct: number | null;       // sensível
+    adherence7dPct: number | null;        // sensível
   };
   memberships: { hasApp: boolean; hasPersonal: boolean; hasNutri: boolean };
 }> {
@@ -385,16 +411,33 @@ export async function getStudent(academyId: number, userId: number): Promise<Stu
   const workouts30d  = Number(ar.workouts_30d  ?? 0);
   const checkins30d  = Number(ar.checkins_30d  ?? 0);
   const checkins7d   = Number(ar.checkins_7d   ?? 0);
-  const activity = {
-    lastWorkout:           ar.last_workout ? new Date(ar.last_workout).toISOString() : null,
-    lastCheckin:           ar.last_checkin ? new Date(ar.last_checkin).toISOString() : null,
-    lastPhysicalPresence:  ar.last_physical_presence ? new Date(ar.last_physical_presence).toISOString() : null,
-    workouts30d,
-    checkins30d,
-    // Target: ~3 workouts/week = 12/month; capped at 100%
-    adherence30dPct: workouts30d > 0 ? Math.min(Math.round((workouts30d / 12) * 100), 100) : null,
-    adherence7dPct:  Math.min(100, Math.round((checkins7d / 7) * 100)),
-  };
+  const lastPhysicalPresence = ar.last_physical_presence
+    ? new Date(ar.last_physical_presence).toISOString() : null;
+
+  // Operacional (presença) é sempre visível; bloco sensível só com vínculo.
+  const canSeeSensitive = await hasProfessionalLink(requester.id, userId);
+  const activity = canSeeSensitive
+    ? {
+        restricted: false,
+        lastPhysicalPresence,
+        lastWorkout: ar.last_workout ? new Date(ar.last_workout).toISOString() : null,
+        lastCheckin: ar.last_checkin ? new Date(ar.last_checkin).toISOString() : null,
+        workouts30d,
+        checkins30d,
+        // Target: ~3 workouts/week = 12/month; capped at 100%
+        adherence30dPct: workouts30d > 0 ? Math.min(Math.round((workouts30d / 12) * 100), 100) : null,
+        adherence7dPct:  Math.min(100, Math.round((checkins7d / 7) * 100)),
+      }
+    : {
+        restricted: true,
+        lastPhysicalPresence,
+        lastWorkout: null,
+        lastCheckin: null,
+        workouts30d: null,
+        checkins30d: null,
+        adherence30dPct: null,
+        adherence7dPct: null,
+      };
 
   const mr = membershipsRes.rows[0] ?? {};
   const memberships = {

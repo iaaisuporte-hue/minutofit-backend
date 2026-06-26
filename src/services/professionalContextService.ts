@@ -16,6 +16,13 @@ export interface ProfessionalContextProfessional {
 export interface ProfessionalContext {
   personal: ProfessionalContextProfessional | null;
   nutri: ProfessionalContextProfessional | null;
+  /**
+   * Presença física registrada hoje na academia (checkin/exception). Gatilho do
+   * micro check-in no app do aluno ("Você treinou na [Academia] hoje — como está?").
+   * Lê apenas a PRÓPRIA presença do aluno; nenhum dado fisiológico é exposto à
+   * recepção (pacto: recepção vê operação, não fisiologia).
+   */
+  academyPresenceToday: { academyName: string; at: string } | null;
 }
 
 async function getLatestPersonalObservation(
@@ -60,6 +67,28 @@ async function getLatestPersonalSession(
   return {
     status: row.status as 'present' | 'partial',
     at: new Date(row.session_at).toISOString(),
+  };
+}
+
+async function getAcademyPresenceToday(
+  studentId: number
+): Promise<ProfessionalContext['academyPresenceToday']> {
+  const result = await pool.query(
+    `SELECT a.display_name AS academy_name, aae.created_at
+       FROM academy_access_events aae
+       JOIN academies a ON a.id = aae.academy_id
+      WHERE aae.user_id = $1
+        AND aae.event_type IN ('checkin', 'exception')
+        AND aae.created_at >= date_trunc('day', NOW())
+      ORDER BY aae.created_at DESC
+      LIMIT 1`,
+    [studentId]
+  );
+  if (result.rowCount === 0) return null;
+  const row = result.rows[0];
+  return {
+    academyName: String(row.academy_name ?? '').trim() || 'sua academia',
+    at: new Date(row.created_at).toISOString(),
   };
 }
 
@@ -115,5 +144,7 @@ export async function getProfessionalContextForStudent(
     };
   }
 
-  return { personal, nutri };
+  const academyPresenceToday = await getAcademyPresenceToday(studentId);
+
+  return { personal, nutri, academyPresenceToday };
 }

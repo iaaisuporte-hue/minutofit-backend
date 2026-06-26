@@ -589,6 +589,17 @@ router.post(
         return res.status(403).json({ success: false, code: 'PRO_REQUIRED', error: 'Régua de cobrança é um recurso Pro.' });
       }
 
+      // Isolamento: o aluno precisa ser desta academia (evita touchpoint cross-tenant).
+      const member = await pool.query(
+        `SELECT 1 FROM academy_users au
+           JOIN academy_roles ar ON ar.id = au.role_id
+          WHERE au.academy_id = $1 AND au.user_id = $2 AND ar.slug = 'academy_student'`,
+        [req.tenant!.academyId, userId]
+      );
+      if (member.rowCount === 0) {
+        return res.status(404).json({ success: false, error: 'Aluno não encontrado.' });
+      }
+
       logAcademyAction({
         academyId: req.tenant!.academyId,
         userId: req.user!.id,

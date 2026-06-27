@@ -855,6 +855,10 @@ router.get(
   async (req: Request, res: Response) => {
   try {
     const { academyId } = req.tenant!;
+    // Opção 2 — recorte operacional por unidade. unitFilter null = todas as unidades
+    // (padrão). Só estreita DENTRO da academia (queries já filtram academy_id → tenant-safe).
+    const unitIdRaw = Number(req.query.unitId);
+    const unitFilter = Number.isFinite(unitIdRaw) && unitIdRaw > 0 ? unitIdRaw : null;
 
     // Recência de engajamento = check-in diário (user_daily_checkins) OU presença
     // física (academy_access_events). Presença física ('checkin'/'exception') passa a
@@ -919,8 +923,9 @@ router.get(
          WHERE au.academy_id = $1
            AND au.is_active   = TRUE
            AND au.status      = 'active'
-           AND u.role         = 'user'`,
-        [academyId]
+           AND u.role         = 'user'
+           AND ($2::int IS NULL OR au.academy_unit_id = $2)`,
+        [academyId, unitFilter]
       ),
       // B3: Top 3 at-risk students (no activity in last 14 days)
       pool.query(
@@ -950,13 +955,14 @@ router.get(
            AND au.is_active   = TRUE
            AND au.status      = 'active'
            AND u.role         = 'user'
+           AND ($2::int IS NULL OR au.academy_unit_id = $2)
            AND (
              udc.last_checkin IS NULL
              OR udc.last_checkin < NOW() - INTERVAL '14 days'
            )
          ORDER BY days_inactive DESC
          LIMIT 3`,
-        [academyId]
+        [academyId, unitFilter]
       ),
       // B3: Active professionals (personal trainers) in this academy
       pool.query(
@@ -1101,6 +1107,7 @@ router.get(
              FROM academy_access_events
              WHERE academy_id = $1 AND user_id IS NOT NULL
                AND event_type IN ('checkin','exception')
+               AND ($2::int IS NULL OR unit_id = $2)
                AND created_at >= NOW() - INTERVAL '30 days'
              GROUP BY hr
              ORDER BY COUNT(*) DESC, hr
@@ -1108,8 +1115,9 @@ router.get(
            ) AS peak_hour
          FROM academy_access_events
          WHERE academy_id = $1 AND user_id IS NOT NULL
-           AND event_type IN ('checkin','exception')`,
-        [academyId]
+           AND event_type IN ('checkin','exception')
+           AND ($2::int IS NULL OR unit_id = $2)`,
+        [academyId, unitFilter]
       ).catch(() => ({ rows: [{ checkins_today: 0, checkins_month: 0, peak_hour: null }] })),
     ]);
 
@@ -1205,6 +1213,7 @@ router.get(
           peakHour: null,
         },
         intelligenceLocked: !intelligenceEnabled,
+        unitId: unitFilter,
       },
     });
   } catch (err: any) {

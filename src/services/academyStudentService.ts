@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { auditLog } from '../utils/auditLog';
 import { grantMembership, cancelMembership } from './membershipService';
 import { findOrCreateUserFromContext } from './userIdentityService';
+import { assertUnitInAcademy } from './academyUnitService';
 import logger from '../lib/logger';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -481,6 +482,8 @@ export async function addStudent(
   }
 ): Promise<{ student: Partial<Student>; tempPassword?: string; inviteUrl?: string }> {
   const email = params.email.toLowerCase().trim();
+  // Vínculo aluno→unidade: a unidade precisa ser desta academia e estar ativa.
+  await assertUnitInAcademy(academyId, params.unitId ?? null);
   const studentRoleId = await getOwnerRoleId(academyId);
   if (!studentRoleId) throw new Error('Role academy_student não encontrado.');
 
@@ -660,6 +663,8 @@ export async function updateStudent(
     vals.push(params.studentStatus);
   }
   if (params.unitId !== undefined) {
+    // null = desvincular (ok); senão a unidade precisa ser desta academia e ativa.
+    await assertUnitInAcademy(academyId, params.unitId);
     updates.push(`academy_unit_id = $${vals.length + 1}`);
     vals.push(params.unitId);
   }

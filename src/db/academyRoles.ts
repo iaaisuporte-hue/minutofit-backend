@@ -21,6 +21,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.reports.read', 'academy.branding', 'academy.audit.read',
       'academy.invitations.write', 'academy.recepcao.dashboard',
       'academy.checkin.write', 'academy.billing.operate',
+      'academy.units.read', 'academy.units.write',
     ],
   },
   {
@@ -35,6 +36,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.invitations.write', 'academy.recepcao.dashboard',
       'academy.checkin.write', 'academy.billing.operate',
       'academy.plan.write',
+      'academy.units.read', 'academy.units.write',
     ],
   },
   {
@@ -45,6 +47,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.professionals.read', 'academy.plans.read',
       'academy.finance.read', 'academy.reports.read', 'academy.invitations.write',
       'academy.recepcao.dashboard', 'academy.checkin.write', 'academy.billing.operate',
+      'academy.units.read', 'academy.units.write',
     ],
   },
   {
@@ -69,6 +72,7 @@ export const SYSTEM_ROLES: SystemRole[] = [
       'academy.plans.read', 'academy.invitations.write',
       'academy.recepcao.dashboard', 'academy.checkin.write',
       'academy.billing.operate', 'academy.audit.read',
+      'academy.units.read',
     ],
   },
   {

@@ -47,6 +47,7 @@ import { sanitizeBrandingText } from '../utils/htmlSanitize';
 import pool from '../config/database';
 import { getAcademyNetworkPolicy, upsertAcademyNetworkPolicy } from '../services/professionalNetworkService';
 import { getAcademySubscription, createAcademyCheckout } from '../services/academySubscriptionService';
+import { listUnits, createUnit, updateUnit, setUnitStatus, setPrimaryUnit } from '../services/academyUnitService';
 
 const ALLOWED_LOGO_ORIGINS = ['s3.amazonaws.com', 'corefit.com.br', 'cdn.corefit.com.br'];
 
@@ -1209,6 +1210,73 @@ router.get(
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// ─── Unidades / Filiais (Spec 017) ────────────────────────────────────────────
+
+function respondUnitError(err: { code?: string; message?: string }, res: Response) {
+  const code = err?.code;
+  if (code === 'UNIT_NOT_FOUND' || code === 'UNIT_NOT_IN_ACADEMY') {
+    return res.status(404).json({ success: false, code, error: err.message });
+  }
+  if (code === 'UNIT_IS_PRIMARY' || code === 'UNIT_INACTIVE') {
+    return res.status(409).json({ success: false, code, error: err.message });
+  }
+  if (code === 'INVALID_NAME' || code === 'INVALID_ADDRESS' || code === 'INVALID_STATUS') {
+    return res.status(400).json({ success: false, code, error: err.message });
+  }
+  return res.status(500).json({ success: false, error: err.message });
+}
+
+// GET /academy/units?includeInactive=
+router.get('/units', requireTenantPermission('academy.units.read'), async (req: Request, res: Response) => {
+  try {
+    const includeInactive = req.query.includeInactive === 'true' || req.query.includeInactive === '1';
+    const units = await listUnits(req.tenant!.academyId, includeInactive);
+    res.json({ success: true, data: units });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /academy/units
+router.post('/units', requireTenantPermission('academy.units.write'), async (req: Request, res: Response) => {
+  try {
+    const { name, address } = req.body;
+    const unit = await createUnit(req.tenant!.academyId, req.user!.id, { name, address });
+    res.status(201).json({ success: true, data: unit });
+  } catch (err: any) { respondUnitError(err, res); }
+});
+
+// PATCH /academy/units/:id
+router.patch('/units/:id', requireTenantPermission('academy.units.write'), async (req: Request, res: Response) => {
+  try {
+    const unitId = Number(req.params.id);
+    if (!Number.isFinite(unitId)) return res.status(400).json({ success: false, error: 'Invalid unit id' });
+    const { name, address } = req.body;
+    const unit = await updateUnit(req.tenant!.academyId, req.user!.id, unitId, { name, address });
+    res.json({ success: true, data: unit });
+  } catch (err: any) { respondUnitError(err, res); }
+});
+
+// POST /academy/units/:id/status — ativar/inativar (soft delete)
+router.post('/units/:id/status', requireTenantPermission('academy.units.write'), async (req: Request, res: Response) => {
+  try {
+    const unitId = Number(req.params.id);
+    if (!Number.isFinite(unitId)) return res.status(400).json({ success: false, error: 'Invalid unit id' });
+    const unit = await setUnitStatus(req.tenant!.academyId, req.user!.id, unitId, req.body?.status);
+    res.json({ success: true, data: unit });
+  } catch (err: any) { respondUnitError(err, res); }
+});
+
+// POST /academy/units/:id/primary — define unidade principal
+router.post('/units/:id/primary', requireTenantPermission('academy.units.write'), async (req: Request, res: Response) => {
+  try {
+    const unitId = Number(req.params.id);
+    if (!Number.isFinite(unitId)) return res.status(400).json({ success: false, error: 'Invalid unit id' });
+    await setPrimaryUnit(req.tenant!.academyId, req.user!.id, unitId);
+    res.json({ success: true });
+  } catch (err: any) { respondUnitError(err, res); }
 });
 
 // ─── Plano SaaS da academia (Spec 015) ────────────────────────────────────────

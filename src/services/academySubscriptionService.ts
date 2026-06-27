@@ -32,6 +32,14 @@ export interface AcademySubscriptionConfig {
   studentCap: number | null;     // null = ilimitado
   currentPeriodEnd: Date | null;
   trialUntil: Date | null;
+  /** Vencido mas ainda dentro da graça: Pro segue on; aviso de regularização (Spec 018). */
+  pastDue: boolean;
+}
+
+/** Janela de tolerância (dias) antes de auto-expirar a assinatura. Configurável, sem hardcode. */
+function academyOverdueGraceDays(): number {
+  const env = Number(process.env.ACADEMY_OVERDUE_GRACE_DAYS);
+  return Number.isFinite(env) && env >= 0 ? Math.round(env) : 5;
 }
 
 export const ACADEMY_SAAS_DEFAULTS: Record<AcademySaasPlan, Pick<AcademySubscriptionConfig, 'intelligenceEnabled' | 'studentCap'>> = {
@@ -46,6 +54,7 @@ const FREE_DEFAULT: AcademySubscriptionConfig = {
   studentCap: null,
   currentPeriodEnd: null,
   trialUntil: null,
+  pastDue: false,
 };
 
 export const ACADEMY_SUB_EXTERNAL_REF_PREFIX = 'academy-sub:';
@@ -67,14 +76,72 @@ export async function getAcademySubscription(academyId: number): Promise<Academy
   // 'cancelled' ou 'expired' = trata como Free (inteligência travada).
   if (status !== 'active' && status !== 'trial') return FREE_DEFAULT;
 
+  const currentPeriodEnd = row.current_period_end ? new Date(row.current_period_end) : null;
+  const trialUntil = row.trial_until ? new Date(row.trial_until) : null;
+  // Vencido mas ainda honrado (dentro da graça, antes do job expirar): aviso de regularização.
+  const dueRef = status === 'trial' ? trialUntil : currentPeriodEnd;
+  const pastDue = dueRef != null && dueRef.getTime() < Date.now();
+
   return {
     plan: row.plan as AcademySaasPlan,
     status,
     intelligenceEnabled: row.intelligence_enabled,
     studentCap: row.student_cap ?? ACADEMY_SAAS_DEFAULTS[row.plan as AcademySaasPlan].studentCap,
-    currentPeriodEnd: row.current_period_end ? new Date(row.current_period_end) : null,
-    trialUntil: row.trial_until ? new Date(row.trial_until) : null,
+    currentPeriodEnd,
+    trialUntil,
+    pastDue,
   };
+}
+
+/**
+ * Spec 018 — auto-expira assinaturas vencidas (overdue do Pro da academia).
+ * active/trial cujo vencimento (current_period_end / trial_until) passou de NOW − graça
+ * → status 'expired' + intelligence_enabled=false → Pro limitado (getAcademySubscription
+ * trata 'expired' como Free). Admin grant perpétuo (current_period_end NULL) nunca expira.
+ * Idempotente (só active/trial→expired) e auditado em academy_subscription_billing_events.
+ */
+export async function expireOverdueAcademySubs(): Promise<{ evaluated: number; expired: number }> {
+  const graceDays = academyOverdueGraceDays();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const evalRes = await client.query(
+      `SELECT COUNT(*)::int AS c FROM academy_subscriptions WHERE status IN ('active','trial')`
+    );
+    const evaluated = Number(evalRes.rows[0]?.c ?? 0);
+
+    const upd = await client.query(
+      `UPDATE academy_subscriptions
+          SET status = 'expired', intelligence_enabled = false, updated_at = NOW()
+        WHERE status IN ('active','trial')
+          AND (
+            (status = 'active' AND current_period_end IS NOT NULL
+              AND current_period_end < NOW() - make_interval(days => $1))
+            OR (status = 'trial' AND trial_until IS NOT NULL
+              AND trial_until < NOW() - make_interval(days => $1))
+          )
+        RETURNING academy_id, mp_preapproval_id`,
+      [graceDays]
+    );
+
+    for (const r of upd.rows) {
+      await client.query(
+        `INSERT INTO academy_subscription_billing_events
+           (academy_id, mp_preapproval_id, event_type, mp_status, payload)
+         VALUES ($1, $2, 'auto_expired', 'expired', $3::jsonb)`,
+        [r.academy_id, r.mp_preapproval_id ?? null,
+         JSON.stringify({ reason: 'period_ended', graceDays, source: 'job' })]
+      );
+    }
+
+    await client.query('COMMIT');
+    return { evaluated, expired: upd.rowCount ?? 0 };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 /**

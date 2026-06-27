@@ -37,7 +37,8 @@ export type AuditAction =
   | 'auth.password_reset'
   | 'personal.plan.set'
   | 'academy.plan.set'
-  | 'student.billing_reminder';
+  | 'student.billing_reminder'
+  | 'academy.subscription.expire_overdue';
 
 export interface AuditEntry {
   academyId: number | null;

@@ -67,6 +67,7 @@ import { ensureProductsSchema } from './db/ensureProductsSchema';
 import { backfillUserProducts } from './db/backfillUserProducts';
 import { scheduleDataRetention } from './jobs/dataRetention';
 import { scheduleGraceExpiry } from './jobs/graceExpiry';
+import { scheduleAcademySubExpiry } from './jobs/academySubExpiry';
 import { getRedisClient } from './lib/redisClient';
 import { runMigrations } from './db/runMigrations';
 
@@ -460,6 +461,9 @@ runBootChain()
 
       // Job de expiração de graça — fecha o App bônus vencido (idempotente, 1×/dia)
       scheduleGraceExpiry();
+
+      // Job de auto-expiração da assinatura da academia — Pro vencido vira Free (Spec 018)
+      scheduleAcademySubExpiry();
     });
   })
   .catch((err) => {

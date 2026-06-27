@@ -23,7 +23,7 @@ import {
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
 import { setPersonalPlan, getPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
-import { getAcademySubscription, setAcademySubscription, reconcileAcademySubscription, listAcademyBillingEvents, type AcademySaasPlan } from '../services/academySubscriptionService';
+import { getAcademySubscription, setAcademySubscription, reconcileAcademySubscription, listAcademyBillingEvents, expireOverdueAcademySubs, type AcademySaasPlan } from '../services/academySubscriptionService';
 
 const router = Router();
 
@@ -1447,6 +1447,26 @@ router.post('/memberships/expire-graces', authMiddleware, adminMiddleware, async
       ipAddress: req.ip,
     });
     res.json({ success: true, data: { expired } });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /admin/academies/subscriptions/expire-overdue — varre e expira assinaturas Pro
+// vencidas (Spec 018). Idempotente; o job in-process roda 1×/dia, este força fora do ciclo.
+router.post('/academies/subscriptions/expire-overdue', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const result = await expireOverdueAcademySubs();
+    logAcademyAction({
+      academyId: null,
+      userId: req.user!.id,
+      action: 'academy.subscription.expire_overdue',
+      entityType: 'academy_subscription',
+      entityId: null,
+      meta: result,
+      ipAddress: req.ip,
+    });
+    res.json({ success: true, data: result });
   } catch (err: any) {
     res.status(500).json({ success: false, error: err.message });
   }

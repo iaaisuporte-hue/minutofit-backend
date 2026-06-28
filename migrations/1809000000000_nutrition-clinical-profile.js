@@ -133,6 +133,20 @@ exports.up = async (pgm) => {
     params,
   );
 
+  // ── Escopo de consent clinical_nutrition no CHECK ───────────────────────────
+  // A coluna user_data_consents.scope tem CHECK enumerado (criado em 1790600000000,
+  // estendido em 1792000000000 p/ 'sports'). É preciso adicionar 'clinical_nutrition'
+  // ANTES do backfill, senão o INSERT viola a constraint e a migration faz rollback.
+  await pgm.db.query(`ALTER TABLE user_data_consents DROP CONSTRAINT IF EXISTS user_data_consents_scope_check`);
+  await pgm.db.query(`
+    ALTER TABLE user_data_consents ADD CONSTRAINT user_data_consents_scope_check
+    CHECK (scope IN (
+      'profile','workouts','daily_checkins','metabolic','sleep',
+      'body_metrics','body_photos','nutrition','clinical_nutrition',
+      'parq_anamnese','activity_logs','chat_history','sports'
+    ))
+  `);
+
   // ── Backfill consent clinical_nutrition ─────────────────────────────────────
   // Vínculos que já têm `nutrition` granted ganham `clinical_nutrition` granted,
   // para não introduzir consent_required em relacionamentos legados.
@@ -150,5 +164,16 @@ exports.up = async (pgm) => {
 exports.down = async (pgm) => {
   await pgm.db.query(`DROP TABLE IF EXISTS patient_dietary_profile_items`);
   await pgm.db.query(`DROP TABLE IF EXISTS dietary_profile_catalog`);
-  // Consent backfill: sem rollback (não distingue linhas inseridas aqui).
+  // Restaura o CHECK sem 'clinical_nutrition' (remove primeiro os consents desse
+  // escopo para não violar a constraint). Backfill de dados não tem rollback fino.
+  await pgm.db.query(`DELETE FROM user_data_consents WHERE scope = 'clinical_nutrition'`);
+  await pgm.db.query(`ALTER TABLE user_data_consents DROP CONSTRAINT IF EXISTS user_data_consents_scope_check`);
+  await pgm.db.query(`
+    ALTER TABLE user_data_consents ADD CONSTRAINT user_data_consents_scope_check
+    CHECK (scope IN (
+      'profile','workouts','daily_checkins','metabolic','sleep',
+      'body_metrics','body_photos','nutrition','parq_anamnese',
+      'activity_logs','chat_history','sports'
+    ))
+  `);
 };

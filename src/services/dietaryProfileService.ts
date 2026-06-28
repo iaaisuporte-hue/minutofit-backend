@@ -429,3 +429,126 @@ export async function checkDietAgainstProfile(
 
   return alerts;
 }
+
+// ---------------------------------------------------------------------------
+// Motor de substituição assistida (Fase 2 · Onda A) — regra-baseado, AI-ready.
+// Sem catálogo de alimentos: (1) avalia as alternativas que o NUTRI já cadastrou
+// contra o perfil; (2) oferece dicas genéricas de troca por alérgeno/restrição
+// via mapa curado em código (Open/Closed — nova categoria não exige nova tabela).
+// ---------------------------------------------------------------------------
+
+// Dicas de troca por código de catálogo; fallback por categoria. Texto curto,
+// orientativo, nunca prescritivo automático — o nutri decide.
+const SWAP_HINTS_BY_CODE: Record<string, string> = {
+  milk: 'Bebida vegetal (amêndoas, aveia, coco, arroz) ou versão sem lactose',
+  lactose: 'Versões sem lactose ou bebidas vegetais',
+  egg: 'Tofu mexido, grão-de-bico ou substituto de ovo em receitas',
+  peanut: 'Sementes (girassol, abóbora), se não houver alergia cruzada',
+  tree_nuts: 'Sementes (girassol, abóbora) no lugar de oleaginosas',
+  soy: 'Proteína de ervilha ou grão-de-bico no lugar da soja',
+  wheat: 'Farinhas sem glúten (arroz, mandioca, milho, aveia certificada)',
+  gluten: 'Opções sem glúten: arroz, milho, mandioca, quinoa',
+  fish: 'Outra proteína conforme tolerância (frango, ovo, leguminosas)',
+  shellfish: 'Outra proteína conforme tolerância (frango, ovo, leguminosas)',
+  sesame: 'Evitar gergelim/tahine; usar pasta de girassol',
+  vegan: 'Proteína vegetal: tofu, tempeh, PTS, grão-de-bico, lentilha',
+  vegetarian: 'Proteína vegetal ou ovo/laticínio conforme aceitação',
+  gluten_free: 'Substituir por arroz, batata, mandioca, quinoa',
+  lactose_free: 'Bebidas vegetais ou laticínios sem lactose',
+  hypertension: 'Reduzir sal/sódio; temperar com ervas e especiarias',
+  diabetes_t2: 'Carboidratos integrais de baixo índice glicêmico; controlar porção',
+  diabetes_t1: 'Carboidratos integrais; ajustar conforme contagem',
+  celiac: 'Alimentos naturalmente sem glúten; atenção à contaminação cruzada',
+  gout: 'Reduzir carne vermelha, vísceras, frutos do mar e álcool',
+};
+
+const SWAP_HINTS_BY_KIND: Partial<Record<DietaryKind, string>> = {
+  allergy: 'Substituir por alimento sem o alérgeno; confirmar com o paciente',
+  intolerance: 'Versão tolerada ou alternativa que evite o componente',
+  restriction: 'Trocar pelo equivalente que respeite a restrição',
+  clinical_condition: 'Ajustar conforme a condição clínica do paciente',
+  preference: 'Oferecer alternativa que o paciente aceite melhor',
+  medication: 'Atenção a interações; orientar conforme o medicamento',
+};
+
+interface ConflictWithCode extends Omit<DietAlert, 'mealIndex'> {
+  code: string | null;
+}
+
+export interface SubstitutionSuggestion {
+  hasConflict: boolean;
+  conflicts: Array<Omit<DietAlert, 'mealIndex'>>;
+  alternatives: Array<{ description: string; safe: boolean; conflictLabels: string[] }>;
+  swapHints: string[];
+}
+
+export async function suggestSubstitutions(
+  patientId: number,
+  meal: MealForCheck,
+): Promise<SubstitutionSuggestion> {
+  const { rows } = await pool.query(
+    `SELECT i.kind, i.severity, i.preference_kind,
+            COALESCE(c.name, i.custom_label) AS label,
+            c.code AS code,
+            COALESCE(c.match_terms, i.custom_label) AS match_terms
+     FROM patient_dietary_profile_items i
+     LEFT JOIN dietary_profile_catalog c ON c.id = i.catalog_id
+     WHERE i.patient_id = $1 AND i.status = 'active'`,
+    [patientId],
+  );
+
+  const profile = rows.map((r) => ({
+    kind: r.kind as DietaryKind,
+    severity: r.severity as Severity | null,
+    preferenceKind: r.preference_kind as PreferenceKind | null,
+    label: r.label as string,
+    code: (r.code as string | null) ?? null,
+    terms: String(r.match_terms || '')
+      .split(',')
+      .map((t) => normalizeText(t))
+      .filter((t) => t.length >= 3),
+  }));
+
+  const conflictsOf = (text: string): ConflictWithCode[] => {
+    const hay = normalizeText(text);
+    const out: ConflictWithCode[] = [];
+    if (!hay) return out;
+    for (const it of profile) {
+      const level = alertLevelFor(it.kind, it.severity, it.preferenceKind);
+      if (!level) continue;
+      const matched = it.terms.find((term) => termMatches(hay, term));
+      if (matched) {
+        out.push({ level, kind: it.kind, label: it.label, matchedTerm: matched, code: it.code });
+      }
+    }
+    return out;
+  };
+
+  const mainConflicts = conflictsOf([meal.name || '', meal.orientation || ''].join(' · '));
+
+  // Avalia as alternativas que o próprio nutri cadastrou: quais são seguras.
+  const alternatives = (meal.alternatives || []).map((description) => {
+    const conf = conflictsOf(description);
+    return {
+      description,
+      safe: conf.length === 0,
+      conflictLabels: Array.from(new Set(conf.map((c) => c.label))),
+    };
+  });
+
+  // Dicas curadas por conflito (código do catálogo → fallback por categoria).
+  const swapHints = Array.from(
+    new Set(
+      mainConflicts
+        .map((c) => (c.code && SWAP_HINTS_BY_CODE[c.code]) || SWAP_HINTS_BY_KIND[c.kind])
+        .filter((h): h is string => Boolean(h)),
+    ),
+  );
+
+  return {
+    hasConflict: mainConflicts.length > 0,
+    conflicts: mainConflicts.map(({ code: _code, ...rest }) => rest),
+    alternatives,
+    swapHints,
+  };
+}

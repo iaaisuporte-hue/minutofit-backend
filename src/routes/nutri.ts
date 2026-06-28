@@ -34,6 +34,7 @@ import {
   updateProfileItem,
   deactivateProfileItem,
   checkDietAgainstProfile,
+  suggestSubstitutions,
   ValidationError,
 } from '../services/dietaryProfileService';
 
@@ -245,6 +246,28 @@ router.post(
     } catch (err: any) {
       logger.error({ err }, '[nutri] clinical-profile check error');
       res.status(500).json({ success: false, error: err.message || 'Failed to check diet' });
+    }
+  },
+);
+
+// Substituição assistida (Fase 2) — dada uma refeição, retorna conflitos,
+// quais alternativas já cadastradas são seguras e dicas curadas de troca.
+router.post(
+  '/patients/:patientId/clinical-profile/suggest',
+  requireActiveConsent('clinical_nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const meal = req.body?.meal ?? {};
+      const suggestion = await suggestSubstitutions(patientId, {
+        name: typeof meal.name === 'string' ? meal.name : '',
+        orientation: typeof meal.orientation === 'string' ? meal.orientation : '',
+        alternatives: Array.isArray(meal.alternatives) ? meal.alternatives.filter((a: unknown) => typeof a === 'string') : [],
+      });
+      res.json({ success: true, data: suggestion });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] clinical-profile suggest error');
+      res.status(500).json({ success: false, error: err.message || 'Failed to suggest substitutions' });
     }
   },
 );

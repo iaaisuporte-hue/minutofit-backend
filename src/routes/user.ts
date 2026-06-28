@@ -12,6 +12,7 @@ import {
   deletePatientNutritionData,
   type MealCheckinStatus,
 } from '../services/nutriService';
+import { getProfileForUser } from '../services/dietaryProfileService';
 import { saveSubscription, removeSubscription, getVapidPublicKey } from '../services/pushService';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
 import pool from '../config/database';
@@ -113,6 +114,17 @@ router.get('/nutrition-plan', authMiddleware, async (req: Request, res: Response
   } catch (err: any) {
     logger.error({ err: err }, '[user/nutrition-plan]');
     res.status(500).json({ success: false, error: 'Failed to load nutrition plan' });
+  }
+});
+
+// Perfil Alimentar (Spec 019) — read-only do próprio usuário.
+router.get('/dietary-profile', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const data = await getProfileForUser(req.user!.id);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    logger.error({ err: err }, '[user/dietary-profile]');
+    res.status(500).json({ success: false, error: 'Failed to load dietary profile' });
   }
 });
 

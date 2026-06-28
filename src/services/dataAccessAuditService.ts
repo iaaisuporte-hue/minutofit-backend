@@ -39,6 +39,8 @@ export type DataAccessEventType =
   | 'nutri.context.read'
   | 'nutri.meal_heatmap.read'
   | 'nutri.adherence.read'
+  | 'nutri.clinical_profile.read'
+  | 'nutri.clinical_profile.updated'
   | 'nutri.data.patient_deletion'
   | 'parq.signed'
   | 'training.adaptation.applied'

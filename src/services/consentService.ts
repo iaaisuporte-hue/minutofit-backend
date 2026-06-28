@@ -10,6 +10,7 @@ export type ConsentScope =
   | 'body_metrics'
   | 'body_photos'
   | 'nutrition'
+  | 'clinical_nutrition' // Spec 019 — perfil clínico-nutricional (alergias, condições, medicamentos)
   | 'parq_anamnese'
   | 'activity_logs'
   | 'chat_history'
@@ -18,7 +19,7 @@ export type ConsentScope =
 export type ProfessionalRole = 'personal' | 'nutri';
 
 export const DEFAULT_SCOPES_PERSONAL: ConsentScope[] = ['profile', 'workouts', 'daily_checkins'];
-export const DEFAULT_SCOPES_NUTRI: ConsentScope[] = ['profile', 'daily_checkins', 'nutrition'];
+export const DEFAULT_SCOPES_NUTRI: ConsentScope[] = ['profile', 'daily_checkins', 'nutrition', 'clinical_nutrition'];
 
 /**
  * Escopos concedidos quando o aluno entra por convite direto do profissional
@@ -33,7 +34,7 @@ export const DIRECT_INVITE_SCOPES_PERSONAL: ConsentScope[] = [
   'body_metrics', 'parq_anamnese', 'activity_logs', 'chat_history',
 ];
 export const DIRECT_INVITE_SCOPES_NUTRI: ConsentScope[] = [
-  'profile', 'nutrition', 'daily_checkins', 'metabolic',
+  'profile', 'nutrition', 'clinical_nutrition', 'daily_checkins', 'metabolic',
   'body_metrics', 'parq_anamnese', 'chat_history',
 ];
 

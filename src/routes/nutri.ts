@@ -27,6 +27,15 @@ import {
 import { listActiveConsentScopes } from '../services/consentService';
 import { listMetabolicCheckins } from '../services/metabolicCheckinService';
 import { getWorkoutStats } from '../services/workoutSessionService';
+import {
+  listCatalog,
+  getClinicalProfile,
+  addProfileItem,
+  updateProfileItem,
+  deactivateProfileItem,
+  checkDietAgainstProfile,
+  ValidationError,
+} from '../services/dietaryProfileService';
 
 const router = Router();
 
@@ -119,6 +128,125 @@ router.get(
       res.status(500).json({ success: false, error: error.message || 'Failed to load patient evolution' });
     }
   }
+);
+
+// ===========================================================================
+// Perfil Clínico-Nutricional (Spec 019)
+// ===========================================================================
+
+// Catálogo padronizado de itens (alérgenos, condições, etc.) — sem paciente,
+// não exige consent. Alimenta os chips/autocomplete do builder de perfil.
+router.get('/dietary-catalog', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const kind = typeof req.query.kind === 'string' ? req.query.kind : undefined;
+    const catalog = await listCatalog(kind);
+    res.json({ success: true, data: { catalog } });
+  } catch (err: any) {
+    logger.error({ err }, '[nutri] list dietary-catalog error');
+    res.status(500).json({ success: false, error: err.message || 'Failed to load catalog' });
+  }
+});
+
+// Leitura do perfil clínico-nutricional do paciente.
+router.get(
+  '/patients/:patientId/clinical-profile',
+  requireActiveConsent('clinical_nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const data = await getClinicalProfile(patientId, nutriId, req.ip);
+      res.json({ success: true, data });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] get clinical-profile error');
+      res.status(500).json({ success: false, error: err.message || 'Failed to load profile' });
+    }
+  },
+);
+
+// Adicionar item ao perfil.
+router.post(
+  '/patients/:patientId/clinical-profile/items',
+  requireActiveConsent('clinical_nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const academyId = (req.user as any).activeAcademyId ?? null;
+      const item = await addProfileItem(patientId, nutriId, academyId, req.body, req.ip);
+      res.status(201).json({ success: true, data: { item } });
+    } catch (err: any) {
+      if (err instanceof ValidationError) {
+        return res.status(400).json({ success: false, error: err.message });
+      }
+      logger.error({ err }, '[nutri] add clinical-profile item error');
+      res.status(500).json({ success: false, error: err.message || 'Failed to add item' });
+    }
+  },
+);
+
+// Editar item (inclui status active/inactive).
+router.patch(
+  '/patients/:patientId/clinical-profile/items/:itemId',
+  requireActiveConsent('clinical_nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const itemId = Number(req.params.itemId);
+      if (!Number.isFinite(itemId)) {
+        return res.status(400).json({ success: false, error: 'Invalid itemId' });
+      }
+      const item = await updateProfileItem(patientId, itemId, nutriId, req.body, req.ip);
+      res.json({ success: true, data: { item } });
+    } catch (err: any) {
+      if (err instanceof ValidationError) {
+        const status = err.message.includes('não encontrado') ? 404 : 400;
+        return res.status(status).json({ success: false, error: err.message });
+      }
+      logger.error({ err }, '[nutri] update clinical-profile item error');
+      res.status(500).json({ success: false, error: err.message || 'Failed to update item' });
+    }
+  },
+);
+
+// Remover item (soft-delete: status = inactive).
+router.delete(
+  '/patients/:patientId/clinical-profile/items/:itemId',
+  requireActiveConsent('clinical_nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const itemId = Number(req.params.itemId);
+      if (!Number.isFinite(itemId)) {
+        return res.status(400).json({ success: false, error: 'Invalid itemId' });
+      }
+      const ok = await deactivateProfileItem(patientId, itemId, nutriId, req.ip);
+      if (!ok) return res.status(404).json({ success: false, error: 'Item não encontrado' });
+      res.json({ success: true });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] delete clinical-profile item error');
+      res.status(500).json({ success: false, error: err.message || 'Failed to delete item' });
+    }
+  },
+);
+
+// Validar uma dieta/refeições contra o perfil → alertas de incompatibilidade.
+router.post(
+  '/patients/:patientId/clinical-profile/check',
+  requireActiveConsent('clinical_nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      const meals = Array.isArray(req.body?.meals) ? req.body.meals : [];
+      const alerts = await checkDietAgainstProfile(patientId, meals);
+      res.json({ success: true, data: { alerts } });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] clinical-profile check error');
+      res.status(500).json({ success: false, error: err.message || 'Failed to check diet' });
+    }
+  },
 );
 
 // ===========================================================================

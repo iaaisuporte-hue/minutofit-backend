@@ -1,26 +1,30 @@
 import pool from '../config/database';
 import { logDataAccessEvent } from './dataAccessAuditService';
+import {
+  type DietaryKind,
+  type Severity,
+  type PreferenceKind,
+  type AlertLevel,
+  type RawProfileRow,
+  type ConsolidatedDietaryProfile,
+  DIETARY_KINDS,
+  consolidate,
+  evaluateConflicts,
+  swapHintFor,
+} from './dietaryProfileRules';
 
 // ---------------------------------------------------------------------------
-// Perfil Clínico-Nutricional (Spec 019)
+// Perfil Clínico-Nutricional (Spec 019 + Onda B)
 // Catálogo padronizado + itens polimórficos por paciente.
+//
+// A INTERPRETAÇÃO (normalização, casamento de termos, nível de alerta,
+// consolidação) vive em `dietaryProfileRules.ts` — fonte única. Este service
+// cuida de persistência (CRUD) e orquestração, consumindo as regras puras.
+// Consumidores que precisam das regras puras importam de `dietaryProfileRules`
+// diretamente; do service consomem `getConsolidatedDietaryProfile` (o contrato).
 // ---------------------------------------------------------------------------
 
-export type DietaryKind =
-  | 'allergy'
-  | 'intolerance'
-  | 'restriction'
-  | 'preference'
-  | 'clinical_condition'
-  | 'medication';
-
-export type Severity = 'mild' | 'moderate' | 'severe';
-export type PreferenceKind = 'like' | 'avoid';
-export type AlertLevel = 'strong' | 'moderate' | 'info' | 'suggestion';
-
-const KINDS: DietaryKind[] = [
-  'allergy', 'intolerance', 'restriction', 'preference', 'clinical_condition', 'medication',
-];
+const KINDS = DIETARY_KINDS;
 const SEVERITIES: Severity[] = ['mild', 'moderate', 'severe'];
 const PREFERENCE_KINDS: PreferenceKind[] = ['like', 'avoid'];
 
@@ -71,46 +75,41 @@ export class ValidationError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Carregamento canônico do perfil (projeção de interpretação)
 // ---------------------------------------------------------------------------
 
-/** lowercase + remove acentos para casamento robusto de termos. */
-export function normalizeText(input: string): string {
-  return input
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .trim();
+/**
+ * Linhas ativas do perfil com os campos de INTERPRETAÇÃO (code, match_terms) —
+ * base do contrato consolidado. A leitura do EDITOR (catalogId/customLabel/
+ * status) usa `loadProfileItems` (outra projeção da mesma tabela).
+ */
+async function loadActiveProfileRows(userId: number): Promise<RawProfileRow[]> {
+  const { rows } = await pool.query(
+    `SELECT i.id, i.kind, i.severity, i.preference_kind,
+            COALESCE(c.name, i.custom_label) AS label,
+            c.code AS code,
+            COALESCE(c.match_terms, i.custom_label) AS match_terms,
+            i.notes
+     FROM patient_dietary_profile_items i
+     LEFT JOIN dietary_profile_catalog c ON c.id = i.catalog_id
+     WHERE i.patient_id = $1 AND i.status = 'active'
+     ORDER BY i.kind, i.created_at`,
+    [userId],
+  );
+  return rows as RawProfileRow[];
 }
 
 /**
- * Casa um termo no texto da refeição respeitando fronteira de palavra, para
- * evitar falso-positivo de substring (ex: "sal" dentro de "salada", "ovo" em
- * "novo"). O texto já vem normalizado (ascii lowercase + espaços), então a
- * fronteira por não-alfanumérico é segura inclusive para termos com espaço
- * (ex: "creme de leite").
+ * Contrato CANÔNICO de leitura do Perfil Clínico-Nutricional (Onda B).
+ * Fonte única de verdade para qualquer módulo (receitas, lista de compras,
+ * montagem de dieta, substituições, recomendações MaaS, IA). Read-only,
+ * determinístico e cache-ready (função de `userId`). Multi-tenant: isolado por
+ * `userId` — o chamador é responsável pelo gate de consent quando expõe a dado
+ * de terceiro (ver `requireActiveConsent('clinical_nutrition')` nas rotas nutri).
  */
-export function termMatches(haystack: string, term: string): boolean {
-  const esc = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(haystack);
-}
-
-/** Nível de alerta proporcional à categoria/severidade. */
-function alertLevelFor(kind: DietaryKind, severity: Severity | null, preferenceKind: PreferenceKind | null): AlertLevel | null {
-  switch (kind) {
-    case 'allergy':
-      return 'strong'; // alergia sempre forte; severe reforça no front
-    case 'intolerance':
-      return severity === 'severe' ? 'strong' : 'moderate';
-    case 'restriction':
-    case 'clinical_condition':
-    case 'medication':
-      return 'info';
-    case 'preference':
-      return preferenceKind === 'avoid' ? 'suggestion' : null; // "like" não alerta
-    default:
-      return null;
-  }
+export async function getConsolidatedDietaryProfile(userId: number): Promise<ConsolidatedDietaryProfile> {
+  const rows = await loadActiveProfileRows(userId);
+  return consolidate(userId, rows, new Date().toISOString());
 }
 
 // ---------------------------------------------------------------------------
@@ -149,32 +148,8 @@ const ITEM_SELECT = `
   LEFT JOIN dietary_profile_catalog c ON c.id = i.catalog_id
 `;
 
-export async function getClinicalProfile(
-  patientId: number,
-  nutriId: number,
-  ip?: string,
-): Promise<{ items: ProfileItem[]; hasSevereAllergy: boolean }> {
-  const { rows } = await pool.query(
-    `${ITEM_SELECT}
-     WHERE i.patient_id = $1 AND i.status = 'active'
-     ORDER BY i.kind, i.created_at`,
-    [patientId],
-  );
-  const items = rows as ProfileItem[];
-  const hasSevereAllergy = items.some((it) => it.kind === 'allergy' && it.severity === 'severe');
-  await logDataAccessEvent({
-    actorId: nutriId,
-    subjectUserId: patientId,
-    eventType: 'nutri.clinical_profile.read',
-    ip,
-  });
-  return { items, hasSevereAllergy };
-}
-
-/** Leitura read-only do próprio paciente (lado aluno). Sem auditoria de profissional. */
-export async function getProfileForUser(
-  userId: number,
-): Promise<{ items: ProfileItem[]; hasSevereAllergy: boolean }> {
+/** Itens ativos do perfil na projeção do EDITOR (ProfileItem). Caminho único de leitura de display. */
+async function loadProfileItems(userId: number): Promise<{ items: ProfileItem[]; hasSevereAllergy: boolean }> {
   const { rows } = await pool.query(
     `${ITEM_SELECT}
      WHERE i.patient_id = $1 AND i.status = 'active'
@@ -184,6 +159,29 @@ export async function getProfileForUser(
   const items = rows as ProfileItem[];
   const hasSevereAllergy = items.some((it) => it.kind === 'allergy' && it.severity === 'severe');
   return { items, hasSevereAllergy };
+}
+
+/** Leitura do perfil pelo nutri — registra acesso na auditoria. */
+export async function getClinicalProfile(
+  patientId: number,
+  nutriId: number,
+  ip?: string,
+): Promise<{ items: ProfileItem[]; hasSevereAllergy: boolean }> {
+  const result = await loadProfileItems(patientId);
+  await logDataAccessEvent({
+    actorId: nutriId,
+    subjectUserId: patientId,
+    eventType: 'nutri.clinical_profile.read',
+    ip,
+  });
+  return result;
+}
+
+/** Leitura read-only do próprio usuário (lado aluno). Sem auditoria de profissional. */
+export async function getProfileForUser(
+  userId: number,
+): Promise<{ items: ProfileItem[]; hasSevereAllergy: boolean }> {
+  return loadProfileItems(userId);
 }
 
 async function validateAndNormalize(input: ProfileItemInput): Promise<{
@@ -381,99 +379,23 @@ export async function checkDietAgainstProfile(
   patientId: number,
   meals: MealForCheck[],
 ): Promise<DietAlert[]> {
-  // Itens ativos + termos efetivos (catálogo.match_terms ou o próprio custom_label).
-  const { rows } = await pool.query(
-    `SELECT i.id, i.kind, i.severity, i.preference_kind,
-            COALESCE(c.name, i.custom_label) AS label,
-            COALESCE(c.match_terms, i.custom_label) AS match_terms
-     FROM patient_dietary_profile_items i
-     LEFT JOIN dietary_profile_catalog c ON c.id = i.catalog_id
-     WHERE i.patient_id = $1 AND i.status = 'active'`,
-    [patientId],
-  );
-
-  const profile = rows.map((r) => ({
-    kind: r.kind as DietaryKind,
-    severity: r.severity as Severity | null,
-    preferenceKind: r.preference_kind as PreferenceKind | null,
-    label: r.label as string,
-    terms: String(r.match_terms || '')
-      .split(',')
-      .map((t) => normalizeText(t))
-      .filter((t) => t.length >= 3), // termos muito curtos geram falso-positivo
-  }));
-
+  // Consome o contrato canônico + a avaliação de conflitos centralizada (rules).
+  const profile = await getConsolidatedDietaryProfile(patientId);
   const alerts: DietAlert[] = [];
-
   meals.forEach((meal, mealIndex) => {
-    const haystack = normalizeText(
-      [meal.name || '', meal.orientation || '', ...(meal.alternatives || [])].join(' · '),
-    );
-    if (!haystack) return;
-
-    for (const item of profile) {
-      const level = alertLevelFor(item.kind, item.severity, item.preferenceKind);
-      if (!level) continue;
-      const matched = item.terms.find((term) => termMatches(haystack, term));
-      if (matched) {
-        alerts.push({
-          mealIndex,
-          level,
-          kind: item.kind,
-          label: item.label,
-          matchedTerm: matched,
-        });
-      }
+    const text = [meal.name || '', meal.orientation || '', ...(meal.alternatives || [])].join(' · ');
+    for (const c of evaluateConflicts(profile, text)) {
+      alerts.push({ mealIndex, level: c.level, kind: c.kind, label: c.label, matchedTerm: c.matchedTerm });
     }
   });
-
   return alerts;
 }
 
 // ---------------------------------------------------------------------------
 // Motor de substituição assistida (Fase 2 · Onda A) — regra-baseado, AI-ready.
-// Sem catálogo de alimentos: (1) avalia as alternativas que o NUTRI já cadastrou
-// contra o perfil; (2) oferece dicas genéricas de troca por alérgeno/restrição
-// via mapa curado em código (Open/Closed — nova categoria não exige nova tabela).
+// Avalia as alternativas que o NUTRI já cadastrou e sugere dicas de troca; toda
+// a interpretação (conflito, severidade, dicas) vem de `dietaryProfileRules`.
 // ---------------------------------------------------------------------------
-
-// Dicas de troca por código de catálogo; fallback por categoria. Texto curto,
-// orientativo, nunca prescritivo automático — o nutri decide.
-const SWAP_HINTS_BY_CODE: Record<string, string> = {
-  milk: 'Bebida vegetal (amêndoas, aveia, coco, arroz) ou versão sem lactose',
-  lactose: 'Versões sem lactose ou bebidas vegetais',
-  egg: 'Tofu mexido, grão-de-bico ou substituto de ovo em receitas',
-  peanut: 'Sementes (girassol, abóbora), se não houver alergia cruzada',
-  tree_nuts: 'Sementes (girassol, abóbora) no lugar de oleaginosas',
-  soy: 'Proteína de ervilha ou grão-de-bico no lugar da soja',
-  wheat: 'Farinhas sem glúten (arroz, mandioca, milho, aveia certificada)',
-  gluten: 'Opções sem glúten: arroz, milho, mandioca, quinoa',
-  fish: 'Outra proteína conforme tolerância (frango, ovo, leguminosas)',
-  shellfish: 'Outra proteína conforme tolerância (frango, ovo, leguminosas)',
-  sesame: 'Evitar gergelim/tahine; usar pasta de girassol',
-  vegan: 'Proteína vegetal: tofu, tempeh, PTS, grão-de-bico, lentilha',
-  vegetarian: 'Proteína vegetal ou ovo/laticínio conforme aceitação',
-  gluten_free: 'Substituir por arroz, batata, mandioca, quinoa',
-  lactose_free: 'Bebidas vegetais ou laticínios sem lactose',
-  hypertension: 'Reduzir sal/sódio; temperar com ervas e especiarias',
-  diabetes_t2: 'Carboidratos integrais de baixo índice glicêmico; controlar porção',
-  diabetes_t1: 'Carboidratos integrais; ajustar conforme contagem',
-  celiac: 'Alimentos naturalmente sem glúten; atenção à contaminação cruzada',
-  gout: 'Reduzir carne vermelha, vísceras, frutos do mar e álcool',
-};
-
-const SWAP_HINTS_BY_KIND: Partial<Record<DietaryKind, string>> = {
-  allergy: 'Substituir por alimento sem o alérgeno; confirmar com o paciente',
-  intolerance: 'Versão tolerada ou alternativa que evite o componente',
-  restriction: 'Trocar pelo equivalente que respeite a restrição',
-  clinical_condition: 'Ajustar conforme a condição clínica do paciente',
-  preference: 'Oferecer alternativa que o paciente aceite melhor',
-  medication: 'Atenção a interações; orientar conforme o medicamento',
-};
-
-interface ConflictWithCode extends Omit<DietAlert, 'mealIndex'> {
-  code: string | null;
-}
 
 export interface SubstitutionSuggestion {
   hasConflict: boolean;
@@ -486,49 +408,12 @@ export async function suggestSubstitutions(
   patientId: number,
   meal: MealForCheck,
 ): Promise<SubstitutionSuggestion> {
-  const { rows } = await pool.query(
-    `SELECT i.kind, i.severity, i.preference_kind,
-            COALESCE(c.name, i.custom_label) AS label,
-            c.code AS code,
-            COALESCE(c.match_terms, i.custom_label) AS match_terms
-     FROM patient_dietary_profile_items i
-     LEFT JOIN dietary_profile_catalog c ON c.id = i.catalog_id
-     WHERE i.patient_id = $1 AND i.status = 'active'`,
-    [patientId],
-  );
-
-  const profile = rows.map((r) => ({
-    kind: r.kind as DietaryKind,
-    severity: r.severity as Severity | null,
-    preferenceKind: r.preference_kind as PreferenceKind | null,
-    label: r.label as string,
-    code: (r.code as string | null) ?? null,
-    terms: String(r.match_terms || '')
-      .split(',')
-      .map((t) => normalizeText(t))
-      .filter((t) => t.length >= 3),
-  }));
-
-  const conflictsOf = (text: string): ConflictWithCode[] => {
-    const hay = normalizeText(text);
-    const out: ConflictWithCode[] = [];
-    if (!hay) return out;
-    for (const it of profile) {
-      const level = alertLevelFor(it.kind, it.severity, it.preferenceKind);
-      if (!level) continue;
-      const matched = it.terms.find((term) => termMatches(hay, term));
-      if (matched) {
-        out.push({ level, kind: it.kind, label: it.label, matchedTerm: matched, code: it.code });
-      }
-    }
-    return out;
-  };
-
-  const mainConflicts = conflictsOf([meal.name || '', meal.orientation || ''].join(' · '));
+  const profile = await getConsolidatedDietaryProfile(patientId);
+  const mainConflicts = evaluateConflicts(profile, [meal.name || '', meal.orientation || ''].join(' · '));
 
   // Avalia as alternativas que o próprio nutri cadastrou: quais são seguras.
   const alternatives = (meal.alternatives || []).map((description) => {
-    const conf = conflictsOf(description);
+    const conf = evaluateConflicts(profile, description);
     return {
       description,
       safe: conf.length === 0,
@@ -536,18 +421,13 @@ export async function suggestSubstitutions(
     };
   });
 
-  // Dicas curadas por conflito (código do catálogo → fallback por categoria).
   const swapHints = Array.from(
-    new Set(
-      mainConflicts
-        .map((c) => (c.code && SWAP_HINTS_BY_CODE[c.code]) || SWAP_HINTS_BY_KIND[c.kind])
-        .filter((h): h is string => Boolean(h)),
-    ),
+    new Set(mainConflicts.map(swapHintFor).filter((h): h is string => Boolean(h))),
   );
 
   return {
     hasConflict: mainConflicts.length > 0,
-    conflicts: mainConflicts.map(({ code: _code, ...rest }) => rest),
+    conflicts: mainConflicts.map((c) => ({ level: c.level, kind: c.kind, label: c.label, matchedTerm: c.matchedTerm })),
     alternatives,
     swapHints,
   };

@@ -69,6 +69,7 @@ import { scheduleDataRetention } from './jobs/dataRetention';
 import { scheduleGraceExpiry } from './jobs/graceExpiry';
 import { scheduleAcademySubExpiry } from './jobs/academySubExpiry';
 import { getRedisClient } from './lib/redisClient';
+import { isStorageConfigured, warnIfStorageUnconfigured } from './lib/storage';
 import { runMigrations } from './db/runMigrations';
 
 // ---------------------------------------------------------------------------
@@ -362,6 +363,10 @@ app.get('/api/health', async (_req, res) => {
     }
   }
 
+  // Object storage (opcional — degradado graciosamente quando ausente).
+  // Sinal VISÍVEL: sem config, upload de fotos responde 503. Não é fatal.
+  checks.storage = isStorageConfigured() ? 'ok' : 'unset';
+
   // --- Checks informativos NÃO-FATAIS (não derrubam o health; só dão visibilidade
   //     ao operador). "Pagamento fora ≠ app fora": MP ausente não vira 503. ---
   const isProd = (process.env.NODE_ENV || 'development') === 'production';
@@ -452,6 +457,9 @@ runBootChain()
       logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'CoreFit Backend running');
       logger.info({ origins: allowedOrigins }, 'Allowed frontend origins');
       validateRuntimeEnv();
+
+      // Aviso não-silencioso se object storage não está configurado (fotos → 503).
+      warnIfStorageUnconfigured();
 
       // Inicializa Redis (não bloqueia o boot — falha silenciosa com fallback in-memory)
       getRedisClient();

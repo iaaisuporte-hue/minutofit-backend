@@ -15,6 +15,14 @@ import {
 import { getProfileForUser } from '../services/dietaryProfileService';
 import { saveSubscription, removeSubscription, getVapidPublicKey } from '../services/pushService';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
+import {
+  createUploadTarget,
+  registerPhoto,
+  listPhotosForUser,
+  deletePhoto,
+  type ProgressPose,
+} from '../services/progressPhotoService';
+import { StorageNotConfiguredError } from '../lib/storage';
 import pool from '../config/database';
 
 const router = Router();
@@ -292,6 +300,89 @@ router.delete('/push/subscriptions', authMiddleware, async (req: Request, res: R
   } catch (err: any) {
     logger.error({ err: err }, '[user/push/subscriptions DELETE]');
     return res.status(500).json({ success: false, error: 'Failed to remove subscription' });
+  }
+});
+
+// ===========================================================================
+// Fotos de progresso (Spec 020) — dado sensível do aluno. Dono = req.user.id;
+// a storage_key é derivada no servidor, nunca vinda do cliente. Leitura/escrita
+// sempre escopadas ao próprio usuário. (Leitura profissional fica em /personal
+// e /nutri, gated por requireActiveConsent('body_photos').)
+// ===========================================================================
+
+function handleStorageError(err: any, res: Response, ctx: string): boolean {
+  if (err instanceof StorageNotConfiguredError) {
+    logger.error({ err }, `[user/progress-photos] ${ctx} — storage não configurado`);
+    res.status(503).json({ success: false, error: 'storage_unavailable' });
+    return true;
+  }
+  return false;
+}
+
+router.post('/progress/photos/upload-url', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { contentType, byteSize } = req.body ?? {};
+    if (typeof contentType !== 'string') {
+      return res.status(400).json({ success: false, error: 'content_type_required' });
+    }
+    const target = await createUploadTarget(userId, contentType, Number(byteSize));
+    return res.json({ success: true, data: target });
+  } catch (err: any) {
+    if (handleStorageError(err, res, 'upload-url')) return;
+    if (err?.code === 'VALIDATION') {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    logger.error({ err }, '[user/progress-photos upload-url]');
+    return res.status(500).json({ success: false, error: 'Failed to create upload url' });
+  }
+});
+
+router.post('/progress/photos', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { storageKey, takenAt, pose, note } = req.body ?? {};
+    if (typeof storageKey !== 'string') {
+      return res.status(400).json({ success: false, error: 'storage_key_required' });
+    }
+    const photo = await registerPhoto(userId, {
+      storageKey,
+      takenAt: typeof takenAt === 'string' ? takenAt : undefined,
+      pose: pose as ProgressPose | undefined,
+      note: typeof note === 'string' ? note : undefined,
+    });
+    return res.status(201).json({ success: true, data: { photo } });
+  } catch (err: any) {
+    if (handleStorageError(err, res, 'register')) return;
+    if (err?.code === 'FORBIDDEN') return res.status(403).json({ success: false, error: err.message });
+    if (err?.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: err.message });
+    if (err?.code === 'VALIDATION') return res.status(400).json({ success: false, error: err.message });
+    logger.error({ err }, '[user/progress-photos register]');
+    return res.status(500).json({ success: false, error: 'Failed to register photo' });
+  }
+});
+
+router.get('/progress/photos', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const photos = await listPhotosForUser(req.user!.id);
+    return res.json({ success: true, data: { photos } });
+  } catch (err: any) {
+    if (handleStorageError(err, res, 'list')) return;
+    logger.error({ err }, '[user/progress-photos list]');
+    return res.status(500).json({ success: false, error: 'Failed to list photos' });
+  }
+});
+
+router.delete('/progress/photos/:id', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const photoId = Number(req.params.id);
+    if (!Number.isFinite(photoId)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    const ok = await deletePhoto(req.user!.id, photoId);
+    if (!ok) return res.status(404).json({ success: false, error: 'not_found' });
+    return res.json({ success: true });
+  } catch (err: any) {
+    logger.error({ err }, '[user/progress-photos delete]');
+    return res.status(500).json({ success: false, error: 'Failed to delete photo' });
   }
 });
 

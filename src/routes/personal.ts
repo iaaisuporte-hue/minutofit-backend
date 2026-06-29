@@ -27,7 +27,10 @@ import {
   listPersonalWorkoutPlans,
   listWorkoutPlansForStudent,
   reactivateWorkoutPlan,
+  assertStudentAssignedToPersonal,
 } from '../services/personalWorkoutPlanService';
+import { listPhotosForProfessional } from '../services/progressPhotoService';
+import { StorageNotConfiguredError } from '../lib/storage';
 import {
   approveWorkoutReview,
   archiveWorkoutReview,
@@ -478,6 +481,38 @@ router.post(
       res.status(500).json({ success: false, error: error.message || 'Failed to create note' });
     }
   }
+);
+
+// Fotos de progresso do aluno (Spec 020) — dado corporal sensível.
+// Acesso SÓ com consent explícito `body_photos` (nunca em default scope) +
+// vínculo ativo confirmado. Negado no backend, não escondido na UI.
+router.get(
+  '/students/:studentId/progress-photos',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('body_photos'),
+  async (req: Request, res: Response) => {
+    try {
+      const studentId = Number(req.params.studentId);
+      if (!Number.isFinite(studentId)) {
+        return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      const assigned = await assertStudentAssignedToPersonal(req.user!.id, studentId);
+      if (!assigned) {
+        return res.status(403).json({ success: false, error: 'student_not_assigned' });
+      }
+      const photos = await listPhotosForProfessional(studentId, req.user!.id, 'personal');
+      return res.json({ success: true, data: { photos } });
+    } catch (error: any) {
+      if (error instanceof StorageNotConfiguredError) {
+        return res.status(503).json({ success: false, error: 'storage_unavailable' });
+      }
+      if (error?.code === 'CONSENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: 'consent_required', scope: 'body_photos' });
+      }
+      logger.error({ err: error }, '[personal/progress-photos]');
+      return res.status(500).json({ success: false, error: 'Failed to list progress photos' });
+    }
+  },
 );
 
 router.get(

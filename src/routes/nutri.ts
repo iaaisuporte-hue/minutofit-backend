@@ -6,6 +6,8 @@ import { requireActiveConsent } from '../middleware/requireActiveConsent';
 import { createRateLimiter } from '../lib/rateLimiter';
 import pool from '../config/database';
 import logger from '../lib/logger';
+import { listPhotosForProfessional } from '../services/progressPhotoService';
+import { StorageNotConfiguredError } from '../lib/storage';
 import {
   createPlan,
   getActivePlan,
@@ -129,6 +131,33 @@ router.get(
       res.status(500).json({ success: false, error: error.message || 'Failed to load patient evolution' });
     }
   }
+);
+
+// Fotos de progresso do paciente (Spec 020) — dado corporal sensível.
+// Vínculo + consent `profile` já vêm do router.use('/patients/:patientId').
+// Aqui exigimos ADICIONALMENTE consent explícito `body_photos` (nunca default).
+router.get(
+  '/patients/:patientId/progress-photos',
+  requireActiveConsent('body_photos'),
+  async (req: Request, res: Response) => {
+    try {
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'Invalid patient id' });
+      }
+      const photos = await listPhotosForProfessional(patientId, req.user!.id, 'nutri');
+      return res.json({ success: true, data: { photos } });
+    } catch (error: any) {
+      if (error instanceof StorageNotConfiguredError) {
+        return res.status(503).json({ success: false, error: 'storage_unavailable' });
+      }
+      if (error?.code === 'CONSENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: 'consent_required', scope: 'body_photos' });
+      }
+      logger.error({ err: error }, '[nutri/progress-photos]');
+      return res.status(500).json({ success: false, error: 'Failed to load progress photos' });
+    }
+  },
 );
 
 // ===========================================================================

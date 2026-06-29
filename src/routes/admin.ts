@@ -14,6 +14,8 @@ import {
 import { findOrCreateUserFromContext } from '../services/userIdentityService';
 import { cancelMembership, expireOverdueGraces, grantMembership } from '../services/membershipService';
 import { logAcademyAction } from '../services/auditService';
+import logger from '../lib/logger';
+import { getStorage, isStorageConfigured } from '../lib/storage';
 import {
   createPlatformProtocol,
   deletePlatformProtocol,
@@ -1589,6 +1591,17 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, requireAdminPermiss
       // Tables without CASCADE that reference the user — clean up explicitly.
       await client.query(`DELETE FROM personal_direct_invites       WHERE accepted_user_id = $1`, [targetId]);
 
+      // Fotos de progresso (dado corporal sensível, LGPD art. 11): o CASCADE em
+      // progress_photos.user_id apaga as LINHAS, mas não os binários no storage.
+      // Enumeramos as storage_key DENTRO da transação; a deleção real dos objetos
+      // acontece SÓ APÓS o COMMIT (deleteObject é chamada de rede ao R2, não
+      // participa da tx — se o DELETE sofrer rollback, o storage não é tocado).
+      const photoRes = await client.query<{ storage_key: string }>(
+        `SELECT storage_key FROM progress_photos WHERE user_id = $1`,
+        [targetId],
+      );
+      const photoKeys = photoRes.rows.map((r) => r.storage_key);
+
       // Hard delete the user. Physical content tables (personal_workout_plans,
       // student_exercise_notes, workout_reviews) have ON DELETE SET NULL — they
       // survive as orphans. Everything else CASCADEs away.
@@ -1606,6 +1619,35 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, requireAdminPermiss
         meta: { adminId: req.user!.id, targetUserId: targetId, targetRole: target.role, targetEmail: target.email },
         ipAddress: req.ip,
       });
+
+      // Pós-COMMIT: purga best-effort dos objetos de storage do usuário (fotos de
+      // progresso). Só roda DEPOIS do COMMIT — o banco já está consistente; se o
+      // DELETE tivesse sofrido rollback, nenhum binário teria sido tocado. A falha
+      // de deleteObject NÃO derruba a exclusão (o direito de exclusão do aluno não
+      // fica refém do R2), mas é LOGADA com o storage_key para reconciliação —
+      // nunca fire-and-forget silencioso (senão recria o órfão invisível).
+      // TODO(Frente 1.4): job de varredura de órfãos (estender dataRetention.ts,
+      // que hoje não cobre progress_photos) consumindo este rastro de logs.
+      if (photoKeys.length > 0) {
+        if (!isStorageConfigured()) {
+          logger.error(
+            { event: 'storage_orphan_risk', reason: 'storage_not_configured', userId: targetId, storageKeys: photoKeys },
+            '[admin/users delete] storage não configurado — objetos de progress_photos podem ter ficado órfãos no bucket',
+          );
+        } else {
+          const storage = getStorage();
+          await Promise.all(
+            photoKeys.map((key) =>
+              storage.deleteObject(key).catch((delErr: any) => {
+                logger.error(
+                  { event: 'storage_orphan', userId: targetId, storageKey: key, err: delErr?.message },
+                  '[admin/users delete] falha ao deletar objeto de storage — órfão a reconciliar (TODO 1.4 sweep)',
+                );
+              }),
+            ),
+          );
+        }
+      }
 
       return res.json({ success: true, data: { deleted: true, userId: targetId } });
     } catch (e) {

@@ -974,9 +974,12 @@ router.get(
       if (!Number.isFinite(studentId)) {
         return res.status(400).json({ success: false, error: 'Invalid student id' });
       }
-      const data = await getStudentExecutionSummary(studentId);
+      const data = await getStudentExecutionSummary(req.user!.id, studentId);
       res.json({ success: true, data });
     } catch (error: any) {
+      if (error?.code === 'ASSIGNMENT_REQUIRED') {
+        return res.status(403).json({ success: false, error: error.message });
+      }
       res.status(500).json({ success: false, error: 'Failed to load training summary' });
     }
   }

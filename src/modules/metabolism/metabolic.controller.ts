@@ -1,11 +1,17 @@
 import { Router, Request, Response } from 'express';
 import { authMiddleware } from '../../middleware/auth';
+import { requireProduct } from '../../middleware/productGate';
 import { getMetabolismForUser, getMetabolismHistoryForUser } from './metabolic.service';
 import logger from '../../lib/logger';
 
 const router = Router();
 
-router.get('/me/metabolism', authMiddleware, async (req: Request, res: Response) => {
+// P0-4 da auditoria: o cálculo de metabolismo aciona IA (getMetabolicHint via
+// interpretation) — exigir o produto 'app' para não expor custo de IA a
+// qualquer autenticado. Freio anterior era só o rate limit por usuário.
+router.use(authMiddleware, requireProduct('app'));
+
+router.get('/me/metabolism', async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -20,7 +26,7 @@ router.get('/me/metabolism', authMiddleware, async (req: Request, res: Response)
   }
 });
 
-router.get('/me/metabolism/history', authMiddleware, async (req: Request, res: Response) => {
+router.get('/me/metabolism/history', async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });

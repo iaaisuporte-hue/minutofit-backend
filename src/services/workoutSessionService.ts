@@ -1,5 +1,20 @@
 import pool from '../config/database';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
+import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
+import { applyGamificationCheckinTx, invalidateAfterCheckin, type MuscleGroup } from './gamificationService';
+
+// Grupos musculares aceitos em user_workout_logs.muscle_groups (paridade com o
+// enum MuscleGroup da gamificação). Sanitizamos o que vem do cliente.
+const VALID_MUSCLE_GROUPS = new Set<MuscleGroup>([
+  'chest', 'back', 'legs', 'shoulders', 'arms', 'core', 'full_body', 'cardio', 'mobility',
+]);
+const WORKOUT_SESSION_XP = 30;
+
+function sanitizeMuscleGroups(input: unknown): MuscleGroup[] {
+  if (!Array.isArray(input)) return ['full_body'];
+  const clean = input.filter((g): g is MuscleGroup => typeof g === 'string' && VALID_MUSCLE_GROUPS.has(g as MuscleGroup));
+  return clean.length > 0 ? Array.from(new Set(clean)) : ['full_body'];
+}
 
 // Camada de execução real do treino (Spec 010). Cria a sessão (cabeçalho) +
 // séries (workout_set_logs) numa transação, derivando readiness/adaptação do
@@ -51,6 +66,14 @@ export interface CreateSessionInput {
   prescribed?: PrescribedItem[];
   /** Séries detalhadas — quando o aluno informa carga/reps reais. */
   sets?: SetLogInput[];
+  /**
+   * Quando true e o status é completed/partial, o servidor grava o log raso
+   * (user_workout_logs) + XP/streak na MESMA transação (P0-1). Substitui a
+   * antiga segunda chamada do cliente a POST /gamification/checkins.
+   */
+  awardGamification?: boolean;
+  /** Grupos musculares p/ o log raso — sanitizados; fallback ['full_body']. */
+  muscleGroups?: string[];
 }
 
 function leadingInt(v: unknown): number | null {
@@ -191,8 +214,39 @@ export async function createSession(userId: number, academyId: number | null, in
       );
     }
 
+    // Write-through de gamificação (P0-1): log raso + XP/streak na MESMA
+    // transação da execução rica. Só sessões efetivamente treinadas contam —
+    // 'started'/'abandoned' não geram XP nem streak.
+    let awarded = false;
+    let streak: number | null = null;
+    let xp: number | null = null;
+    if (input.awardGamification && (input.status === 'completed' || input.status === 'partial')) {
+      await applyGamificationCheckinTx(client, {
+        userId,
+        academyId,
+        source: 'workout',
+        xp: WORKOUT_SESSION_XP,
+        workout: {
+          workoutId: `session-${sessionId}`,
+          title: input.title ?? 'Treino',
+          muscleGroups: sanitizeMuscleGroups(input.muscleGroups),
+        },
+      });
+      const stats = await client.query(
+        `SELECT xp, current_streak FROM user_gamification_stats WHERE user_id = $1`,
+        [userId],
+      );
+      streak = Number(stats.rows[0]?.current_streak ?? 0);
+      xp = Number(stats.rows[0]?.xp ?? 0);
+      awarded = true;
+    }
+
     await client.query('COMMIT');
-    return { id: sessionId, startedAt: header.rows[0].started_at, setCount: rows.length };
+
+    // Invalidações fora da transação (nunca dentro do COMMIT).
+    if (awarded) invalidateAfterCheckin(userId);
+
+    return { id: sessionId, startedAt: header.rows[0].started_at, setCount: rows.length, streak, xp };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -269,9 +323,20 @@ export async function getWorkoutStats(userId: number) {
 /**
  * Resumo de execução de um aluno para o cockpit do personal (Spec 010 V1.1).
  * Aderência real = séries feitas ÷ séries prescritas (do snapshot), sobre as
- * últimas sessões. Consent('workouts') é aplicado na rota.
+ * últimas sessões. Consent('workouts') é aplicado na rota, MAS consent não é
+ * vínculo: um consent não revogado após o fim do acompanhamento deixaria o
+ * personal lendo execução de quem não é mais seu aluno. Exigimos também o
+ * assignment ATIVO (P0-2 da auditoria) — mesma convenção de
+ * `listPersonalWorkoutPlans`.
  */
-export async function getStudentExecutionSummary(studentId: number, limit = 8) {
+export async function getStudentExecutionSummary(personalId: number, studentId: number, limit = 8) {
+  const assigned = await assertStudentAssignedToPersonal(personalId, studentId);
+  if (!assigned) {
+    const err = new Error('Student is not assigned to this personal trainer');
+    (err as { code?: string }).code = 'ASSIGNMENT_REQUIRED';
+    throw err;
+  }
+
   const { rows } = await pool.query(
     `SELECT ws.id, ws.started_at, ws.status, ws.source, ws.readiness_level, ws.prescribed_snapshot,
             (SELECT COUNT(*) FROM workout_set_logs sl WHERE sl.session_id = ws.id AND sl.status = 'done')::int AS sets_done

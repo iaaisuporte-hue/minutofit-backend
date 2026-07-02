@@ -14,7 +14,12 @@ const router = Router();
 // armazenado por user_id. getGamificationSummary aceita academyId null.
 router.use(authMiddleware, requireProduct('app'));
 
-router.get('/summary', requireFeature('workout_history'), async (req: Request, res: Response) => {
+// P0-6 da auditoria: XP/streak/histórico do PRÓPRIO usuário são sinal de
+// aderência (mesma família de wellbeing/workout), não capacidade premium — e
+// o plano Free não concede 'workout_history', o que bloquearia o Today de um
+// aluno grátis. Fica livre (só requireProduct('app')), coerente com o
+// GET /user/workout-history, que já é aberto, e com a lógica de check-ins abaixo.
+router.get('/summary', async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
     const data = await getGamificationSummary(req.user!.id, false, academyId);

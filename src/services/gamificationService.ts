@@ -1,3 +1,4 @@
+import type { PoolClient } from 'pg';
 import pool from '../config/database';
 import { invalidateMetabolismSnapshot } from '../modules/metabolism/metabolic.service';
 import { invalidatePersonalDashboardForStudent } from './personalDashboardService';
@@ -5,7 +6,7 @@ import { invalidateReadinessSnapshot } from '../modules/readiness/readiness.serv
 import logger from '../lib/logger';
 
 type CheckinSource = 'workout' | 'activity' | 'wellbeing';
-type MuscleGroup =
+export type MuscleGroup =
   | 'chest'
   | 'back'
   | 'legs'
@@ -59,16 +60,21 @@ function normalizeLevel(xp: number) {
   return Math.max(1, Math.floor(xp / 100) + 1);
 }
 
-export async function recordGamificationCheckin(input: RecordCheckinInput) {
-  const client = await pool.connect();
+/**
+ * Núcleo transacional do check-in de gamificação (logs + streak/XP), SEM abrir
+ * transação nem disparar invalidações — o chamador é dono disso. Extraído para
+ * ser reutilizado dentro de OUTRA transação (P0-1 da auditoria: write-through
+ * da sessão de treino grava execução rica + este check-in atomicamente).
+ */
+export async function applyGamificationCheckinTx(
+  client: PoolClient,
+  input: RecordCheckinInput,
+): Promise<{ hadRow: boolean; academyId: number | null }> {
+  const academyId = input.academyId ?? null;
+  const dateKey = todayDateKey();
+  const xpEarned = Math.max(0, Number(input.xp || 0));
 
-  try {
-    await client.query('BEGIN');
-
-    const academyId = input.academyId ?? null;
-    const dateKey = todayDateKey();
-    const xpEarned = Math.max(0, Number(input.xp || 0));
-
+  {
     await client.query(
       `INSERT INTO user_gamification_stats (user_id, academy_id, xp, current_streak)
        VALUES ($1, $2, 0, 0)
@@ -209,23 +215,36 @@ export async function recordGamificationCheckin(input: RecordCheckinInput) {
       );
     }
 
+    return { hadRow, academyId };
+  }
+}
+
+/**
+ * Invalida os caches/snapshots afetados por um novo check-in (metabolismo,
+ * dashboard de qualquer personal que acompanhe o aluno, readiness). Chamado
+ * SEMPRE após o COMMIT — nunca dentro da transação.
+ */
+export function invalidateAfterCheckin(userId: number): void {
+  void invalidateMetabolismSnapshot(userId).catch((err) =>
+    logger.error({ err }, '[metabolism] invalidate snapshot error'),
+  );
+  // workout/checkin novos mudam métricas refletidas no dashboard do personal
+  // (workouts_7d, last_workout_at, current_streak, score de engajamento).
+  void invalidatePersonalDashboardForStudent(userId).catch((err) =>
+    logger.error({ err }, '[personal_dashboard] invalidate cache error'),
+  );
+  void invalidateReadinessSnapshot(userId).catch((err) =>
+    logger.error({ err }, '[readiness] invalidate snapshot error'),
+  );
+}
+
+export async function recordGamificationCheckin(input: RecordCheckinInput) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { hadRow, academyId } = await applyGamificationCheckinTx(client, input);
     await client.query('COMMIT');
-
-    void invalidateMetabolismSnapshot(input.userId).catch((err) =>
-      logger.error({ err }, '[metabolism] invalidate snapshot error'),
-    );
-
-    // Invalida o cache do dashboard de qualquer personal que acompanhe este
-    // aluno — workout/checkin novos mudam métricas refletidas no dashboard
-    // (workouts_7d, last_workout_at, current_streak, score de engajamento).
-    void invalidatePersonalDashboardForStudent(input.userId).catch((err) =>
-      logger.error({ err }, '[personal_dashboard] invalidate cache error'),
-    );
-
-    void invalidateReadinessSnapshot(input.userId).catch((err) =>
-      logger.error({ err }, '[readiness] invalidate snapshot error'),
-    );
-
+    invalidateAfterCheckin(input.userId);
     return await getGamificationSummary(input.userId, hadRow, academyId);
   } catch (error) {
     await client.query('ROLLBACK');

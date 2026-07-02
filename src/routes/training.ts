@@ -133,6 +133,10 @@ router.post('/events', async (req: Request, res: Response) => {
 // ── Execução real do treino (Spec 010) ──────────────────────────────────────
 const VALID_SOURCES = new Set(['personal', 'suggested', 'academy', 'free']);
 const VALID_STATUS = new Set(['started', 'completed', 'partial', 'abandoned']);
+// Caps de anti-abuso (P0-5). Um dia de treino real dificilmente passa de ~40
+// exercícios; cada um expande no máximo 12 séries no servidor → 200 cobre folga.
+const MAX_PRESCRIBED_ITEMS = 40;
+const MAX_SET_LOGS = 200;
 
 // POST /api/training/sessions — registra a sessão executada (caminho rápido:
 // só prescribed + status; ou detalhado: sets com carga/reps reais).
@@ -149,6 +153,15 @@ router.post('/sessions', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'invalid_status' });
     }
 
+    // P0-5 da auditoria: caps de tamanho antes do INSERT em loop. O
+    // express.json({limit:'1mb'}) global não impede milhares de itens pequenos.
+    if (Array.isArray(body.prescribed) && body.prescribed.length > MAX_PRESCRIBED_ITEMS) {
+      return res.status(400).json({ success: false, error: 'too_many_prescribed_items' });
+    }
+    if (Array.isArray(body.sets) && body.sets.length > MAX_SET_LOGS) {
+      return res.status(400).json({ success: false, error: 'too_many_sets' });
+    }
+
     const result = await createSession(userId, academyId, {
       source: body.source,
       status: body.status,
@@ -159,6 +172,8 @@ router.post('/sessions', async (req: Request, res: Response) => {
       notes: typeof body.notes === 'string' ? body.notes.slice(0, 1000) : null,
       prescribed: Array.isArray(body.prescribed) ? body.prescribed : [],
       sets: Array.isArray(body.sets) ? body.sets : undefined,
+      awardGamification: body.awardGamification === true,
+      muscleGroups: Array.isArray(body.muscleGroups) ? body.muscleGroups : undefined,
     });
 
     return res.status(201).json({ success: true, data: result });

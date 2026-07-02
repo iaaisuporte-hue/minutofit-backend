@@ -1,5 +1,6 @@
 import { type Request, type Response, type NextFunction } from 'express';
 import { hasActiveConsent, type ConsentScope, type ProfessionalRole } from '../services/consentService';
+import logger from '../lib/logger';
 
 /**
  * Garante que o profissional autenticado tem consentimento ativo do aluno
@@ -28,7 +29,16 @@ export function requireActiveConsent(scope: ConsentScope) {
     if (!role) return next(); // admin ou outro role: não restrito por consent
 
     const rawStudentId = req.params.studentId ?? req.params.patientId ?? req.params.id;
-    if (!rawStudentId) return next(); // rota não tem parâmetro de aluno/paciente: ignorar
+    if (!rawStudentId) {
+      // Fail-closed: profissional pedindo dado sensível sem que o middleware
+      // consiga resolver o titular (param com outro nome, rota mal montada) é
+      // sinal de gate incompleto — NUNCA liberar às cegas. Ver P0-3 da auditoria.
+      logger.error(
+        { path: req.originalUrl, scope, role, actorId: professional.id },
+        '[consent] titular não resolvido em rota protegida — bloqueando (fail-closed)',
+      );
+      return res.status(403).json({ error: 'consent_subject_unresolved', scope });
+    }
 
     const studentId = parseInt(rawStudentId, 10);
     if (isNaN(studentId)) return res.status(400).json({ error: 'invalid_student_id' });

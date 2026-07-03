@@ -763,6 +763,36 @@ export async function getPatientsWithSummary(nutriId: number) {
   );
   const adherenceByPatient = new Map(adherenceResult.rows.map((r) => [r.patient_id, r]));
 
+  // Aderência REAL por refeição (P1-6): sobre nutrition_meal_checkins (granular),
+  // não sobre o modelo diário legado nutrition_adherence_checkins (que só mede
+  // "apareceu no dia"). Aderente = done+substituted (=1), partial = 0.5, resto = 0.
+  // Denominador = refeições do plano × dias da janela. Só computa quando há dado
+  // granular na janela; senão fica null e o frontend cai no proxy legado.
+  const activePlanIds = plansResult.rows.map((r) => r.plan_id);
+  const mealCountByPlan = new Map<number, number>();
+  if (activePlanIds.length > 0) {
+    const mealCountRes = await pool.query(
+      `SELECT plan_id, COUNT(*)::int AS meal_count
+         FROM nutrition_plan_meals WHERE plan_id = ANY($1) GROUP BY plan_id`,
+      [activePlanIds]
+    );
+    for (const r of mealCountRes.rows) mealCountByPlan.set(r.plan_id, Number(r.meal_count));
+  }
+  const mealAdherenceRes = await pool.query(
+    `SELECT patient_id,
+            SUM(CASE WHEN status IN ('done','substituted') THEN 1 WHEN status = 'partial' THEN 0.5 ELSE 0 END)
+              FILTER (WHERE check_date >= CURRENT_DATE - 6)  AS adherent_7d,
+            COUNT(*) FILTER (WHERE check_date >= CURRENT_DATE - 6)  AS n_7d,
+            SUM(CASE WHEN status IN ('done','substituted') THEN 1 WHEN status = 'partial' THEN 0.5 ELSE 0 END)
+              FILTER (WHERE check_date >= CURRENT_DATE - 29) AS adherent_30d,
+            COUNT(*) FILTER (WHERE check_date >= CURRENT_DATE - 29) AS n_30d
+       FROM nutrition_meal_checkins
+      WHERE patient_id = ANY($1)
+      GROUP BY patient_id`,
+    [patientIds]
+  );
+  const mealAdherenceByPatient = new Map(mealAdherenceRes.rows.map((r) => [r.patient_id, r]));
+
   return patientsResult.rows.map((p) => {
     const plan = plansByPatient.get(p.id) ?? null;
     const adherence = adherenceByPatient.get(p.id) ?? null;
@@ -782,6 +812,17 @@ export async function getPatientsWithSummary(nutriId: number) {
     // riskFlag: no active plan OR no checkin in last 3 days
     const riskFlag = !plan || daysSinceLastCheckin === null || daysSinceLastCheckin > 3;
 
+    // Aderência real por refeição — null quando não há plano/refeições ou nenhum
+    // check-in granular na janela (frontend cai no proxy legado).
+    const mealsPerDay = plan ? mealCountByPlan.get(plan.plan_id) ?? 0 : 0;
+    const ma = mealAdherenceByPatient.get(p.id);
+    const mealPct = (adherent: unknown, n: unknown, days: number): number | null => {
+      if (mealsPerDay <= 0 || Number(n ?? 0) <= 0) return null;
+      return Math.min(100, Math.round((Number(adherent ?? 0) / (mealsPerDay * days)) * 100));
+    };
+    const mealAdherence7dPct = mealPct(ma?.adherent_7d, ma?.n_7d, 7);
+    const mealAdherence30dPct = mealPct(ma?.adherent_30d, ma?.n_30d, 30);
+
     return {
       id: p.id,
       name: p.name,
@@ -791,6 +832,8 @@ export async function getPatientsWithSummary(nutriId: number) {
       activePlan: plan ?? null,
       adherence7d: checkins7d,
       adherence30d: checkins30d,
+      mealAdherence7dPct,
+      mealAdherence30dPct,
       lastCheckinDate: lastCheckin,
       riskFlag,
       adherenceDropFlag,

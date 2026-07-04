@@ -14,10 +14,15 @@ const featureCatalog = [
   ['settings', 'Configuracoes', 'Configuracoes da conta e preferencias gerais.'],
   ['reports', 'Relatorios', 'Relatorios e insights de desempenho.'],
   ['diet', 'Dieta', 'Recursos de alimentacao e planejamento nutricional.'],
+  ['movement_lab', 'Lab de Movimento', 'Analise de execucao por camera (beta) — liberado tambem no Free para validacao.'],
 ] as const;
 
-/** Plano Free: sem catálogo geral de treinos / ficha — só Hoje, sugestão do dia, treinos em casa, perfil e config. */
-const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings'];
+/**
+ * Plano Free: sem catálogo geral de treinos / ficha — só Hoje, sugestão do dia,
+ * treinos em casa, perfil e config. `movement_lab` é a exceção consciente: entra
+ * no Free em modo beta para validação real do recurso (a flag é o kill-switch).
+ */
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'movement_lab'];
 
 const PRO_PRODUCT_FEATURES: string[] = [
   'today',
@@ -31,6 +36,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
   'settings',
   'suggested_training',
   'training_ai',
+  'movement_lab',
 ];
 
 const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog.map((row) => row[0]);

@@ -48,6 +48,10 @@ export type DataAccessEventType =
   | 'training.policy.updated'
   | 'push.checkin_reminder'
   | 'student.session_touchpoint.viewed'
+  | 'movement_lab.opened'
+  | 'movement_lab.camera_error'
+  | 'movement_lab.session_completed'
+  | 'movement_lab.feedback_submitted'
   | 'identity.user_created'
   | 'identity.user_reused';
 

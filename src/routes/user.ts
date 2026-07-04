@@ -14,7 +14,7 @@ import {
 } from '../services/nutriService';
 import { getProfileForUser } from '../services/dietaryProfileService';
 import { saveSubscription, removeSubscription, getVapidPublicKey } from '../services/pushService';
-import { logDataAccessEvent } from '../services/dataAccessAuditService';
+import { logDataAccessEvent, type DataAccessEventType } from '../services/dataAccessAuditService';
 import {
   createUploadTarget,
   registerPhoto,
@@ -29,17 +29,24 @@ const router = Router();
 
 // Eventos de UX do frontend do aluno — allow-list; actorId = subjectUserId = self.
 // Mede percepção real do aluno (card renderizado), não só fetch. Espelha POST /training/events.
-const ALLOWED_FRONTEND_EVENTS = new Set<string>(['student.session_touchpoint.viewed']);
+// Os eventos `movement_lab.*` instrumentam o beta do Lab de Movimento (validação).
+const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
+  'student.session_touchpoint.viewed',
+  'movement_lab.opened',
+  'movement_lab.camera_error',
+  'movement_lab.session_completed',
+  'movement_lab.feedback_submitted',
+]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {
   const { eventType, payload = {} } = req.body ?? {};
-  if (typeof eventType !== 'string' || !ALLOWED_FRONTEND_EVENTS.has(eventType)) {
+  if (typeof eventType !== 'string' || !ALLOWED_FRONTEND_EVENTS.has(eventType as DataAccessEventType)) {
     return res.status(400).json({ success: false, error: 'unknown_event' });
   }
   void logDataAccessEvent({
     actorId: req.user!.id,
     subjectUserId: req.user!.id,
-    eventType: eventType as 'student.session_touchpoint.viewed',
+    eventType: eventType as DataAccessEventType,
     eventPayload: typeof payload === 'object' && payload !== null ? payload : {},
     ip: req.ip,
   }).catch(() => {});

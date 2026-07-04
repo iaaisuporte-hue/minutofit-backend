@@ -15,6 +15,7 @@ const featureCatalog = [
   ['reports', 'Relatorios', 'Relatorios e insights de desempenho.'],
   ['diet', 'Dieta', 'Recursos de alimentacao e planejamento nutricional.'],
   ['movement_lab', 'Lab de Movimento', 'Analise de execucao por camera (beta) — liberado tambem no Free para validacao.'],
+  ['movement_lab_guided', 'Lab de Movimento — Guiado pela ficha', 'Abrir o Lab de um exercicio da ficha, contar series/reps e gravar execucao real (Spec 022). No Free por ora; flipar p/ pago = remover do Free.'],
 ] as const;
 
 /**
@@ -22,7 +23,7 @@ const featureCatalog = [
  * treinos em casa, perfil e config. `movement_lab` é a exceção consciente: entra
  * no Free em modo beta para validação real do recurso (a flag é o kill-switch).
  */
-const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'movement_lab'];
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'movement_lab', 'movement_lab_guided'];
 
 const PRO_PRODUCT_FEATURES: string[] = [
   'today',
@@ -37,6 +38,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
   'suggested_training',
   'training_ai',
   'movement_lab',
+  'movement_lab_guided',
 ];
 
 const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog.map((row) => row[0]);

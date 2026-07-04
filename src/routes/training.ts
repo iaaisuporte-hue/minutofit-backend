@@ -131,7 +131,7 @@ router.post('/events', async (req: Request, res: Response) => {
 });
 
 // ── Execução real do treino (Spec 010) ──────────────────────────────────────
-const VALID_SOURCES = new Set(['personal', 'suggested', 'academy', 'free']);
+const VALID_SOURCES = new Set(['personal', 'suggested', 'academy', 'free', 'movement_lab']);
 const VALID_STATUS = new Set(['started', 'completed', 'partial', 'abandoned']);
 // Caps de anti-abuso (P0-5). Um dia de treino real dificilmente passa de ~40
 // exercícios; cada um expande no máximo 12 séries no servidor → 200 cobre folga.

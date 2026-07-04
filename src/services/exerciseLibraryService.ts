@@ -33,6 +33,8 @@ export type Exercise = {
   instructions: string[];
   tips: string[];
   media: ExerciseMedia[];
+  /** Perfil de captura do Lab de Movimento (Spec 022); null quando não mapeado. */
+  movementLabExerciseId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -74,6 +76,7 @@ function mapExerciseRow(r: Record<string, unknown>, media: ExerciseMedia[] = [])
       : [],
     tips: Array.isArray(r.tips) ? (r.tips as string[]) : [],
     media,
+    movementLabExerciseId: r.movement_lab_exercise_id != null ? String(r.movement_lab_exercise_id) : null,
     createdAt: new Date(r.created_at as string).toISOString(),
     updatedAt: new Date(r.updated_at as string).toISOString(),
   };
@@ -93,6 +96,7 @@ function mapSummaryRow(r: Record<string, unknown>): ExerciseSummary {
     tags: Array.isArray(r.tags) ? (r.tags as string[]) : [],
     primaryMediaUrl: r.primary_media_url != null ? String(r.primary_media_url) : null,
     primaryMediaType: r.primary_media_type != null ? String(r.primary_media_type) : null,
+    movementLabExerciseId: r.movement_lab_exercise_id != null ? String(r.movement_lab_exercise_id) : null,
     createdAt: new Date(r.created_at as string).toISOString(),
     updatedAt: new Date(r.updated_at as string).toISOString(),
   };

@@ -22,8 +22,19 @@ function sanitizeMuscleGroups(input: unknown): MuscleGroup[] {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type SessionSource = 'personal' | 'suggested' | 'academy' | 'free';
+export type SessionSource = 'personal' | 'suggested' | 'academy' | 'free' | 'movement_lab';
 export type SessionStatus = 'started' | 'completed' | 'partial' | 'abandoned';
+
+/** Captura do Lab de Movimento para uma série (Spec 022). 1:1 com workout_set_logs. */
+export interface SetCaptureInput {
+  /** Reps que a IA contou antes de qualquer correção manual. */
+  detectedReps?: number | null;
+  /** true quando o aluno mexeu no número (reps_done ≠ detected_reps). */
+  corrected?: boolean;
+  avgFormScore?: number | null;
+  avgSymmetry?: number | null;
+  confidence?: string | null;
+}
 
 /** Item prescrito (snapshot) — usado p/ expandir séries quando não há detalhe. */
 export interface PrescribedItem {
@@ -52,6 +63,8 @@ export interface SetLogInput {
   substitutedFromExerciseId?: string | null;
   substitutionReason?: string | null;
   status?: 'done' | 'skipped';
+  /** Métricas do Lab de Movimento (Spec 022) — opcional; só no source movement_lab. */
+  capture?: SetCaptureInput | null;
 }
 
 export interface CreateSessionInput {
@@ -105,6 +118,24 @@ function numOrNull(v: unknown): number | null {
   if (v == null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** 0–100 int ou null — para form score / simetria do Lab. */
+function clampScore(v: unknown): number | null {
+  const n = numOrNull(v);
+  if (n == null) return null;
+  return Math.min(100, Math.max(0, Math.round(n)));
+}
+
+/** reps detectadas: 0–1000 int ou null. */
+function clampDetectedReps(v: unknown): number | null {
+  const n = numOrNull(v);
+  if (n == null) return null;
+  return Math.min(1000, Math.max(0, Math.round(n)));
+}
+
+function sanitizeConfidence(v: unknown): string | null {
+  return v === 'low' || v === 'medium' || v === 'high' ? v : null;
 }
 
 export async function createSession(userId: number, academyId: number | null, input: CreateSessionInput) {
@@ -187,12 +218,13 @@ export async function createSession(userId: number, academyId: number | null, in
     }
 
     for (const r of rows) {
-      await client.query(
+      const setLog = await client.query(
         `INSERT INTO workout_set_logs
            (session_id, exercise_id, exercise_name, order_index, set_index,
             planned_reps, reps_done, planned_load_kg, load_done_kg, planned_rest_s, rest_done_s,
             rpe, discomfort, substituted_from_exercise_id, substitution_reason, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         RETURNING id`,
         [
           sessionId,
           safeUuid(r.exerciseId),
@@ -212,6 +244,25 @@ export async function createSession(userId: number, academyId: number | null, in
           r.status === 'skipped' ? 'skipped' : 'done',
         ],
       );
+
+      // Captura do Lab (Spec 022) — só quando a série vem do modo guiado.
+      if (r.capture && typeof r.capture === 'object') {
+        const c = r.capture;
+        await client.query(
+          `INSERT INTO workout_set_capture
+             (set_log_id, detected_reps, corrected, avg_form_score, avg_symmetry, confidence)
+           VALUES ($1,$2,$3,$4,$5,$6)
+           ON CONFLICT (set_log_id) DO NOTHING`,
+          [
+            setLog.rows[0].id,
+            clampDetectedReps(c.detectedReps),
+            c.corrected === true,
+            clampScore(c.avgFormScore),
+            clampScore(c.avgSymmetry),
+            sanitizeConfidence(c.confidence),
+          ],
+        );
+      }
     }
 
     // Write-through de gamificação (P0-1): log raso + XP/streak na MESMA

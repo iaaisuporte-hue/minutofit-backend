@@ -23,6 +23,8 @@ import {
   type ProgressPose,
 } from '../services/progressPhotoService';
 import { StorageNotConfiguredError } from '../lib/storage';
+import { deleteUserAccount, exportUserData } from '../services/accountDeletionService';
+import bcryptjs from 'bcryptjs';
 import pool from '../config/database';
 
 const router = Router();
@@ -394,6 +396,57 @@ router.delete('/progress/photos/:id', authMiddleware, async (req: Request, res: 
   } catch (err: any) {
     logger.error({ err }, '[user/progress-photos delete]');
     return res.status(500).json({ success: false, error: 'Failed to delete photo' });
+  }
+});
+
+// ===========================================================================
+// Conta — Exportação e Exclusão (Spec 025 · LGPD art. 18 · blocker de loja).
+// Self-service do próprio usuário; escopado 100% por req.user.id.
+// ===========================================================================
+
+router.get('/account/export', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const data = await exportUserData(req.user!.id);
+    res.setHeader('Content-Disposition', 'attachment; filename="s2core-meus-dados.json"');
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    logger.error({ err }, '[user/account/export]');
+    return res.status(500).json({ success: false, error: 'Failed to export data' });
+  }
+});
+
+router.delete('/account', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { password, confirmation } = req.body ?? {};
+
+    if (confirmation !== 'EXCLUIR') {
+      return res.status(400).json({ success: false, error: 'confirmation_required' });
+    }
+
+    // Re-auth: se o usuário tem senha local (cadastro por email), exigir e validar.
+    // OAuth-only (Google/Apple, sem senha) → a sessão + confirmação já bastam.
+    const pwRes = await pool.query<{ password: string | null }>(
+      `SELECT password FROM users WHERE id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (pwRes.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'user_not_found' });
+    }
+    const storedHash = pwRes.rows[0].password;
+    const hasLocalPassword = typeof storedHash === 'string' && storedHash.length > 0;
+    if (hasLocalPassword) {
+      if (typeof password !== 'string' || !(await bcryptjs.compare(password, storedHash!))) {
+        return res.status(401).json({ success: false, error: 'invalid_password' });
+      }
+    }
+
+    await deleteUserAccount(userId, { requestedBy: 'self', reason: 'self_service' });
+    return res.json({ success: true });
+  } catch (err: any) {
+    if (err?.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: 'user_not_found' });
+    logger.error({ err }, '[user/account DELETE]');
+    return res.status(500).json({ success: false, error: 'Failed to delete account' });
   }
 });
 

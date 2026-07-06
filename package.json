@@ -24,7 +24,10 @@
     "lint": "eslint src --ext .ts",
     "script:backfill-protocols": "tsx src/scripts/backfillProtocolFromPlans.ts",
     "script:grant-pilot-personal-pro": "tsx src/scripts/grantPilotPersonalPro.ts",
-    "script:grant-academy-pro": "tsx src/scripts/grantAcademyPro.ts"
+    "script:grant-academy-pro": "tsx src/scripts/grantAcademyPro.ts",
+    "itest:storage": "tsx src/scripts/itest-storage.ts",
+    "itest:del": "tsx src/scripts/itest-del.ts",
+    "itest:photos-service": "tsx src/scripts/itest-photos-service.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",

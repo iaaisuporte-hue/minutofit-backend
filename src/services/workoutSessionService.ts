@@ -398,6 +398,21 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
     [studentId, Math.min(30, Math.max(1, limit))],
   );
 
+  // Desconforto relatado pelo aluno (P1-3) por sessão — quais movimentos
+  // incomodaram. Dá visibilidade ao personal do sinal de recuperação.
+  const sessionIds = rows.map((r) => r.id);
+  const discomfortMap = new Map<number, string[]>();
+  if (sessionIds.length > 0) {
+    const dq = await pool.query(
+      `SELECT session_id, ARRAY_AGG(DISTINCT exercise_name) AS names
+         FROM workout_set_logs
+        WHERE session_id = ANY($1) AND discomfort IS NOT NULL
+        GROUP BY session_id`,
+      [sessionIds],
+    );
+    for (const r of dq.rows) discomfortMap.set(Number(r.session_id), r.names ?? []);
+  }
+
   let totalDone = 0;
   let totalPrescribed = 0;
   const sessions = rows.map((r) => {
@@ -413,6 +428,7 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
       readinessLevel: r.readiness_level,
       setsDone: r.sets_done,
       prescribedSets,
+      discomfortExercises: discomfortMap.get(r.id) ?? [],
     };
   });
 

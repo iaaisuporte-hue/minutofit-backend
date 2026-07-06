@@ -68,6 +68,7 @@ import { backfillUserProducts } from './db/backfillUserProducts';
 import { scheduleDataRetention } from './jobs/dataRetention';
 import { scheduleGraceExpiry } from './jobs/graceExpiry';
 import { scheduleAcademySubExpiry } from './jobs/academySubExpiry';
+import { scheduleStorageOrphanSweep } from './jobs/storageOrphanSweep';
 import { getRedisClient } from './lib/redisClient';
 import { isStorageConfigured, warnIfStorageUnconfigured } from './lib/storage';
 import { runMigrations } from './db/runMigrations';
@@ -472,6 +473,9 @@ runBootChain()
 
       // Job de auto-expiração da assinatura da academia — Pro vencido vira Free (Spec 018)
       scheduleAcademySubExpiry();
+
+      // Job de varredura de órfãos de storage — LGPD (Spec 023; 45s após boot, a cada 6h)
+      scheduleStorageOrphanSweep();
     });
   })
   .catch((err) => {

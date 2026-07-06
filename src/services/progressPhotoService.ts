@@ -12,8 +12,9 @@
  */
 import { randomUUID } from 'crypto';
 import pool from '../config/database';
-import { getStorage, assertStorageConfigured } from '../lib/storage';
+import { getStorage, assertStorageConfigured, isStorageConfigured } from '../lib/storage';
 import { hasActiveConsent, type ProfessionalRole } from './consentService';
+import { recordStorageOrphan } from './storageOrphanService';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 const UPLOAD_URL_TTL = 300; // s
@@ -165,6 +166,16 @@ export async function deletePhoto(userId: number, photoId: number): Promise<bool
     [photoId, userId],
   );
   if (rows.length === 0) return false;
-  await getStorage().deleteObject(rows[0].storage_key).catch(() => {});
+  // Best-effort: a foto já saiu da galeria (soft-delete). A deleção do objeto no
+  // storage não pode derrubar o fluxo — se falhar (ou não puder ser tentada agora),
+  // vira órfão rastreável (Spec 023) e o job reconcilia depois.
+  const storageKey = rows[0].storage_key;
+  if (!isStorageConfigured()) {
+    await recordStorageOrphan(storageKey, 'storage_not_configured', { userId });
+  } else {
+    await getStorage()
+      .deleteObject(storageKey)
+      .catch((err: any) => recordStorageOrphan(storageKey, 'student_delete', { userId }, err?.message));
+  }
   return true;
 }

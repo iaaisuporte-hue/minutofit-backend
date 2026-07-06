@@ -16,6 +16,7 @@ import { cancelMembership, expireOverdueGraces, grantMembership } from '../servi
 import { logAcademyAction } from '../services/auditService';
 import logger from '../lib/logger';
 import { getStorage, isStorageConfigured } from '../lib/storage';
+import { recordStorageOrphan, getStorageOrphanSummary } from '../services/storageOrphanService';
 import {
   createPlatformProtocol,
   deletePlatformProtocol,
@@ -1624,26 +1625,22 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, requireAdminPermiss
       // progresso). Só roda DEPOIS do COMMIT — o banco já está consistente; se o
       // DELETE tivesse sofrido rollback, nenhum binário teria sido tocado. A falha
       // de deleteObject NÃO derruba a exclusão (o direito de exclusão do aluno não
-      // fica refém do R2), mas é LOGADA com o storage_key para reconciliação —
-      // nunca fire-and-forget silencioso (senão recria o órfão invisível).
-      // TODO(Frente 1.4): job de varredura de órfãos (estender dataRetention.ts,
-      // que hoje não cobre progress_photos) consumindo este rastro de logs.
+      // fica refém do R2), mas é REGISTRADA em storage_orphans (Spec 023) para o job
+      // de varredura reconciliar — nunca fire-and-forget silencioso.
       if (photoKeys.length > 0) {
         if (!isStorageConfigured()) {
-          logger.error(
-            { event: 'storage_orphan_risk', reason: 'storage_not_configured', userId: targetId, storageKeys: photoKeys },
-            '[admin/users delete] storage não configurado — objetos de progress_photos podem ter ficado órfãos no bucket',
+          await Promise.all(
+            photoKeys.map((key) => recordStorageOrphan(key, 'storage_not_configured', { userId: targetId })),
           );
         } else {
           const storage = getStorage();
           await Promise.all(
             photoKeys.map((key) =>
-              storage.deleteObject(key).catch((delErr: any) => {
-                logger.error(
-                  { event: 'storage_orphan', userId: targetId, storageKey: key, err: delErr?.message },
-                  '[admin/users delete] falha ao deletar objeto de storage — órfão a reconciliar (TODO 1.4 sweep)',
-                );
-              }),
+              storage
+                .deleteObject(key)
+                .catch((delErr: any) =>
+                  recordStorageOrphan(key, 'admin_user_delete', { userId: targetId }, delErr?.message),
+                ),
             ),
           );
         }
@@ -1660,6 +1657,25 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, requireAdminPermiss
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Observabilidade (Spec 023): contagem agregada de órfãos de storage a reconciliar.
+// NUNCA lista `storage_key` (evita expor caminhos de dados sensíveis). Mesma
+// permissão do delete de usuário (quem pode deletar, pode ver a saúde da purga).
+router.get(
+  '/storage-orphans/summary',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.users.delete'),
+  async (_req: Request, res: Response) => {
+    try {
+      const summary = await getStorageOrphanSummary();
+      return res.json({ success: true, data: summary });
+    } catch (err: any) {
+      logger.error({ err: err?.message }, '[admin/storage-orphans/summary]');
+      return res.status(500).json({ success: false, error: 'Failed to load storage orphans summary' });
+    }
+  },
+);
 
 router.delete(
   '/workout-protocols/platform/:protocolId',

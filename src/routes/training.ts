@@ -1,6 +1,8 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, RequestHandler } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
+import { requireFeature } from '../middleware/featureGate';
+import { createRateLimiter } from '../lib/rateLimiter';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { PersonalPrescriptionSource } from '../modules/training/adaptive/personal.source';
 import { adaptWorkoutDay, assertSafeAdaptation } from '../modules/training/adaptive/adaptation.transformer';
@@ -131,16 +133,38 @@ router.post('/events', async (req: Request, res: Response) => {
 });
 
 // ── Execução real do treino (Spec 010) ──────────────────────────────────────
+// O cliente envia a ORIGEM do treino; a natureza retroativa (source
+// 'user_retroactive') é stampada pelo servidor (Spec 024), não aceita do cliente.
 const VALID_SOURCES = new Set(['personal', 'suggested', 'academy', 'free', 'movement_lab']);
 const VALID_STATUS = new Set(['started', 'completed', 'partial', 'abandoned']);
 // Caps de anti-abuso (P0-5). Um dia de treino real dificilmente passa de ~40
 // exercícios; cada um expande no máximo 12 séries no servidor → 200 cobre folga.
 const MAX_PRESCRIBED_ITEMS = 40;
 const MAX_SET_LOGS = 200;
+const RETRO_WINDOW_DAYS = 3;
+
+// Registro retroativo (Spec 024): kill-switch por feature + teto de 3/24h por
+// usuário. Só incide quando o payload traz `performedAt` — o fluxo ao vivo passa
+// reto, sem regressão de comportamento.
+const retroFeatureGate = requireFeature('retro_workout_enabled');
+const retroRateLimiter = createRateLimiter({
+  storeKey: 'retro_workout',
+  keyFn: (req) => `user:${req.user!.id}`,
+  limit: 3,
+  windowSeconds: 24 * 3600,
+  errorMessage: 'Limite de registros retroativos atingido. Tente novamente mais tarde.',
+});
+const retroOnly = (mw: RequestHandler): RequestHandler => (req, res, next) =>
+  req.body?.performedAt != null ? mw(req, res, next) : next();
+
+const utcDayMs = (key: string): number => {
+  const [y, m, d] = key.split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+};
 
 // POST /api/training/sessions — registra a sessão executada (caminho rápido:
 // só prescribed + status; ou detalhado: sets com carga/reps reais).
-router.post('/sessions', async (req: Request, res: Response) => {
+router.post('/sessions', retroOnly(retroFeatureGate), retroOnly(retroRateLimiter), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
@@ -162,6 +186,34 @@ router.post('/sessions', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'too_many_sets' });
     }
 
+    // Validação do modo retroativo (Spec 024). Ausência de performedAt = ao vivo.
+    let performedAt: Date | null = null;
+    let confirmationAccepted = false;
+    if (body.performedAt != null) {
+      if (typeof body.performedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body.performedAt)) {
+        return res.status(400).json({ success: false, error: 'invalid_performed_at' });
+      }
+      // Âncora ao meio-dia UTC: não vira de dia ao fazer ::date em nenhum fuso.
+      const anchored = new Date(`${body.performedAt}T12:00:00Z`);
+      if (Number.isNaN(anchored.getTime())) {
+        return res.status(400).json({ success: false, error: 'invalid_performed_at' });
+      }
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const diffDays = Math.round((utcDayMs(todayKey) - utcDayMs(body.performedAt)) / (24 * 60 * 60 * 1000));
+      if (diffDays < 0) {
+        return res.status(400).json({ success: false, error: 'performed_at_in_future' });
+      }
+      if (diffDays > RETRO_WINDOW_DAYS) {
+        return res.status(400).json({ success: false, error: 'retro_window_exceeded' });
+      }
+      // Aceite de honestidade obrigatório server-side (não confiar só na UI).
+      if (diffDays >= 1 && body.confirmedHonesty !== true) {
+        return res.status(400).json({ success: false, error: 'honesty_confirmation_required' });
+      }
+      performedAt = anchored;
+      confirmationAccepted = body.confirmedHonesty === true;
+    }
+
     const result = await createSession(userId, academyId, {
       source: body.source,
       status: body.status,
@@ -174,10 +226,20 @@ router.post('/sessions', async (req: Request, res: Response) => {
       sets: Array.isArray(body.sets) ? body.sets : undefined,
       awardGamification: body.awardGamification === true,
       muscleGroups: Array.isArray(body.muscleGroups) ? body.muscleGroups : undefined,
+      performedAt,
+      retroactiveReason: typeof body.retroactiveReason === 'string' ? body.retroactiveReason.slice(0, 280) : null,
+      confirmationAccepted,
     });
 
     return res.status(201).json({ success: true, data: result });
   } catch (err: any) {
+    // Defesa em profundidade: o serviço revalida a janela e lança códigos.
+    if (err?.code === 'PERFORMED_AT_IN_FUTURE') {
+      return res.status(400).json({ success: false, error: 'performed_at_in_future' });
+    }
+    if (err?.code === 'RETRO_WINDOW_EXCEEDED') {
+      return res.status(400).json({ success: false, error: 'retro_window_exceeded' });
+    }
     logger.error({ err }, '[training] POST /sessions error');
     return res.status(500).json({ success: false, error: 'Failed to register session' });
   }

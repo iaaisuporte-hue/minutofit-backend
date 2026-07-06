@@ -38,6 +38,16 @@ export type RecordCheckinInput = {
   academyId?: number | null;
   source: CheckinSource;
   xp: number;
+  /**
+   * Dia do check-in (YYYY-MM-DD). Default = hoje. Registro retroativo (Spec 024)
+   * passa a data real do treino para creditar streak/XP no dia correto.
+   */
+  dateKey?: string;
+  /**
+   * Timestamp gravado em user_workout_logs.completed_at (base de aderência).
+   * Default = CURRENT_TIMESTAMP. Retroativo passa a data/hora real do treino.
+   */
+  completedAt?: Date | null;
   workout?: {
     workoutId: string;
     title: string;
@@ -60,6 +70,70 @@ function normalizeLevel(xp: number) {
   return Math.max(1, Math.floor(xp / 100) + 1);
 }
 
+// ── Helpers de data/streak (puros — testáveis sem banco, Spec 024) ────────────
+
+/** Normaliza um valor de data (Date do pg ou string) para 'YYYY-MM-DD'. */
+export function toDateKey(value: Date | string | null | undefined): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) {
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+function keyToUtcMs(key: string): number {
+  const [y, m, d] = key.slice(0, 10).split('-').map(Number);
+  return Date.UTC(y, m - 1, d);
+}
+
+function utcMsToKey(ms: number): string {
+  const d = new Date(ms);
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Próximo streak ao registrar `newDateKey` sobre `previousDateKey` (a última
+ * data com check-in). Regra atual do produto: +1 só quando é exatamente o dia
+ * seguinte; qualquer outro gap reinicia em 1; sem histórico começa em 1.
+ * Usar SOMENTE quando newDateKey >= previousDateKey (avanço da âncora).
+ */
+export function computeNextStreak(
+  previousDateKey: string | null,
+  newDateKey: string,
+  currentStreak: number,
+): number {
+  if (!previousDateKey) return 1;
+  const diff = Math.floor((keyToUtcMs(newDateKey) - keyToUtcMs(previousDateKey)) / ONE_DAY_MS);
+  return diff === 1 ? Math.max(0, currentStreak) + 1 : 1;
+}
+
+/**
+ * Conta a corrida de dias consecutivos com check-in que TERMINA em `anchorKey`,
+ * varrendo para trás enquanto houver o dia imediatamente anterior. Usado para
+ * reparar o streak quando um registro retroativo emenda uma lacuna sem regredir
+ * a âncora (last_checkin_date). `keys` = date_keys distintos (qualquer ordem).
+ */
+export function computeStreakRunEndingAt(keys: string[], anchorKey: string): number {
+  const set = new Set(keys.map((k) => k.slice(0, 10)));
+  const anchor = anchorKey.slice(0, 10);
+  if (!set.has(anchor)) return 0;
+  let run = 0;
+  let cursorMs = keyToUtcMs(anchor);
+  while (set.has(utcMsToKey(cursorMs))) {
+    run += 1;
+    cursorMs -= ONE_DAY_MS;
+  }
+  return run;
+}
+
 /**
  * Núcleo transacional do check-in de gamificação (logs + streak/XP), SEM abrir
  * transação nem disparar invalidações — o chamador é dono disso. Extraído para
@@ -71,7 +145,7 @@ export async function applyGamificationCheckinTx(
   input: RecordCheckinInput,
 ): Promise<{ hadRow: boolean; academyId: number | null }> {
   const academyId = input.academyId ?? null;
-  const dateKey = todayDateKey();
+  const dateKey = input.dateKey ?? todayDateKey();
   const xpEarned = Math.max(0, Number(input.xp || 0));
 
   {
@@ -84,9 +158,16 @@ export async function applyGamificationCheckinTx(
 
     if (input.workout) {
       await client.query(
-        `INSERT INTO user_workout_logs (user_id, academy_id, workout_id, title, muscle_groups)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [input.userId, academyId, input.workout.workoutId, input.workout.title, input.workout.muscleGroups],
+        `INSERT INTO user_workout_logs (user_id, academy_id, workout_id, title, muscle_groups, completed_at)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, CURRENT_TIMESTAMP))`,
+        [
+          input.userId,
+          academyId,
+          input.workout.workoutId,
+          input.workout.title,
+          input.workout.muscleGroups,
+          input.completedAt ?? null,
+        ],
       );
     }
 
@@ -186,26 +267,39 @@ export async function applyGamificationCheckinTx(
       );
 
       const stats = statsResult.rows[0] || { xp: 0, current_streak: 0, last_checkin_date: null };
-      const previousDate = stats.last_checkin_date ? new Date(stats.last_checkin_date) : null;
-      const currentDate = new Date(dateKey);
-
-      let nextStreak = Number(stats.current_streak || 0);
-      if (!previousDate) {
-        nextStreak = 1;
-      } else {
-        const previousUtc = Date.UTC(previousDate.getFullYear(), previousDate.getMonth(), previousDate.getDate());
-        const currentUtc = Date.UTC(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate());
-        const diffDays = Math.floor((currentUtc - previousUtc) / (1000 * 60 * 60 * 24));
-        nextStreak = diffDays === 1 ? nextStreak + 1 : 1;
-      }
-
+      const previousDateKey = toDateKey(stats.last_checkin_date);
       const nextXp = Number(stats.xp || 0) + xpForThisEvent;
-      await client.query(
-        `UPDATE user_gamification_stats
-         SET xp = $2, current_streak = $3, last_checkin_date = $4::date, updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = $1`,
-        [input.userId, nextXp, nextStreak, dateKey],
-      );
+
+      if (previousDateKey && dateKey < previousDateKey) {
+        // Retroativo preenchendo lacuna no passado (Spec 024): NUNCA regride a
+        // âncora last_checkin_date. Recalcula a corrida de dias consecutivos que
+        // termina na última data conhecida — o check-in de `dateKey` já foi
+        // UPSERTado acima, então entra na varredura e emenda a lacuna.
+        const distinct = await client.query<{ date_key: Date | string }>(
+          `SELECT DISTINCT date_key FROM user_daily_checkins
+             WHERE user_id = $1 AND date_key <= $2::date
+             ORDER BY date_key DESC
+             LIMIT 366`,
+          [input.userId, previousDateKey],
+        );
+        const keys = distinct.rows.map((r) => toDateKey(r.date_key)!).filter(Boolean);
+        const recalculated = computeStreakRunEndingAt(keys, previousDateKey);
+        await client.query(
+          `UPDATE user_gamification_stats
+           SET xp = $2, current_streak = $3, updated_at = CURRENT_TIMESTAMP
+           WHERE user_id = $1`,
+          [input.userId, nextXp, recalculated],
+        );
+      } else {
+        // Registro normal ou retro "à frente" da âncora → avança e move a âncora.
+        const nextStreak = computeNextStreak(previousDateKey, dateKey, Number(stats.current_streak || 0));
+        await client.query(
+          `UPDATE user_gamification_stats
+           SET xp = $2, current_streak = $3, last_checkin_date = $4::date, updated_at = CURRENT_TIMESTAMP
+           WHERE user_id = $1`,
+          [input.userId, nextXp, nextStreak, dateKey],
+        );
+      }
     } else if (xpForThisEvent > 0) {
       await client.query(
         `UPDATE user_gamification_stats

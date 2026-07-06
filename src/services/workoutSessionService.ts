@@ -22,7 +22,7 @@ function sanitizeMuscleGroups(input: unknown): MuscleGroup[] {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type SessionSource = 'personal' | 'suggested' | 'academy' | 'free' | 'movement_lab';
+export type SessionSource = 'personal' | 'suggested' | 'academy' | 'free' | 'movement_lab' | 'user_retroactive';
 export type SessionStatus = 'started' | 'completed' | 'partial' | 'abandoned';
 
 /** Captura do Lab de Movimento para uma série (Spec 022). 1:1 com workout_set_logs. */
@@ -87,6 +87,17 @@ export interface CreateSessionInput {
   awardGamification?: boolean;
   /** Grupos musculares p/ o log raso — sanitizados; fallback ['full_body']. */
   muscleGroups?: string[];
+  /**
+   * Registro retroativo (Spec 024): data/hora real do treino. Ausente = agora
+   * (fluxo ao vivo intacto). Quando anterior a hoje, a sessão é marcada como
+   * retroativa (source='user_retroactive', is_retroactive=true) e readiness/
+   * adaptação NÃO são vinculados (o snapshot é de hoje, não da data real).
+   */
+  performedAt?: Date | null;
+  /** Motivo opcional do registro tardio (≤280). */
+  retroactiveReason?: string | null;
+  /** Aceite de honestidade do aluno — persistido para auditoria. */
+  confirmationAccepted?: boolean;
 }
 
 function leadingInt(v: unknown): number | null {
@@ -141,15 +152,42 @@ function sanitizeConfidence(v: unknown): string | null {
 export async function createSession(userId: number, academyId: number | null, input: CreateSessionInput) {
   const client = await pool.connect();
   try {
+    // Retroativo (Spec 024): data real vs hoje, em dias de calendário (UTC — mesma
+    // convenção do todayDateKey da gamificação). diffDays: 0 = hoje (fluxo normal);
+    // 1..3 = retro; <0 = futuro; >3 = fora da janela. A rota já validou, mas
+    // revalidamos aqui (defesa em profundidade — o serviço é chamado direto em testes).
+    const now = new Date();
+    const performedAt = input.performedAt ?? now;
+    const performedKey = performedAt.toISOString().slice(0, 10);
+    const todayKey = now.toISOString().slice(0, 10);
+    const utcMs = (k: string) => { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+    const diffDays = Math.round((utcMs(todayKey) - utcMs(performedKey)) / (24 * 60 * 60 * 1000));
+    if (diffDays < 0) {
+      const err = new Error('performed_at is in the future');
+      (err as { code?: string }).code = 'PERFORMED_AT_IN_FUTURE';
+      throw err;
+    }
+    if (diffDays > 3) {
+      const err = new Error('performed_at is older than the retro window');
+      (err as { code?: string }).code = 'RETRO_WINDOW_EXCEEDED';
+      throw err;
+    }
+    const isRetroactive = diffDays >= 1;
+    // O servidor stampa a natureza retroativa; a origem do conteúdo (ficha/
+    // sugerido/avulso) permanece em plan_id/prescribed_snapshot/muscle_groups.
+    const storedSource: SessionSource = isRetroactive ? 'user_retroactive' : input.source;
+
     await client.query('BEGIN');
 
-    // Deriva personal + adaptação do dia (quando há plano), e readiness de hoje.
+    // Deriva personal (quando há plano). Adaptação/readiness só no fluxo ao vivo:
+    // no retroativo o snapshot de readiness é de hoje, não da data real — não vincular.
     let personalId: number | null = null;
     let adaptationLogId: number | null = null;
+    let readinessLevel: string | null = null;
     if (input.planId) {
       const plan = await client.query(`SELECT personal_id FROM personal_workout_plans WHERE id = $1`, [input.planId]);
       personalId = plan.rows[0]?.personal_id ?? null;
-      if (input.dayIndex != null) {
+      if (!isRetroactive && input.dayIndex != null) {
         const adap = await client.query(
           `SELECT id FROM workout_adaptation_log
            WHERE student_id = $1 AND plan_id = $2 AND day_index = $3 AND snapshot_date = CURRENT_DATE
@@ -160,12 +198,13 @@ export async function createSession(userId: number, academyId: number | null, in
       }
     }
 
-    let readinessLevel: string | null = null;
-    try {
-      const r = await getReadinessLensToday(userId);
-      readinessLevel = r?.level ?? null;
-    } catch {
-      readinessLevel = null;
+    if (!isRetroactive) {
+      try {
+        const r = await getReadinessLensToday(userId);
+        readinessLevel = r?.level ?? null;
+      } catch {
+        readinessLevel = null;
+      }
     }
 
     const prescribed = Array.isArray(input.prescribed) ? input.prescribed : [];
@@ -173,14 +212,15 @@ export async function createSession(userId: number, academyId: number | null, in
     const header = await client.query(
       `INSERT INTO workout_sessions
          (user_id, academy_id, personal_id, source, plan_id, day_index, adaptation_log_id,
-          readiness_level, prescribed_snapshot, status, session_rpe, title, ended_at, notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14)
-       RETURNING id, started_at`,
+          readiness_level, prescribed_snapshot, status, session_rpe, title, started_at, ended_at, notes,
+          performed_at, is_retroactive, retroactive_reason, confirmation_accepted)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       RETURNING id, started_at, performed_at`,
       [
         userId,
         academyId,
         personalId,
-        input.source,
+        storedSource,
         input.planId ?? null,
         input.dayIndex ?? null,
         adaptationLogId,
@@ -189,8 +229,14 @@ export async function createSession(userId: number, academyId: number | null, in
         input.status,
         clampRpe(input.sessionRpe),
         input.title ?? null,
-        input.status === 'started' ? null : new Date(),
+        // Retro: started_at = data real (todos os leitores usam started_at).
+        performedAt,
+        input.status === 'started' ? null : performedAt,
         input.notes ?? null,
+        performedAt,
+        isRetroactive,
+        input.retroactiveReason ? String(input.retroactiveReason).slice(0, 280) : null,
+        input.confirmationAccepted === true,
       ],
     );
     const sessionId: number = header.rows[0].id;
@@ -268,36 +314,72 @@ export async function createSession(userId: number, academyId: number | null, in
     // Write-through de gamificação (P0-1): log raso + XP/streak na MESMA
     // transação da execução rica. Só sessões efetivamente treinadas contam —
     // 'started'/'abandoned' não geram XP nem streak.
-    let awarded = false;
+    //
+    // Retroativo (Spec 024): D-0/D-1 recebem streak+XP na data real (o motor de
+    // streak nunca regride a âncora); D-2/D-3 contam só para histórico/aderência
+    // (grava user_workout_logs com completed_at real, sem check-in/streak/XP —
+    // anti-farming). A dedup por dia distinto no score metabólico já evita dupla
+    // contagem quando há log raso + sessão na mesma data.
+    let shouldInvalidate = false;
+    let countedForStreak = false;
     let streak: number | null = null;
     let xp: number | null = null;
     if (input.awardGamification && (input.status === 'completed' || input.status === 'partial')) {
-      await applyGamificationCheckinTx(client, {
-        userId,
-        academyId,
-        source: 'workout',
-        xp: WORKOUT_SESSION_XP,
-        workout: {
-          workoutId: `session-${sessionId}`,
-          title: input.title ?? 'Treino',
-          muscleGroups: sanitizeMuscleGroups(input.muscleGroups),
-        },
-      });
-      const stats = await client.query(
-        `SELECT xp, current_streak FROM user_gamification_stats WHERE user_id = $1`,
-        [userId],
-      );
-      streak = Number(stats.rows[0]?.current_streak ?? 0);
-      xp = Number(stats.rows[0]?.xp ?? 0);
-      awarded = true;
+      if (diffDays <= 1) {
+        await applyGamificationCheckinTx(client, {
+          userId,
+          academyId,
+          source: 'workout',
+          xp: WORKOUT_SESSION_XP,
+          dateKey: isRetroactive ? performedKey : undefined,
+          completedAt: isRetroactive ? performedAt : undefined,
+          workout: {
+            workoutId: `session-${sessionId}`,
+            title: input.title ?? 'Treino',
+            muscleGroups: sanitizeMuscleGroups(input.muscleGroups),
+          },
+        });
+        const stats = await client.query(
+          `SELECT xp, current_streak FROM user_gamification_stats WHERE user_id = $1`,
+          [userId],
+        );
+        streak = Number(stats.rows[0]?.current_streak ?? 0);
+        xp = Number(stats.rows[0]?.xp ?? 0);
+        countedForStreak = true;
+        shouldInvalidate = true;
+      } else {
+        // D-2/D-3: histórico + aderência, sem check-in diário (streak/XP intactos).
+        await client.query(
+          `INSERT INTO user_workout_logs (user_id, academy_id, workout_id, title, muscle_groups, completed_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            userId,
+            academyId,
+            `session-${sessionId}`,
+            input.title ?? 'Treino',
+            sanitizeMuscleGroups(input.muscleGroups),
+            performedAt,
+          ],
+        );
+        shouldInvalidate = true;
+      }
     }
 
     await client.query('COMMIT');
 
     // Invalidações fora da transação (nunca dentro do COMMIT).
-    if (awarded) invalidateAfterCheckin(userId);
+    if (shouldInvalidate) invalidateAfterCheckin(userId);
 
-    return { id: sessionId, startedAt: header.rows[0].started_at, setCount: rows.length, streak, xp };
+    return {
+      id: sessionId,
+      startedAt: header.rows[0].started_at,
+      performedAt: header.rows[0].performed_at,
+      isRetroactive,
+      countedForStreak,
+      setCount: rows.length,
+      streak,
+      xp,
+    };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -309,11 +391,11 @@ export async function createSession(userId: number, academyId: number | null, in
 export async function listSessions(userId: number, limit = 50) {
   const { rows } = await pool.query(
     `SELECT id, source, plan_id, day_index, readiness_level, status, session_rpe,
-            title, started_at, ended_at,
+            title, started_at, ended_at, performed_at, is_retroactive,
             (SELECT COUNT(*) FROM workout_set_logs sl WHERE sl.session_id = ws.id AND sl.status = 'done') AS sets_done
        FROM workout_sessions ws
       WHERE user_id = $1
-      ORDER BY started_at DESC
+      ORDER BY performed_at DESC
       LIMIT $2`,
     [userId, Math.min(200, Math.max(1, limit))],
   );
@@ -389,11 +471,12 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
   }
 
   const { rows } = await pool.query(
-    `SELECT ws.id, ws.started_at, ws.status, ws.source, ws.readiness_level, ws.prescribed_snapshot,
+    `SELECT ws.id, ws.started_at, ws.performed_at, ws.is_retroactive, ws.created_at,
+            ws.status, ws.source, ws.readiness_level, ws.prescribed_snapshot,
             (SELECT COUNT(*) FROM workout_set_logs sl WHERE sl.session_id = ws.id AND sl.status = 'done')::int AS sets_done
        FROM workout_sessions ws
       WHERE ws.user_id = $1 AND ws.status IN ('completed', 'partial')
-      ORDER BY ws.started_at DESC
+      ORDER BY ws.performed_at DESC
       LIMIT $2`,
     [studentId, Math.min(30, Math.max(1, limit))],
   );
@@ -422,7 +505,11 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
     totalPrescribed += prescribedSets;
     return {
       id: r.id,
-      date: r.started_at,
+      // Data real do treino (retro usa performed_at); createdAt desambigua quando
+      // o registro foi feito depois do dia (o personal não confunde com tempo real).
+      date: r.performed_at,
+      createdAt: r.created_at,
+      isRetroactive: r.is_retroactive === true,
       status: r.status,
       source: r.source,
       readinessLevel: r.readiness_level,
@@ -435,7 +522,7 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
   const adherencePct = totalPrescribed > 0 ? Math.round((totalDone / totalPrescribed) * 100) : null;
 
   const freq = await pool.query(
-    `SELECT COUNT(*) FILTER (WHERE started_at >= now() - interval '7 days')::int AS last_7d,
+    `SELECT COUNT(*) FILTER (WHERE performed_at >= now() - interval '7 days')::int AS last_7d,
             COUNT(*)::int AS total
        FROM workout_sessions
       WHERE user_id = $1 AND status IN ('completed', 'partial')`,

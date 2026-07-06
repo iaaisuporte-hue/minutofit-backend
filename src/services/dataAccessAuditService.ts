@@ -52,6 +52,10 @@ export type DataAccessEventType =
   | 'movement_lab.camera_error'
   | 'movement_lab.session_completed'
   | 'movement_lab.feedback_submitted'
+  | 'retro_workout.opened'
+  | 'retro_workout.date_selected'
+  | 'retro_workout.submitted'
+  | 'retro_workout.blocked_over_limit'
   | 'identity.user_created'
   | 'identity.user_reused';
 

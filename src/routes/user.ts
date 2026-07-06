@@ -36,6 +36,10 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'movement_lab.camera_error',
   'movement_lab.session_completed',
   'movement_lab.feedback_submitted',
+  'retro_workout.opened',
+  'retro_workout.date_selected',
+  'retro_workout.submitted',
+  'retro_workout.blocked_over_limit',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

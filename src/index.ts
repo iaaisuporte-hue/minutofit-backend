@@ -178,6 +178,16 @@ const BUNDLED_PRODUCTION_ORIGINS = [
   'https://corefit-app.vercel.app',
 ];
 
+/**
+ * Origins do app empacotado (Capacitor WebView). Allowlist LITERAL de dois
+ * valores exatos — um WebView autenticado é confiável só nesses:
+ *   https://localhost     → Android (androidScheme:'https')
+ *   capacitor://localhost → iOS
+ * O browser controla o header Origin, então um site externo não consegue forjar
+ * estes valores; match exato (sem regex/wildcard) evita bypass.
+ */
+const NATIVE_APP_ORIGINS = ['https://localhost', 'capacitor://localhost'];
+
 function normalizeCorsOrigin(raw: string): string {
   const t = raw.trim().replace(/\/$/, '');
   if (!/^https?:\/\//i.test(t)) return t;
@@ -248,6 +258,11 @@ app.use(
       }
 
       if ((process.env.NODE_ENV || 'development') !== 'production' && localDevOriginPattern.test(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      if (NATIVE_APP_ORIGINS.includes(origin)) {
         callback(null, true);
         return;
       }

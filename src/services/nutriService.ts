@@ -809,9 +809,6 @@ export async function getPatientsWithSummary(nutriId: number) {
     // adherenceDropFlag: 7d adherence fell ≥20pp vs 30d average
     const adherenceDropFlag = checkins30d >= 5 && pct7d < pct30d - 20;
 
-    // riskFlag: no active plan OR no checkin in last 3 days
-    const riskFlag = !plan || daysSinceLastCheckin === null || daysSinceLastCheckin > 3;
-
     // Aderência real por refeição — null quando não há plano/refeições ou nenhum
     // check-in granular na janela (frontend cai no proxy legado).
     const mealsPerDay = plan ? mealCountByPlan.get(plan.plan_id) ?? 0 : 0;
@@ -822,6 +819,16 @@ export async function getPatientsWithSummary(nutriId: number) {
     };
     const mealAdherence7dPct = mealPct(ma?.adherent_7d, ma?.n_7d, 7);
     const mealAdherence30dPct = mealPct(ma?.adherent_30d, ma?.n_30d, 30);
+
+    // riskFlag: sem plano ativo, OU sem check-in há >3 dias, OU aderência real às
+    // refeições baixa (<40% na semana). O último critério dá utilidade ao sinal
+    // do P1-6: um paciente que faz check-in mas NÃO segue o plano também está em
+    // risco — antes passava despercebido (o proxy legado só via "apareceu").
+    const riskFlag =
+      !plan ||
+      daysSinceLastCheckin === null ||
+      daysSinceLastCheckin > 3 ||
+      (mealAdherence7dPct !== null && mealAdherence7dPct < 40);
 
     return {
       id: p.id,

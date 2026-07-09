@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
+import { authMiddleware, roleCheckMiddleware, requireStudentBillingEnabled } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import { requireActiveConsent } from '../middleware/requireActiveConsent';
 import { listActiveConsentScopes } from '../services/consentService';
@@ -1669,6 +1669,7 @@ router.get(
 router.post(
   '/billing/plans',
   roleCheckMiddleware('personal'),
+  requireStudentBillingEnabled,
   async (req: Request, res: Response) => {
     try {
       const personalId = req.user!.id;
@@ -1688,6 +1689,7 @@ router.post(
 router.patch(
   '/billing/plans/:id',
   roleCheckMiddleware('personal'),
+  requireStudentBillingEnabled,
   async (req: Request, res: Response) => {
     try {
       const personalId = req.user!.id;
@@ -1735,6 +1737,7 @@ router.get(
 router.post(
   '/students/:studentId/subscribe',
   roleCheckMiddleware('personal'),
+  requireStudentBillingEnabled,
   async (req: Request, res: Response) => {
     try {
       const personalId = req.user!.id;

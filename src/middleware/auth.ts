@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyAccessToken, JWTPayload } from '../utils/jwt';
 import pool from '../config/database';
+import { STUDENT_BILLING_ENABLED } from '../config/features';
 
 declare global {
   namespace Express {
@@ -101,8 +102,9 @@ export async function adminMiddleware(req: Request, res: Response, next: NextFun
     const sub = result.rows[0].admin_sub_role as string | null;
     req.adminSubRole = (sub === 'support' ? 'support' : 'super_admin') as AdminSubRole;
   } catch {
-    // Column may not exist yet on first deploy — fall back to role check only
-    req.adminSubRole = 'super_admin';
+    // Fail closed: if we can't verify is_corefit_admin / sub_role (DB error),
+    // deny rather than granting super_admin. A privilege check must never fail open.
+    return res.status(503).json({ success: false, error: 'Unable to verify admin privileges' });
   }
 
   next();
@@ -140,4 +142,21 @@ export function blockAccessProfilesMiddleware(...blockedProfiles: string[]) {
 
     next();
   };
+}
+
+/**
+ * Bloqueia as rotas que MOVEM dinheiro aluno↔profissional pela plataforma
+ * enquanto a cobrança aluno↔personal estiver congelada na V1 (ver
+ * `config/features.ts` → STUDENT_BILLING_ENABLED). Aplicar aos checkouts e à
+ * criação de planos/ofertas com preço — não aos reads nem aos cancelamentos.
+ */
+export function requireStudentBillingEnabled(req: Request, res: Response, next: NextFunction) {
+  if (!STUDENT_BILLING_ENABLED) {
+    return res.status(403).json({
+      success: false,
+      error: 'Cobrança pela plataforma indisponível nesta versão.',
+      code: 'STUDENT_BILLING_FROZEN',
+    });
+  }
+  next();
 }

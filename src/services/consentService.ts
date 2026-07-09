@@ -18,6 +18,21 @@ export type ConsentScope =
 
 export type ProfessionalRole = 'personal' | 'nutri';
 
+/** Consent do aluno alimenta a redação do dashboard do personal (Spec 012).
+ *  Ao conceder/revogar, invalida o cache do dashboard para a mudança valer na
+ *  hora (sem esperar o TTL). Import dinâmico evita ciclo com o dashboard service.
+ *  Non-blocking. */
+async function invalidatePersonalDashboardOnConsentChange(
+  userId: number,
+  professionalRole: ProfessionalRole
+): Promise<void> {
+  if (professionalRole !== 'personal') return;
+  try {
+    const { invalidatePersonalDashboardForStudent } = await import('./personalDashboardService');
+    await invalidatePersonalDashboardForStudent(userId);
+  } catch { /* non-blocking */ }
+}
+
 export const DEFAULT_SCOPES_PERSONAL: ConsentScope[] = ['profile', 'workouts', 'daily_checkins'];
 export const DEFAULT_SCOPES_NUTRI: ConsentScope[] = ['profile', 'daily_checkins', 'nutrition', 'clinical_nutrition'];
 
@@ -72,6 +87,7 @@ export async function grantConsents(
       client as never
     );
   }
+  await invalidatePersonalDashboardOnConsentChange(userId, professionalRole);
 }
 
 export async function revokeConsent(
@@ -95,6 +111,7 @@ export async function revokeConsent(
     eventPayload: { professionalId, professionalRole, scope },
     ip,
   });
+  await invalidatePersonalDashboardOnConsentChange(userId, professionalRole);
 }
 
 export async function revokeAllConsents(
@@ -125,6 +142,7 @@ export async function revokeAllConsents(
       client as never
     );
   }
+  await invalidatePersonalDashboardOnConsentChange(userId, professionalRole);
 }
 
 export async function hasActiveConsent(
@@ -156,6 +174,32 @@ export async function listActiveConsentScopes(
     [userId, professionalId, professionalRole]
   );
   return new Set(rows.map((r) => r.scope as ConsentScope));
+}
+
+/** Mapa aluno→escopos-ativos de TODA a carteira de um profissional, em uma query.
+ *  Usado para redigir por consent o dashboard agregado do personal (Spec 012
+ *  estendida à carteira), sem N+1. Alunos sem nenhum consent granted não
+ *  aparecem no mapa (o chamador trata ausência como "nenhum escopo"). */
+export async function listActiveConsentScopesForProfessional(
+  professionalId: number,
+  professionalRole: ProfessionalRole
+): Promise<Map<number, Set<ConsentScope>>> {
+  const { rows } = await pool.query(
+    `SELECT user_id, scope FROM user_data_consents
+      WHERE professional_id = $1 AND professional_role = $2 AND status = 'granted'`,
+    [professionalId, professionalRole]
+  );
+  const map = new Map<number, Set<ConsentScope>>();
+  for (const r of rows) {
+    const uid = Number(r.user_id);
+    let set = map.get(uid);
+    if (!set) {
+      set = new Set<ConsentScope>();
+      map.set(uid, set);
+    }
+    set.add(r.scope as ConsentScope);
+  }
+  return map;
 }
 
 export async function listConsentsForUser(

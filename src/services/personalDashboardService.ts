@@ -3,6 +3,8 @@ import { getMetabolismForUser, getMetabolismHistoryForUser } from '../modules/me
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { fetchTechnicalSnapshotData } from './studentExerciseNotesService';
 import { getRedisClient } from '../lib/redisClient';
+import { listActiveConsentScopesForProfessional, type ConsentScope } from './consentService';
+import { logDataAccessEvent } from './dataAccessAuditService';
 import type {
   PersonalDashboardPlan,
   PersonalDashboardRisk,
@@ -813,6 +815,31 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     };
   });
 
+  // Consent granular estendido à carteira (Spec 012): a revogação de
+  // metabolic / sleep / daily_checkins tem efeito REAL também no dashboard
+  // agregado, não só no snapshot. Os campos sensíveis são zerados ANTES de
+  // alimentar distribuição, alertas e insights — assim nenhum sinal derivado
+  // (ex.: "score em queda", "sono ruim") vaza por texto para quem revogou.
+  // riskScore/engagementScore são mantidos (já computados a partir do dado
+  // completo): o personal continua vendo QUEM precisa de atenção, sem o dado
+  // bruto de saúde de quem não o compartilhou. Aluno ausente do mapa = nenhum
+  // escopo granted → redige tudo.
+  const consentByStudent = await listActiveConsentScopesForProfessional(personalId, 'personal');
+  for (const student of students) {
+    const scopes = consentByStudent.get(Number(student.id)) ?? new Set<ConsentScope>();
+    if (!scopes.has('metabolic')) {
+      student.metabolismScore = null;
+      student.metabolismBand = 'unknown';
+      student.metabolismTrend = 'unknown';
+      student.metabolismDelta7d = null;
+    }
+    if (!scopes.has('daily_checkins') && !scopes.has('sleep')) {
+      student.lastCheckinISO = null;
+      student.checkins7d = 0;
+      student.latestSleptWell = null;
+    }
+  }
+
   const totalStudents = students.length;
   const total7d = students.reduce((acc, student) => acc + student.workouts7d, 0);
   const total30d = students.reduce((acc, student) => acc + student.workouts30d, 0);
@@ -903,6 +930,17 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     students,
     generatedAt: new Date().toISOString(),
   };
+
+  // Auditoria de acesso à carteira (LGPD). Só chega aqui no cache-miss, então
+  // fica naturalmente throttled a ~1/TTL por personal (evita inflar a tabela a
+  // cada poll). Marcador agregado — o acesso granular por aluno é auditado no
+  // snapshot. Fire-and-forget.
+  void logDataAccessEvent({
+    actorId: personalId,
+    subjectUserId: personalId,
+    eventType: 'personal.dashboard.read',
+    eventPayload: { studentCount: totalStudents },
+  }).catch(() => {});
 
   if (redis) {
     try {

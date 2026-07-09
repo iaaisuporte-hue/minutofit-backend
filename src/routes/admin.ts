@@ -288,7 +288,7 @@ router.get('/users/:id', authMiddleware, adminMiddleware, requireAdminPermission
 });
 
 // PATCH /admin/users/:id - Update user
-router.patch('/users/:id', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.patch('/users/:id', authMiddleware, adminMiddleware, requireAdminPermission('admin.users.write'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { role, name, email } = req.body;
@@ -337,7 +337,7 @@ router.patch('/users/:id', authMiddleware, adminMiddleware, async (req: Request,
 });
 
 // POST /admin/users/:id/subscription - Manually adjust user subscription
-router.post('/users/:id/subscription', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.post('/users/:id/subscription', authMiddleware, adminMiddleware, requireAdminPermission('admin.users.write'), async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
     const { tierId } = req.body;
@@ -914,7 +914,7 @@ router.post('/academies', authMiddleware, adminMiddleware, requireAdminPermissio
 });
 
 // PATCH /admin/academies/:id/branding — atualiza branding de qualquer academia (admin)
-router.patch('/academies/:id/branding', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.patch('/academies/:id/branding', authMiddleware, adminMiddleware, requireAdminPermission('admin.academies.write'), async (req: Request, res: Response) => {
   try {
     const academyId = Number(req.params.id);
     if (!academyId) return res.status(400).json({ success: false, error: 'academyId inválido.' });
@@ -950,7 +950,7 @@ router.patch('/academies/:id/branding', authMiddleware, adminMiddleware, async (
 });
 
 // POST /admin/academies/:id/assign-owner — atribui/troca dono de academia já criada
-router.post('/academies/:id/assign-owner', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+router.post('/academies/:id/assign-owner', authMiddleware, adminMiddleware, requireAdminPermission('admin.academies.write'), async (req: Request, res: Response) => {
   try {
     const academyId = Number(req.params.id);
     if (!academyId) return res.status(400).json({ success: false, error: 'academyId inválido.' });

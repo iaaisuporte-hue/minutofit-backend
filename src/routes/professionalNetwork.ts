@@ -1,5 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
-import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
+import { authMiddleware, roleCheckMiddleware, requireStudentBillingEnabled } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import {
   getOwnNetworkProfile,
@@ -125,7 +125,7 @@ router.get('/offerings', async (req: Request, res: Response) => {
   }
 });
 
-router.post('/offerings', async (req: Request, res: Response) => {
+router.post('/offerings', requireStudentBillingEnabled, async (req: Request, res: Response) => {
   const role = req.user!.role as ProfessionalRole;
   const body = req.body as {
     title?: string;
@@ -155,7 +155,7 @@ router.post('/offerings', async (req: Request, res: Response) => {
   }
 });
 
-router.patch('/offerings/:id', async (req: Request, res: Response) => {
+router.patch('/offerings/:id', requireStudentBillingEnabled, async (req: Request, res: Response) => {
   const body = req.body as {
     title?: string;
     description?: string | null;

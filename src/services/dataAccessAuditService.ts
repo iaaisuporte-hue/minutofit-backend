@@ -31,6 +31,7 @@ export type DataAccessEventType =
   | 'personal.sport.read'
   | 'personal.snapshot.read'
   | 'personal.ai_summary.read'
+  | 'personal.dashboard.read'
   | 'nutri.plan.created'
   | 'nutri.plan.updated'
   | 'nutri.plan.ended'

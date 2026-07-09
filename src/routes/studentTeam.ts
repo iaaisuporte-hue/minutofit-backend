@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from 'express';
-import { authMiddleware, roleCheckMiddleware } from '../middleware/auth';
+import { authMiddleware, roleCheckMiddleware, requireStudentBillingEnabled } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import {
   createConnectionRequest,
@@ -276,7 +276,7 @@ router.get('/professionals/:professionalId/offerings', roleCheckMiddleware('user
 // ── Student subscriptions (US4 — checkout pago) ───────────────────────────
 
 /** Aluno inicia checkout pago de uma offering profissional */
-router.post('/subscriptions', roleCheckMiddleware('user'), async (req: Request, res: Response) => {
+router.post('/subscriptions', roleCheckMiddleware('user'), requireStudentBillingEnabled, async (req: Request, res: Response) => {
   const { offeringId } = req.body as { offeringId?: string };
   if (!offeringId) {
     return res.status(400).json({ success: false, error: 'validation_failed', details: { required: ['offeringId'] } });

@@ -2,6 +2,7 @@ import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
 import crypto from 'crypto';
 import logger from '../lib/logger';
+import { CURRENT_TERMS_VERSION } from '../config/legal';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { getUserProducts } from '../db/ensureProductsSchema';
@@ -185,6 +186,10 @@ export async function registerUser(
     phone: string;
     /** Se omitido, triagem fica pendente (NULL no banco) ate /auth/student-compliance. */
     healthFlags?: HealthFlags;
+    /** Aceite dos Termos de Uso + Política de Privacidade (obrigatório no signup público). */
+    acceptedTerms: boolean;
+    /** IP de origem do aceite (evidência LGPD). */
+    acceptedTermsIp?: string;
   }
 ): Promise<{ user: User; accessToken: string; refreshToken: string }> {
   const email = data.email.toLowerCase().trim();
@@ -202,6 +207,14 @@ export async function registerUser(
   }
 
   assertStrongPassword(data.password);
+
+  // Base legal do tratamento (LGPD art. 8º): o aceite de Termos + Privacidade é
+  // obrigatório e verificado no servidor, não só no cliente.
+  if (data.acceptedTerms !== true) {
+    const err: any = new Error('É necessário aceitar os Termos de Uso e a Política de Privacidade.');
+    err.code = 'TERMS_NOT_ACCEPTED';
+    throw err;
+  }
 
   if (data.healthFlags) {
     validateHealthFlags(data.healthFlags);
@@ -257,6 +270,17 @@ export async function registerUser(
       ]
     );
   }
+
+  // Carimba o aceite dos termos (evidência LGPD): quando, qual versão, de qual
+  // IP. Versão vem do servidor (CURRENT_TERMS_VERSION) — o cliente não escolhe.
+  await pool.query(
+    `UPDATE users
+        SET accepted_terms_at = NOW(),
+            terms_version = $2,
+            accepted_terms_ip = $3
+      WHERE id = $1`,
+    [identity.user.id, CURRENT_TERMS_VERSION, data.acceptedTermsIp ?? null]
+  );
 
   const refreshed = await pool.query(
     `SELECT ${USER_SELECT_FIELDS} FROM users WHERE id = $1`,

@@ -79,6 +79,16 @@ router.post('/register', async (req: Request, res: Response) => {
       });
     }
 
+    // Aceite de Termos + Privacidade (LGPD art. 8º) — obrigatório no cadastro.
+    const acceptedTerms = req.body.acceptedTerms === true || req.body.acceptedTerms === 'true';
+    if (!acceptedTerms) {
+      return res.status(400).json({
+        success: false,
+        error: 'É necessário aceitar os Termos de Uso e a Política de Privacidade.',
+        code: 'TERMS_NOT_ACCEPTED',
+      });
+    }
+
     const captchaToken =
       typeof req.body.captchaToken === 'string'
         ? req.body.captchaToken
@@ -101,6 +111,8 @@ router.post('/register', async (req: Request, res: Response) => {
       cpf,
       phone,
       healthFlags,
+      acceptedTerms,
+      acceptedTermsIp: req.ip,
     });
 
     res.status(201).json({

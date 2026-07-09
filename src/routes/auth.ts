@@ -47,10 +47,22 @@ const refreshRateLimit = rateLimit({
   skipSuccessfulRequests: true,
 });
 
+// Cadastro público (só protegido por captcha até aqui): limita criação em massa
+// por IP. Conta sucessos também (o alvo é o volume de contas criadas). 10/10min
+// cobre retentativas legítimas sem permitir abuso.
+const registerRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Muitas tentativas de cadastro. Aguarde alguns minutos e tente novamente.' },
+  skipSuccessfulRequests: false,
+});
+
 const router = Router();
 
 // POST /auth/register - Register with email and password
-router.post('/register', async (req: Request, res: Response) => {
+router.post('/register', registerRateLimit, async (req: Request, res: Response) => {
   try {
     const email = String(req.body.email || '').trim().toLowerCase();
     const password = String(req.body.password || '');

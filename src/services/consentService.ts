@@ -48,9 +48,12 @@ export const DIRECT_INVITE_SCOPES_PERSONAL: ConsentScope[] = [
   'profile', 'workouts', 'daily_checkins', 'metabolic', 'sleep',
   'body_metrics', 'parq_anamnese', 'activity_logs', 'chat_history',
 ];
+// Sem chat_history: nutri não tem chat bidirecional (só "Voz" unidirecional),
+// então o escopo seria concedido mas inútil/irrevogável na UI. Espelhado no
+// frontend (features/team/types.ts).
 export const DIRECT_INVITE_SCOPES_NUTRI: ConsentScope[] = [
   'profile', 'nutrition', 'clinical_nutrition', 'daily_checkins', 'metabolic',
-  'body_metrics', 'parq_anamnese', 'chat_history',
+  'body_metrics', 'parq_anamnese',
 ];
 
 export interface ConsentEntry {

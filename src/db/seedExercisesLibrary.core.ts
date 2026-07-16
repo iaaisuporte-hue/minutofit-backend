@@ -15,6 +15,7 @@ import {
   COMMON_GYM_EXERCISES_SEED,
   COMMON_GYM_EXERCISE_ALIASES,
 } from '../seeds/commonGymExerciseCoverage.seed';
+import { gifDoTreinoUrl } from '../seeds/gifDoTreino.map';
 import logger from '../lib/logger';
 
 const FREE_DB_BASE_URL =
@@ -199,10 +200,19 @@ export async function runExercisesSeed(pool: Pool): Promise<RunSeedResult> {
         updated++;
       }
 
+      // GIF animado do gifdotreino (fonte preferida) — só quando o exercício tem
+      // match no mapa E EXERCISE_MEDIA_BASE_URL está configurada. Vira a mídia
+      // primária; free-exercise-db abaixo entra como fallback estático não-primário.
+      const gdtUrl = gifDoTreinoUrl(seed.name);
+      if (gdtUrl) {
+        await upsertExerciseMedia(pool, id, gdtUrl, 'gif', true, 'gifdotreino');
+        mediaInserted++;
+      }
+
       if (seed.freeDbId) {
         const gifUrl = freeDbMap.get(seed.freeDbId);
         if (gifUrl) {
-          await upsertExerciseMedia(pool, id, gifUrl, 'image', true, 'free-exercise-db');
+          await upsertExerciseMedia(pool, id, gifUrl, 'image', !gdtUrl, 'free-exercise-db');
           mediaInserted++;
         } else {
           logger.warn(
@@ -214,7 +224,7 @@ export async function runExercisesSeed(pool: Pool): Promise<RunSeedResult> {
 
       if (seed.youtubeId) {
         const ytUrl = `https://www.youtube.com/watch?v=${seed.youtubeId}`;
-        const isPrimary = !seed.freeDbId;
+        const isPrimary = !gdtUrl && !seed.freeDbId;
         await upsertExerciseMedia(pool, id, ytUrl, 'youtube', isPrimary);
         mediaInserted++;
       }
@@ -222,7 +232,7 @@ export async function runExercisesSeed(pool: Pool): Promise<RunSeedResult> {
       if (seed.imageUrl) {
         await upsertExerciseMedia(
           pool, id, seed.imageUrl, 'image',
-          !seed.freeDbId && !seed.youtubeId
+          !gdtUrl && !seed.freeDbId && !seed.youtubeId
         );
       }
       if (seed.videoUrl) {

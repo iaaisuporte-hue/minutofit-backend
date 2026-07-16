@@ -12,6 +12,7 @@
     "db:seed-reception-user": "tsx src/scripts/seedReceptionUser.ts",
     "seed:exercises": "tsx src/scripts/seedExercisesLibrary.ts",
     "seed:refresh-freedb": "tsx src/scripts/refreshFreeExerciseDb.ts",
+    "media:mirror-gifs": "tsx src/scripts/mirrorGifDoTreino.ts",
     "seed:platform-protocols": "tsx src/scripts/seedPlatformProtocols.ts",
     "map:free-db-ids": "tsx src/scripts/mapFreeDbIds.ts",
     "backfill:exercises": "tsx src/scripts/backfillWorkoutPlanExerciseIds.ts",

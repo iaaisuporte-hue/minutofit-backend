@@ -170,19 +170,33 @@ export async function searchExercises(opts: {
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   params.push(limit, offset);
 
+  // Dedup por normalized_name: o banco tem dois conjuntos paralelos de exercícios
+  // (source 'corefit' e o legado 'metacore') com os mesmos nomes. O seletor deve
+  // mostrar UM card por exercício — a cópia mais capaz: preferir a que tem vínculo
+  // com o Lab de Movimento, depois a que tem mídia (gif), depois a canônica
+  // ('corefit'). Não-destrutivo: as duas linhas continuam no banco (histórico e
+  // fichas antigas referenciam ambas por id), só a busca colapsa a duplicata.
   const result = await pool.query(
-    `SELECT e.*,
-            m.url  AS primary_media_url,
-            m.media_type AS primary_media_type
-     FROM exercises e
-     LEFT JOIN LATERAL (
-       SELECT url, media_type
-       FROM exercise_media
-       WHERE exercise_id = e.id AND is_primary = true
-       LIMIT 1
-     ) m ON true
-     ${where}
-     ORDER BY e.name ASC
+    `SELECT * FROM (
+       SELECT DISTINCT ON (e.normalized_name)
+              e.*,
+              m.url  AS primary_media_url,
+              m.media_type AS primary_media_type
+       FROM exercises e
+       LEFT JOIN LATERAL (
+         SELECT url, media_type
+         FROM exercise_media
+         WHERE exercise_id = e.id AND is_primary = true
+         LIMIT 1
+       ) m ON true
+       ${where}
+       ORDER BY e.normalized_name,
+                (e.movement_lab_exercise_id IS NOT NULL) DESC,
+                (m.url IS NOT NULL) DESC,
+                (e.source = 'corefit') DESC,
+                e.id
+     ) dedup
+     ORDER BY dedup.name ASC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );

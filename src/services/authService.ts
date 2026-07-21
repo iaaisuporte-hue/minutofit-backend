@@ -313,6 +313,128 @@ export async function registerUser(
   return { user, accessToken, refreshToken };
 }
 
+/**
+ * Cadastro público de personal trainer (Spec 026).
+ *
+ * Função dedicada em vez de parametrizar `registerUser` com role: nenhum caminho
+ * de código aceita role vinda de input externo — aqui ela é fixa e literal.
+ *
+ * Diferenças em relação ao cadastro de aluno: sem PAR-Q, sem assinatura Free de
+ * aluno e sem produto `app`. O profissional recebe apenas o produto `personal` e
+ * entra no plano Free implícito (nenhuma linha em `personal_platform_subscriptions`).
+ */
+export async function registerPersonalUser(
+  data: {
+    email: string;
+    password: string;
+    name: string;
+    cpf: string;
+    phone: string;
+    /** CREF declarado pelo profissional. Texto livre, não verificado. */
+    registryCode?: string;
+    /** Aceite dos Termos de Uso + Política de Privacidade (obrigatório no signup público). */
+    acceptedTerms: boolean;
+    /** IP de origem do aceite (evidência LGPD). */
+    acceptedTermsIp?: string;
+  }
+): Promise<{ user: User; accessToken: string; refreshToken: string }> {
+  const email = data.email.toLowerCase().trim();
+  const name = data.name.trim();
+  const cpf = normalizeCpf(data.cpf);
+  const phone = normalizePhone(data.phone);
+
+  if (!isValidCpf(cpf)) {
+    throw new Error('CPF invalido.');
+  }
+
+  if (phone.length < 10 || phone.length > 11) {
+    throw new Error('Telefone invalido.');
+  }
+
+  assertStrongPassword(data.password);
+
+  if (data.acceptedTerms !== true) {
+    const err: any = new Error('É necessário aceitar os Termos de Uso e a Política de Privacidade.');
+    err.code = 'TERMS_NOT_ACCEPTED';
+    throw err;
+  }
+
+  // Mesma regra do signup de aluno: dedup só por email, sem merge por CPF/telefone.
+  let identity;
+  try {
+    identity = await findOrCreateUserForPublicSignup({
+      email,
+      name,
+      cpf,
+      phone,
+      password: data.password,
+    });
+  } catch (error: any) {
+    if (error?.code === '23505') {
+      throwFriendlyUniqueError(error);
+    }
+    throw error;
+  }
+
+  // Conta existente (aluno ou profissional) nunca é promovida silenciosamente.
+  if (!identity.isNew) {
+    const err: any = new Error('Email ja cadastrado.');
+    err.code = 'EMAIL_ALREADY_REGISTERED';
+    throw err;
+  }
+
+  // `profile_completed = TRUE` porque o fluxo de complete-profile é do aluno
+  // (peso, altura, objetivo); o onboarding do personal acontece em /app/personal.
+  // Sem `must_change_password`: o profissional escolheu a própria senha.
+  await pool.query(
+    `UPDATE users
+        SET role              = 'personal',
+            profile_completed = TRUE,
+            registry_code     = NULLIF(TRIM($2), ''),
+            accepted_terms_at = NOW(),
+            terms_version     = $3,
+            accepted_terms_ip = $4,
+            updated_at        = NOW()
+      WHERE id = $1`,
+    [
+      identity.user.id,
+      data.registryCode ? String(data.registryCode).trim() : '',
+      CURRENT_TERMS_VERSION,
+      data.acceptedTermsIp ?? null,
+    ]
+  );
+
+  const refreshed = await pool.query(
+    `SELECT ${USER_SELECT_FIELDS} FROM users WHERE id = $1`,
+    [identity.user.id]
+  );
+  const user = mapUserRow(refreshed.rows[0]);
+
+  // Diferente do produto `app` do aluno, aqui a falha propaga: sem este membership
+  // o personal recebe 403 em toda a área /personal (requireProduct('personal')).
+  await grantMembership(user.id, 'personal', {
+    source: 'direct_purchase',
+    metadata: { signup: 'public', channel: 'self_signup' },
+  });
+
+  const products = await getUserProducts(user.id);
+  const accessToken = generateAccessToken({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    profileCompleted: user.profileCompleted,
+    accessProfile: user.accessProfile,
+    products,
+  });
+
+  const refreshToken = generateRefreshToken({
+    id: user.id,
+    email: user.email,
+  });
+
+  return { user, accessToken, refreshToken };
+}
+
 export async function loginUser(
   email: string,
   password: string,

@@ -156,6 +156,85 @@ router.post('/register', registerRateLimit, async (req: Request, res: Response) 
   }
 });
 
+// POST /auth/register-personal - Cadastro público de personal trainer (Spec 026).
+// A role é fixada no serviço (`registerPersonalUser`) — não existe campo `role`
+// no body e nenhum input do cliente influencia o papel criado.
+router.post('/register-personal', registerRateLimit, async (req: Request, res: Response) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const password = String(req.body.password || '');
+    const name = String(req.body.name || '').trim();
+    const cpf = String(req.body.cpf || '').trim();
+    const phone = String(req.body.phone || '').trim();
+    const registryCode = String(req.body.registryCode || '').trim().slice(0, 40);
+
+    if (!email || !password || !name || !cpf || !phone) {
+      return res.status(400).json({
+        success: false,
+        error: 'Nome, CPF, telefone, email e senha sao obrigatorios.',
+      });
+    }
+
+    const acceptedTerms = req.body.acceptedTerms === true || req.body.acceptedTerms === 'true';
+    if (!acceptedTerms) {
+      return res.status(400).json({
+        success: false,
+        error: 'É necessário aceitar os Termos de Uso e a Política de Privacidade.',
+        code: 'TERMS_NOT_ACCEPTED',
+      });
+    }
+
+    const captchaToken =
+      typeof req.body.captchaToken === 'string'
+        ? req.body.captchaToken
+        : typeof req.body.turnstileToken === 'string'
+          ? req.body.turnstileToken
+          : undefined;
+
+    try {
+      await verifyRegistrationCaptcha(captchaToken, req.ip);
+    } catch (captchaErr: any) {
+      const msg = String(captchaErr?.message || 'Falha na verificacao do CAPTCHA.');
+      const status = msg.includes('nao configurado') ? 503 : 400;
+      return res.status(status).json({ success: false, error: msg });
+    }
+
+    const { user, accessToken, refreshToken } = await authService.registerPersonalUser({
+      email,
+      password,
+      name,
+      cpf,
+      phone,
+      registryCode: registryCode || undefined,
+      acceptedTerms,
+      acceptedTermsIp: req.ip,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        user,
+        accessToken,
+        refreshToken,
+      },
+    });
+  } catch (error: any) {
+    const message = String(error.message || 'Nao foi possivel concluir o cadastro.');
+    let code = String(error?.code || '');
+    if (!code) {
+      if (message === 'Email ja cadastrado.') code = 'EMAIL_ALREADY_REGISTERED';
+      else if (message === 'CPF ja cadastrado.') code = 'CPF_ALREADY_REGISTERED';
+    }
+    const status =
+      code === 'EMAIL_ALREADY_REGISTERED' || code === 'CPF_ALREADY_REGISTERED' ? 409 : 400;
+    res.status(status).json({
+      success: false,
+      error: message,
+      ...(status === 409 && code ? { code } : {}),
+    });
+  }
+});
+
 // GET /auth/branding — public, no auth required.
 // Returns branding for the academy that owns the request subdomain (via req.tenantHost).
 // Returns 204 when accessed from app.corefit.com.br (no tenant context).

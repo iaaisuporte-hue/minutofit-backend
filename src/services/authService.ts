@@ -5,6 +5,7 @@ import logger from '../lib/logger';
 import { CURRENT_TERMS_VERSION } from '../config/legal';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { assertStrongPassword } from '../utils/passwordPolicy';
+import { ensureProfessionalCode } from '../utils/professionalCode';
 import { getUserProducts } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
 import { findOrCreateUserFromContext, findOrCreateUserForPublicSignup } from './userIdentityService';
@@ -403,6 +404,11 @@ export async function registerPersonalUser(
       data.acceptedTermsIp ?? null,
     ]
   );
+
+  // Código público do profissional — permite ao aluno conectar por "código" além
+  // do e-mail no sheet "Adicionar profissional". Gerado após o UPDATE de role
+  // (o helper só grava para role IN ('personal','nutri')).
+  await ensureProfessionalCode(identity.user.id);
 
   const refreshed = await pool.query(
     `SELECT ${USER_SELECT_FIELDS} FROM users WHERE id = $1`,

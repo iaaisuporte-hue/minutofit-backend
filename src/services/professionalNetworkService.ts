@@ -279,8 +279,13 @@ export async function upsertOwnNetworkProfile(opts: {
            city = EXCLUDED.city,
            state_uf = EXCLUDED.state_uf,
            availability_status = EXCLUDED.availability_status,
+           -- Só rebaixa a publicação quando a credencial muda (exige nova conferência).
+           -- Editar bio/cidade/foto NÃO delista o profissional da Rede: como a publicação
+           -- é auto-aprovada no MVP, rebaixar aqui só criava sumiço silencioso da busca.
            publication_status = CASE
-             WHEN professional_network_profiles.publication_status = 'approved' THEN 'pending_review'
+             WHEN professional_network_profiles.publication_status = 'approved'
+              AND professional_network_profiles.credential_code IS DISTINCT FROM EXCLUDED.credential_code
+               THEN 'pending_review'
              ELSE professional_network_profiles.publication_status
            END,
            updated_at = NOW()

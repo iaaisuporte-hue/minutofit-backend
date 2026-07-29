@@ -24,6 +24,7 @@ import {
   updatePlatformProtocol,
 } from '../services/workoutProtocolService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
+import { ensureProfessionalCode } from '../utils/professionalCode';
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
 import { setPersonalPlan, getPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
 import { getAcademySubscription, setAcademySubscription, reconcileAcademySubscription, listAcademyBillingEvents, expireOverdueAcademySubs, type AcademySaasPlan } from '../services/academySubscriptionService';
@@ -578,6 +579,10 @@ router.post('/professionals', authMiddleware, adminMiddleware, requireAdminPermi
       ]
     );
 
+    // Código público do profissional — permite ao aluno conectar por "código"
+    // além do e-mail (caminho manual do sheet "Adicionar profissional").
+    const professionalCode = await ensureProfessionalCode(userId);
+
     // Concede o produto profissional correspondente via serviço centralizado.
     const adminUserId = (req as any).user?.id ?? null;
     await grantMembership(userId, role as 'personal' | 'nutri', {
@@ -592,6 +597,7 @@ router.post('/professionals', authMiddleware, adminMiddleware, requireAdminPermi
         name: identity.user.name,
         email: identity.user.email,
         role,
+        professionalCode,
         tempPassword,
       },
     });
@@ -2039,27 +2045,43 @@ router.delete(
 );
 
 // ---------------------------------------------------------------------------
-// P0-4: Gate de credencial profissional — lista fila de revisão pendente
+// P0-4: Gate de credencial profissional — estado da Rede de Profissionais
 // ---------------------------------------------------------------------------
 
-// GET /admin/professionals/pending-review — profissionais aguardando aprovação de credencial
+// GET /admin/professionals/network-status — TODOS os profissionais + estado na Rede
+//
+// Antes esta rota filtrava `credential_status = 'pending_review'`. Como publicar
+// auto-aprova (submitOwnNetworkProfileForReview), a fila vivia vazia e o admin lia
+// isso como "está tudo certo" — enquanto ninguém estava publicado e nenhum aluno
+// conseguia encontrar um personal na busca. O LEFT JOIN expõe justamente o buraco:
+// profissional sem linha em professional_network_profiles é invisível para o aluno,
+// e SÓ o próprio profissional pode criar esse perfil (reviewNetworkProfile dá 404).
 router.get(
-  '/professionals/pending-review',
+  '/professionals/network-status',
   authMiddleware,
   adminMiddleware,
   requireAdminPermission('admin.professionals.review'),
   async (_req: Request, res: Response) => {
     try {
       const { rows } = await pool.query(
-        `SELECT pnp.professional_id, u.name, u.email, u.role,
+        `SELECT u.id AS professional_id, u.name, u.email, u.role, u.professional_code,
+                pnp.professional_id IS NOT NULL AS has_profile,
                 pnp.credential_code, pnp.credential_status, pnp.publication_status,
-                pnp.admin_enabled, pnp.review_notes, pnp.updated_at,
+                pnp.admin_enabled, pnp.availability_status, pnp.review_notes, pnp.updated_at,
+                -- Espelha exatamente os 4 predicados de listAvailableProfessionals.
+                COALESCE(
+                  pnp.publication_status = 'approved'
+                  AND pnp.credential_status = 'approved'
+                  AND pnp.admin_enabled = TRUE
+                  AND pnp.availability_status IN ('available','limited')
+                  AND u.role = pnp.professional_role,
+                FALSE) AS discoverable,
                 (SELECT COUNT(*) FROM personal_student_assignments psa
-                 WHERE psa.personal_id = pnp.professional_id AND psa.status = 'active') AS active_students
-         FROM professional_network_profiles pnp
-         JOIN users u ON u.id = pnp.professional_id
-         WHERE pnp.credential_status = 'pending_review'
-         ORDER BY pnp.updated_at ASC`
+                 WHERE psa.personal_id = u.id AND psa.status = 'active') AS active_students
+         FROM users u
+         LEFT JOIN professional_network_profiles pnp ON pnp.professional_id = u.id
+         WHERE u.role IN ('personal','nutri')
+         ORDER BY discoverable ASC, pnp.updated_at ASC NULLS FIRST, u.name ASC`
       );
       return res.json({ success: true, data: rows });
     } catch (err: any) {

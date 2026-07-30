@@ -18,6 +18,14 @@ import {
   DIRECT_INVITE_SCOPES_NUTRI,
 } from '../services/consentService';
 import logger from '../lib/logger';
+import {
+  findResettableUserByEmail,
+  createResetToken,
+  resetPasswordWithToken,
+  InvalidResetTokenError,
+  RESET_TOKEN_TTL_MINUTES,
+} from '../services/passwordResetService';
+import { sendEmail, renderPasswordResetEmail } from '../lib/email';
 import { createMetabolicCheckin, normalizeMetabolicCheckinInput } from '../services/metabolicCheckinService';
 import {
   calcPrimarySoftStrong,
@@ -56,6 +64,17 @@ const registerRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { success: false, error: 'Muitas tentativas de cadastro. Aguarde alguns minutos e tente novamente.' },
+  skipSuccessfulRequests: false,
+});
+
+// Pedido de reset de senha: limita descoberta/abuso por IP (resposta é uniforme,
+// então o rate limit é a principal barreira contra sondagem em massa).
+const forgotPasswordRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, error: 'Muitas solicitações. Aguarde alguns minutos e tente novamente.' },
   skipSuccessfulRequests: false,
 });
 
@@ -232,6 +251,51 @@ router.post('/register-personal', registerRateLimit, async (req: Request, res: R
       error: message,
       ...(status === 409 && code ? { code } : {}),
     });
+  }
+});
+
+// POST /auth/forgot-password — pede reset de senha por e-mail. Resposta SEMPRE
+// uniforme (sem enumeração de usuário). Só envia se existir usuário com senha local.
+router.post('/forgot-password', forgotPasswordRateLimit, async (req: Request, res: Response) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && email.length <= 254;
+  if (!emailOk) {
+    return res.status(400).json({ success: false, error: 'E-mail inválido.', code: 'invalid_email' });
+  }
+  try {
+    const user = await findResettableUserByEmail(email);
+    if (user) {
+      const token = await createResetToken(user.id, req.ip);
+      const frontendUrl =
+        (process.env.FRONTEND_URL ?? '').split(',')[0]?.trim() || 'https://www.s2core.com.br';
+      const resetLink = `${frontendUrl.replace(/\/$/, '')}/reset-password?token=${token}`;
+      const tpl = renderPasswordResetEmail(resetLink, RESET_TOKEN_TTL_MINUTES);
+      await sendEmail({ to: email, ...tpl });
+    }
+  } catch (err) {
+    // Nunca vaza o resultado (existência do usuário / falha de envio) na resposta.
+    logger.error({ err }, '[auth] forgot-password falhou');
+  }
+  // Uniforme em todos os casos.
+  return res.json({ success: true });
+});
+
+// POST /auth/reset-password — consome o token e define a nova senha.
+router.post('/reset-password', async (req: Request, res: Response) => {
+  const token = String(req.body.token || '');
+  const newPassword = String(req.body.newPassword || '');
+  if (!token || !newPassword) {
+    return res.status(400).json({ success: false, error: 'Token e nova senha são obrigatórios.' });
+  }
+  try {
+    await resetPasswordWithToken(token, newPassword);
+    return res.json({ success: true });
+  } catch (err: any) {
+    if (err instanceof InvalidResetTokenError) {
+      return res.status(400).json({ success: false, error: err.message, code: 'invalid_token' });
+    }
+    // Senha fraca (assertStrongPassword) e demais validações.
+    return res.status(400).json({ success: false, error: err?.message || 'Não foi possível redefinir a senha.' });
   }
 });
 

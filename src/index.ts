@@ -71,6 +71,7 @@ import { scheduleAcademySubExpiry } from './jobs/academySubExpiry';
 import { scheduleStorageOrphanSweep } from './jobs/storageOrphanSweep';
 import { getRedisClient } from './lib/redisClient';
 import { isStorageConfigured, warnIfStorageUnconfigured } from './lib/storage';
+import { isEmailConfigured } from './lib/email';
 import { runMigrations } from './db/runMigrations';
 
 // ---------------------------------------------------------------------------
@@ -383,6 +384,10 @@ app.get('/api/health', async (_req, res) => {
   // Sinal VISÍVEL: sem config, upload de fotos responde 503. Não é fatal.
   checks.storage = isStorageConfigured() ? 'ok' : 'unset';
 
+  // E-mail transacional (opcional — degradação não-silenciosa). Sem config, o
+  // reset de senha loga o link em vez de enviar. Não é fatal.
+  checks.email = isEmailConfigured() ? 'ok' : 'unset';
+
   // --- Checks informativos NÃO-FATAIS (não derrubam o health; só dão visibilidade
   //     ao operador). "Pagamento fora ≠ app fora": MP ausente não vira 503. ---
   const isProd = (process.env.NODE_ENV || 'development') === 'production';
@@ -470,7 +475,7 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 runBootChain()
   .then(() => {
     app.listen(PORT, () => {
-      logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'CoreFit Backend running');
+      logger.info({ port: PORT, env: process.env.NODE_ENV || 'development' }, 'S2Core Backend running');
       logger.info({ origins: allowedOrigins }, 'Allowed frontend origins');
       validateRuntimeEnv();
 

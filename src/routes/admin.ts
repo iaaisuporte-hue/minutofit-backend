@@ -25,6 +25,11 @@ import {
 } from '../services/workoutProtocolService';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { ensureProfessionalCode } from '../utils/professionalCode';
+import {
+  getUsageAggregates,
+  getRetentionD30,
+  getPersonalActivationFunnel,
+} from '../services/usageTelemetryService';
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
 import { setPersonalPlan, getPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
 import { getAcademySubscription, setAcademySubscription, reconcileAcademySubscription, listAcademyBillingEvents, expireOverdueAcademySubs, type AcademySaasPlan } from '../services/academySubscriptionService';
@@ -80,13 +85,34 @@ router.get('/dashboard/metrics', authMiddleware, adminMiddleware, async (req: Re
     );
     const activeSubscriptions = activeSubRes.rows[0].count;
 
-    // Get MRR (Monthly Recurring Revenue)
+    // MRR (Monthly Recurring Revenue) — receita recorrente REAL da V1:
+    // SaaS do personal (Pro) + SaaS da academia (Pro). O B2C legado
+    // (user_subscriptions + subscription_tiers) está desativado por decisão
+    // (UpgradePlanPage é estática, funil atrás de waitlist), então somá-lo aqui
+    // inflaria o número com planos que ninguém pode comprar.
     const mrrRes = await pool.query(
-      `SELECT SUM(st.price_brl) as total FROM user_subscriptions us
+      `SELECT
+         COALESCE((
+           SELECT SUM(price_cents) FROM personal_platform_subscriptions
+           WHERE status = 'active' AND plan <> 'free'
+         ), 0) AS personal_cents,
+         COALESCE((
+           SELECT SUM(price_cents) FROM academy_subscriptions
+           WHERE status = 'active' AND plan <> 'free'
+         ), 0) AS academy_cents`
+    );
+    const personalMrr = Number(mrrRes.rows[0].personal_cents) / 100;
+    const academyMrr  = Number(mrrRes.rows[0].academy_cents) / 100;
+    const mrr = personalMrr + academyMrr;
+
+    // Legado B2C mantido separado — visibilidade histórica, fora do MRR.
+    const legacyMrrRes = await pool.query(
+      `SELECT COALESCE(SUM(st.price_brl), 0) AS total
+       FROM user_subscriptions us
        JOIN subscription_tiers st ON us.tier_id = st.id
        WHERE us.status = 'active'`
     );
-    const mrr = mrrRes.rows[0].total || 0;
+    const legacyB2cMrr = Number(legacyMrrRes.rows[0].total) || 0;
 
     // Get total payments (revenue)
     const revenueRes = await pool.query(
@@ -109,7 +135,8 @@ router.get('/dashboard/metrics', authMiddleware, adminMiddleware, async (req: Re
         metrics: {
           totalUsers,
           activeSubscriptions,
-          mrr: parseFloat(mrr),
+          mrr,
+          mrrBreakdown: { personal: personalMrr, academy: academyMrr, legacyB2c: legacyB2cMrr },
           totalRevenue: parseFloat(revenue),
           tierBreakdown: tierRes.rows
         }
@@ -710,45 +737,59 @@ router.get('/dashboard/loop-metrics', authMiddleware, adminMiddleware, async (re
 // GET /admin/dashboard/pmf-metrics — validação das 4 hipóteses de PMF mensuráveis
 router.get('/dashboard/pmf-metrics', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
   try {
-    // H1: Personal paga mensal? — assinaturas ativas + pendentes
+    // H1: Personal paga mensal? — assinatura SaaS da plataforma (Free / Pro).
+    // Fonte: personal_platform_subscriptions (Spec 008). NÃO usar
+    // personal_student_subscriptions — aquela é o take-rate aluno↔personal,
+    // congelado na V1 (CLAUDE.md: "Cobrança V1 — sem take-rate").
+    // Sem linha na tabela = Free implícito, por isso o MRR só soma plan <> 'free'.
     const h1 = await pool.query(`
       SELECT
-        COUNT(*) FILTER (WHERE status = 'active')  AS active_subs,
-        COUNT(*) FILTER (WHERE status = 'pending') AS pending_subs,
-        COUNT(DISTINCT personal_id)                 AS personals_with_plan,
-        COALESCE(SUM(price_cents) FILTER (WHERE status = 'active'), 0) AS mrr_cents
-      FROM personal_student_subscriptions
+        COUNT(*) FILTER (WHERE plan <> 'free' AND status = 'active')  AS paying_active,
+        COUNT(*) FILTER (WHERE plan <> 'free' AND status = 'trial')   AS trial_active,
+        COUNT(*) FILTER (WHERE status = 'pending')                    AS pending_checkout,
+        COUNT(*) FILTER (WHERE plan <> 'free'
+                           AND status IN ('expired', 'cancelled'))    AS lapsed,
+        COUNT(DISTINCT personal_id)                                   AS personals_with_row,
+        COALESCE(
+          SUM(price_cents) FILTER (WHERE plan <> 'free' AND status = 'active'), 0
+        ) AS mrr_cents
+      FROM personal_platform_subscriptions
     `);
 
     // H2: Adaptive Engine melhora aderência? — taxa de check-in 30d: adaptação ON vs OFF
     // (alunos com ficha de personal atribuída em ambos os grupos)
+    // Ambos os grupos partem do MESMO universo (alunos com ficha de personal
+    // ativa) e se separam só pelo master switch — caso contrário os coortes não
+    // seriam comparáveis e a hipótese não se sustentaria.
     const h2 = await pool.query(`
       WITH assigned_students AS (
-        SELECT DISTINCT student_id AS user_id FROM personal_student_assignments WHERE status = 'active'
+        SELECT DISTINCT student_id AS user_id
+        FROM personal_student_assignments
+        WHERE status = 'active'
       ),
-      adapted AS (
-        SELECT user_id,
-          COUNT(udc.id) * 100.0 / 30 AS checkin_rate_30d
-        FROM (SELECT DISTINCT student_id AS user_id FROM training_adaptation_policy WHERE master_enabled = TRUE) t
-        LEFT JOIN user_daily_checkins udc ON udc.user_id = t.user_id
-          AND udc.date_key::date >= CURRENT_DATE - 30
-        GROUP BY user_id
+      adaptation_on AS (
+        SELECT DISTINCT student_id AS user_id
+        FROM training_adaptation_policy
+        WHERE master_enabled = TRUE
       ),
-      control AS (
-        SELECT a.user_id,
+      checkin_rate AS (
+        SELECT
+          a.user_id,
+          (ao.user_id IS NOT NULL)   AS adapted,
           COUNT(udc.id) * 100.0 / 30 AS checkin_rate_30d
         FROM assigned_students a
-        WHERE a.user_id NOT IN (SELECT student_id FROM training_adaptation_policy WHERE master_enabled = TRUE)
-        LEFT JOIN user_daily_checkins udc ON udc.user_id = a.user_id
-          AND udc.date_key::date >= CURRENT_DATE - 30
-        GROUP BY a.user_id
+        LEFT JOIN adaptation_on ao ON ao.user_id = a.user_id
+        LEFT JOIN user_daily_checkins udc
+               ON udc.user_id = a.user_id
+              AND udc.date_key::date >= CURRENT_DATE - 30
+        GROUP BY a.user_id, (ao.user_id IS NOT NULL)
       )
       SELECT
-        COUNT(*)                        AS adapted_n,
-        ROUND(AVG(checkin_rate_30d), 1) AS adapted_checkin_pct,
-        (SELECT COUNT(*)                        FROM control) AS control_n,
-        (SELECT ROUND(AVG(checkin_rate_30d), 1) FROM control) AS control_checkin_pct
-      FROM adapted
+        COUNT(*)                    FILTER (WHERE adapted)     AS adapted_n,
+        ROUND(AVG(checkin_rate_30d) FILTER (WHERE adapted), 1) AS adapted_checkin_pct,
+        COUNT(*)                    FILTER (WHERE NOT adapted) AS control_n,
+        ROUND(AVG(checkin_rate_30d) FILTER (WHERE NOT adapted), 1) AS control_checkin_pct
+      FROM checkin_rate
     `);
 
     // H4: Usuário sustenta check-in pós-30d? — cohort de usuários com ≥30d de conta
@@ -771,26 +812,16 @@ router.get('/dashboard/pmf-metrics', authMiddleware, adminMiddleware, async (req
       FROM cohort
     `);
 
-    // H3: Academia mostra retenção? — memberships CoreFit ativos em academias
+    // H3: Academia mostra retenção? — contagens de plataforma.
+    // `product_key = 'corefit_app'` é valor de enum no banco (marca legada);
+    // não renomear sem migration.
     const h3 = await pool.query(`
       SELECT
-        COUNT(DISTINCT upm.user_id)
-          FILTER (WHERE upm.status = 'active' AND upm.product_key = 'corefit_app') AS corefit_active,
-        COUNT(DISTINCT upm.user_id)
-          FILTER (WHERE upm.status = 'active' AND upm.product_key = 'personal') AS personal_active,
-        COUNT(DISTINCT a.id)
-          FILTER (WHERE a.status = 'active') AS academies_active
-      FROM user_product_memberships upm
-      CROSS JOIN (SELECT COUNT(*) FILTER (WHERE status = 'active') AS dummy FROM academies) dummy_cross
-      RIGHT JOIN (SELECT id, status FROM academies) a ON TRUE
-    `);
-
-    // Simplified H3: just counts
-    const h3Simple = await pool.query(`
-      SELECT
-        (SELECT COUNT(DISTINCT user_id) FROM user_product_memberships WHERE status = 'active' AND product_key = 'corefit_app') AS corefit_app_active,
-        (SELECT COUNT(*) FROM personal_student_subscriptions WHERE status = 'active') AS personal_billing_active,
-        (SELECT COUNT(*) FROM academies WHERE status = 'active') AS academies_active
+        (SELECT COUNT(DISTINCT user_id) FROM user_product_memberships
+          WHERE status = 'active' AND product_key = 'corefit_app')      AS app_memberships_active,
+        (SELECT COUNT(*) FROM personal_platform_subscriptions
+          WHERE status = 'active' AND plan <> 'free')                   AS personals_paying,
+        (SELECT COUNT(*) FROM academies WHERE status = 'active')        AS academies_active
     `);
 
     res.json({
@@ -798,11 +829,29 @@ router.get('/dashboard/pmf-metrics', authMiddleware, adminMiddleware, async (req
       data: {
         h1_personal_billing: h1.rows[0],
         h2_adaptive_adherence: h2.rows[0],
-        h3_platform_counts: h3Simple.rows[0],
+        h3_platform_counts: h3.rows[0],
         h4_checkin_sustainability: h4.rows[0],
       },
     });
   } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// GET /admin/dashboard/pilot-metrics — Spec 028: o sistema sabe quem usa.
+// DAU/MAU, retenção D30 e funil de ativação do personal. É o painel que
+// responde "quantas pessoas usam isso?" — pergunta que antes não tinha resposta.
+router.get('/dashboard/pilot-metrics', authMiddleware, adminMiddleware, async (req: Request, res: Response) => {
+  try {
+    const [usage, retention, activationFunnel] = await Promise.all([
+      getUsageAggregates(),
+      getRetentionD30(),
+      getPersonalActivationFunnel(),
+    ]);
+
+    res.json({ success: true, data: { ...usage, retention, activationFunnel } });
+  } catch (error: any) {
+    logger.error({ err: error }, '[admin] falha ao montar pilot-metrics');
     res.status(500).json({ success: false, error: error.message });
   }
 });

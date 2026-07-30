@@ -1,5 +1,5 @@
 {
-  "name": "corefit-backend",
+  "name": "s2core-backend",
   "version": "1.0.0",
   "description": "CoreFit Fitness SaaS Backend - Node.js/Express/TypeScript",
   "main": "dist/index.js",

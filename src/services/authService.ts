@@ -9,6 +9,7 @@ import { ensureProfessionalCode } from '../utils/professionalCode';
 import { getUserProducts } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
 import { findOrCreateUserFromContext, findOrCreateUserForPublicSignup } from './userIdentityService';
+import { touchUserActivity } from './usageTelemetryService';
 import {
   PARQ_FORM_VERSION,
   assertParqSignature,
@@ -68,6 +69,8 @@ export interface User {
   /** Triagem de saude + onboarding de treino + PAR-Q assinado (apenas papel user). */
   studentComplianceComplete?: boolean;
   mustChangePassword?: boolean;
+  /** Carimbo da última troca de senha — invalida refresh tokens emitidos antes. */
+  passwordChangedAt?: string | null;
 }
 
 const USER_SELECT_FIELDS = `
@@ -101,7 +104,8 @@ const USER_SELECT_FIELDS = `
   parq_any_yes,
   parq_expires_at,
   parq_signature_level,
-  COALESCE(must_change_password, false) AS must_change_password
+  COALESCE(must_change_password, false) AS must_change_password,
+  password_changed_at
 `;
 
 export function normalizeCpf(cpf: string): string {
@@ -519,6 +523,9 @@ export async function loginUser(
     email: user.email
   });
 
+  // Spec 028 — telemetria de uso. Best-effort: nunca bloqueia o login.
+  void touchUserActivity(user.id, true);
+
   return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken };
 }
 
@@ -673,6 +680,9 @@ export async function loginOrCreateOAuthUser(
       id: user.id,
       email: user.email
     });
+
+    // Spec 028 — login por OAuth conta como login (critério de aceite explícito).
+    void touchUserActivity(user.id, true);
 
     return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken, isNewUser };
   } catch (error: any) {
@@ -931,6 +941,17 @@ export async function refreshWithRefreshToken(
     throw new Error('Invalid refresh token');
   }
 
+  // Invalidação de sessão por troca/reset de senha: rejeita refresh tokens
+  // emitidos ANTES do último `password_changed_at`. `iat` (segundos) já vem no
+  // payload decodificado do JWT. Fecha o refresh roubado sem enumerar a denylist.
+  if (user.passwordChangedAt) {
+    const iat = (payload as { iat?: number }).iat;
+    const changedAtSec = Math.floor(new Date(user.passwordChangedAt).getTime() / 1000);
+    if (typeof iat === 'number' && iat < changedAtSec) {
+      throw new Error('Refresh token invalidated by password change');
+    }
+  }
+
   // Rotate: revoke the used token before issuing a new one
   await revokeRefreshToken(payload.jti, user.id, new Date(payload.exp * 1000));
 
@@ -952,6 +973,10 @@ export async function refreshWithRefreshToken(
     id: user.id,
     email: user.email,
   });
+
+  // Spec 028 — refresh renova sessão mas NÃO é login novo: só avança last_seen_at.
+  // É o que captura o uso contínuo de quem fica dias sem redigitar senha.
+  void touchUserActivity(user.id, false);
 
   return { user: { ...user, accessProfile: effectiveProfile }, accessToken, refreshToken: newRefreshToken };
 }
@@ -1131,6 +1156,7 @@ function mapUserRow(row: any): User {
       : undefined,
     profileCompleted: row.profile_completed || false,
     mustChangePassword: row.must_change_password === true,
+    passwordChangedAt: row.password_changed_at ? new Date(row.password_changed_at).toISOString() : null,
     accessProfile: row.access_profile || undefined,
     oauthGoogleId: row.oauth_google_id,
     oauthAppleId: row.oauth_apple_id,

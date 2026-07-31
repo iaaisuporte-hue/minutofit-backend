@@ -358,8 +358,18 @@ router.post('/incoming-requests/:id/accept', async (req: Request, res: Response)
     });
     return res.json({ success: true });
   } catch (err: unknown) {
-    const e = err as { status?: number };
-    return res.status(e.status ?? 500).json({ error: 'not_found_or_not_pending' });
+    // Propaga o código real do erro — antes devolvia sempre
+    // `not_found_or_not_pending`, o que mascarava o 403 de limite de alunos
+    // (Spec 029) e deixava o frontend sem como diferenciar.
+    const e = err as { status?: number; message?: string; limit?: number; current?: number };
+    if (e.status === 403 && e.message === 'student_limit_reached') {
+      return res.status(403).json({
+        error: 'student_limit_reached',
+        limit: e.limit,
+        current: e.current,
+      });
+    }
+    return res.status(e.status ?? 500).json({ error: e.message || 'not_found_or_not_pending' });
   }
 });
 

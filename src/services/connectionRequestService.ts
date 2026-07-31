@@ -11,6 +11,7 @@ import {
 } from './consentService';
 import { assertProfessionalCanReceiveDiscoveryRequest } from './professionalNetworkService';
 import { grantMembership, cancelMembership } from './membershipService';
+import { getPersonalPlan } from './personalPlanService';
 
 export type RequestStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled' | 'expired';
 export type RequestedVia = 'email' | 'code' | 'link' | 'discovery';
@@ -182,6 +183,30 @@ export async function acceptConnectionRequest(opts: {
     );
     if (activeRows[0]) {
       throw Object.assign(new Error('conflict_active_link'), { status: 409 });
+    }
+
+    // Spec 029 — limite de alunos do plano do personal também vale aqui.
+    // Só para `personal`: o limite é do produto Personal; nutri não tem gate.
+    // A contagem roda dentro desta transação (client, não pool) para estreitar
+    // a janela de check-then-act; o ROLLBACK desfaz o UPDATE de 'accepted' acima,
+    // então a solicitação continua `pending` e pode ser aceita após o upgrade.
+    if (req.professional_role === 'personal') {
+      const planConfig = await getPersonalPlan(professionalId);
+      if (planConfig.studentLimit !== null) {
+        const { rows: countRows } = await client.query(
+          `SELECT COUNT(*)::int AS cnt FROM personal_student_assignments
+           WHERE personal_id = $1 AND status = 'active'`,
+          [professionalId]
+        );
+        const current = countRows[0]?.cnt ?? 0;
+        if (current >= planConfig.studentLimit) {
+          throw Object.assign(new Error('student_limit_reached'), {
+            status: 403,
+            limit: planConfig.studentLimit,
+            current,
+          });
+        }
+      }
     }
 
     await client.query(

@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { authMiddleware, roleCheckMiddleware, requireStudentBillingEnabled } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import { requireActiveConsent } from '../middleware/requireActiveConsent';
-import { listActiveConsentScopes } from '../services/consentService';
+import { listActiveConsentScopes, revokeAllConsents } from '../services/consentService';
 import { listMetabolicCheckins } from '../services/metabolicCheckinService';
 import { getWorkoutStats } from '../services/workoutSessionService';
 import logger from '../lib/logger';
@@ -141,7 +141,12 @@ router.use(
 
 // Evolução metabólica do aluno (Spec 014) — read-only, consent-gated.
 // `body_metrics` cobre composição/vitais; `workoutStats` só com `workouts` ativo
-// (consent granular). Sem vínculo/consent, o prefixo já barra com 403.
+// (consent granular).
+//
+// ATENÇÃO: o prefixo `/students/:studentId` aplica APENAS `requireActiveConsent`
+// — ele NÃO valida vínculo. (O comentário anterior afirmava que sim; era falso.)
+// Como esta rota lê o histórico completo de check-ins sem `personal_id` na query,
+// o assert de vínculo abaixo é a única garantia de que a carteira ainda existe.
 router.get(
   '/students/:studentId/evolution',
   roleCheckMiddleware('personal'),
@@ -151,6 +156,9 @@ router.get(
       const studentId = Number(req.params.studentId);
       if (!Number.isFinite(studentId)) {
         return res.status(400).json({ success: false, error: 'Invalid student id' });
+      }
+      if (!(await assertStudentAssignedToPersonal(req.user!.id, studentId))) {
+        return res.status(403).json({ success: false, error: 'ASSIGNMENT_REQUIRED' });
       }
       const checkins = await listMetabolicCheckins(studentId, 100);
       const scopes = await listActiveConsentScopes(studentId, req.user!.id, 'personal');
@@ -636,14 +644,48 @@ router.delete(
         return res.status(400).json({ success: false, error: 'Invalid student id' });
       }
 
-      const result = await pool.query(
-        `DELETE FROM personal_student_assignments
-         WHERE personal_id = $1 AND student_id = $2
-         RETURNING id`,
-        [personalId, studentId]
-      );
+      // Spec 030 — remover o aluno da carteira REVOGA os consents do par.
+      // Antes o DELETE apagava só o assignment: a finalidade do tratamento
+      // cessava, mas o ex-personal continuava lendo dado de saúde do aluno
+      // (as rotas /students/:id/* são guardadas por consent, não por vínculo).
+      // Espelha o que `revokeConnection` já faz na revogação iniciada pelo aluno.
+      const client = await pool.connect();
+      let removed = false;
+      try {
+        await client.query('BEGIN');
 
-      if (result.rowCount === 0) {
+        const result = await client.query(
+          `DELETE FROM personal_student_assignments
+           WHERE personal_id = $1 AND student_id = $2
+           RETURNING id`,
+          [personalId, studentId]
+        );
+
+        if (result.rowCount === 0) {
+          await client.query('ROLLBACK');
+        } else {
+          await revokeAllConsents(studentId, personalId, 'personal', personalId, client as never, req.ip);
+          await logDataAccessEvent(
+            {
+              actorId: personalId,
+              subjectUserId: studentId,
+              eventType: 'connection.revoked',
+              eventPayload: { professionalId: personalId, professionalRole: 'personal', initiatedBy: 'professional' },
+              ip: req.ip,
+            },
+            client as never
+          );
+          await client.query('COMMIT');
+          removed = true;
+        }
+      } catch (txError) {
+        await client.query('ROLLBACK').catch(() => { /* conexão já perdida */ });
+        throw txError;
+      } finally {
+        client.release();
+      }
+
+      if (!removed) {
         return res.status(404).json({ success: false, error: 'Aluno não encontrado na sua carteira.' });
       }
 

@@ -12,6 +12,7 @@ import { logAcademyAction } from '../services/auditService';
 import { getUserProducts, getUserProductsWithMeta } from '../db/ensureProductsSchema';
 import { findOrCreateUserFromContext, verifyUserPassword } from '../services/userIdentityService';
 import { grantMembership } from '../services/membershipService';
+import { checkStudentLimitGate } from '../services/personalPlanService';
 import {
   grantConsents,
   DIRECT_INVITE_SCOPES_PERSONAL,
@@ -978,6 +979,24 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
     if (new Date(invite.expires_at) < new Date()) {
       await pool.query(`UPDATE personal_direct_invites SET status = 'expired' WHERE id = $1`, [invite.id]);
       return res.status(410).json({ success: false, error: 'Este convite expirou.' });
+    }
+
+    // Spec 029 — o limite de alunos do plano também vale no ACEITE, não só na
+    // criação do convite. Sem isso o gate era contornável sem má-fé: o convite
+    // vale 14 dias e não há limite de convites pendentes.
+    //
+    // Checado ANTES de findOrCreateUserFromContext: recusar depois deixaria uma
+    // conta criada sem vínculo nenhum. O convite continua `pending`, então o
+    // mesmo link volta a funcionar assim que o personal fizer upgrade.
+    const inviteGate = await checkStudentLimitGate(invite.personal_id);
+    if (inviteGate.over) {
+      return res.status(403).json({
+        success: false,
+        code: 'PERSONAL_STUDENT_LIMIT_REACHED',
+        error:
+          'Este profissional atingiu o limite de alunos do plano gratuito. ' +
+          'Peça para ele fazer o upgrade e use este mesmo link depois.',
+      });
     }
 
     const { email, password, name, cpf, phone } = req.body;

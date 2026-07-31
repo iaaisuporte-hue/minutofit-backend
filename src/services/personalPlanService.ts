@@ -29,6 +29,13 @@ const PLAN_PRICING_CENTS: Partial<Record<PersonalPlan, number>> = {
   pro:     8900,
 };
 
+/**
+ * Tolerância após `current_period_end` antes de rebaixar para Free (Spec 029).
+ * Cobre retry do webhook do MP e fim de semana — não punir o personal por
+ * atraso de processamento do gateway.
+ */
+const PERIOD_END_GRACE_DAYS = 3;
+
 const FREE_DEFAULT: PersonalPlanConfig = {
   plan: 'free',
   status: 'active',
@@ -54,6 +61,20 @@ export async function getPersonalPlan(personalId: number): Promise<PersonalPlanC
   // Checkout 'pending' (ainda não pagou) ou 'cancelled'/'expired' = trata como Free.
   if (status !== 'active' && status !== 'trial') {
     return FREE_DEFAULT;
+  }
+
+  // Spec 029 — defesa em profundidade contra webhook perdido.
+  // Não existe job expirando esta tabela: se a notificação de cancelamento do MP
+  // se perder, a linha fica 'active' com o período vencido para sempre. Expirar
+  // na leitura resolve sem cron.
+  //
+  // A tolerância de 3 dias é deliberada: cobre retry do gateway e fim de semana,
+  // para não punir o personal por atraso que não é dele.
+  if (row.current_period_end) {
+    const graceMs = PERIOD_END_GRACE_DAYS * 24 * 60 * 60 * 1000;
+    if (new Date(row.current_period_end).getTime() + graceMs < Date.now()) {
+      return FREE_DEFAULT;
+    }
   }
 
   return {

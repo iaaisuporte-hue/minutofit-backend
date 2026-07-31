@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import axios from 'axios';
 import logger from '../lib/logger';
+import { describeHttpError } from '../lib/httpError';
 
 const MP_API = 'https://api.mercadopago.com';
 const MP_TOKEN = () => process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
@@ -230,7 +231,7 @@ export async function subscribeStudent(
 
     return { subscription: { ...sub, mpPreapprovalId: mpId }, initPoint };
   } catch (err) {
-    logger.error({ err, subId: sub.id }, '[personalBilling] MP pre-approval failed');
+    logger.error({ err: describeHttpError(err), subId: sub.id }, '[personalBilling] MP pre-approval failed');
     await recordBillingEvent(sub.id, 'preapproval_error', { error: String(err) });
     throw err;
   }
@@ -270,7 +271,7 @@ export async function cancelSubscription(subId: number, personalId: number): Pro
           headers: { Authorization: `Bearer ${token}` },
           timeout: 10000,
         })
-        .catch((err) => logger.error({ err }, '[personalBilling] MP cancel failed (best-effort)'));
+        .catch((err) => logger.error({ err: describeHttpError(err) }, '[personalBilling] MP cancel failed (best-effort)'));
     }
   }
 

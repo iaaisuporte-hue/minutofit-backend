@@ -1,6 +1,7 @@
 import pool from '../config/database';
 import axios from 'axios';
 import logger from '../lib/logger';
+import { describeHttpError } from '../lib/httpError';
 import { getPreapprovalStatus } from './mercadoPagoService';
 
 const MP_API = 'https://api.mercadopago.com';
@@ -186,7 +187,7 @@ export async function createPlatformCheckout(
 
     return { initPoint };
   } catch (err) {
-    logger.error({ err, personalId, plan }, '[personalPlan] MP pre-approval failed');
+    logger.error({ err: describeHttpError(err), personalId, plan }, '[personalPlan] MP pre-approval failed');
     throw err;
   }
 }

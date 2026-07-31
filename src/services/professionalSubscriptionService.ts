@@ -1,6 +1,7 @@
 import axios from 'axios';
 import pool from '../config/database';
 import logger from '../lib/logger';
+import { describeHttpError } from '../lib/httpError';
 import { logDataAccessEvent } from './dataAccessAuditService';
 import {
   grantConsents,
@@ -216,7 +217,7 @@ export async function createCheckout(input: CheckoutInput): Promise<CheckoutResu
       expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
     };
   } catch (err) {
-    logger.error({ err, subId: sub.id }, '[proNetwork] MP pre-approval failed');
+    logger.error({ err: describeHttpError(err), subId: sub.id }, '[proNetwork] MP pre-approval failed');
     fail(502, 'mp_preapproval_failed');
   }
 }
@@ -360,7 +361,7 @@ async function cancelSubscriptionTx(
             { status: 'cancelled' },
             { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
           )
-          .catch((err) => logger.error({ err, subId: sub.id }, '[proNetwork] MP cancel failed'));
+          .catch((err) => logger.error({ err: describeHttpError(err), subId: sub.id }, '[proNetwork] MP cancel failed'));
       }
     }
 

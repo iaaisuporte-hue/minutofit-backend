@@ -115,7 +115,7 @@ function sanitizeTags(raw: unknown): ProtocolTags {
 
 export async function listWorkoutProtocolsForPersonal(
   personalId: number,
-  academyId: number,
+  academyId: number | null,
   options: {
     q?: string;
     scope?: ProtocolScope | 'all';
@@ -125,10 +125,16 @@ export async function listWorkoutProtocolsForPersonal(
 ): Promise<WorkoutProtocolRow[]> {
   const limit = Math.min(Math.max(options.limit ?? 80, 1), 120);
   const params: unknown[] = [personalId, academyId];
+  // Personal autônomo (academy_id NULL) enxerga protocolos da plataforma + os
+  // seus próprios; isolamento nesse caso é por owner_personal_id, não por tenant.
   let where = `WHERE (
     (p.scope = 'platform' AND p.academy_id IS NULL)
     OR (p.scope = 'academy' AND p.academy_id = $2)
-    OR (p.scope = 'personal' AND p.academy_id = $2 AND p.owner_personal_id = $1)
+    OR (
+      p.scope = 'personal'
+      AND p.owner_personal_id = $1
+      AND ($2::int IS NULL AND p.academy_id IS NULL OR p.academy_id = $2)
+    )
   )`;
 
   if (options.scope && options.scope !== 'all') {
@@ -171,7 +177,7 @@ export async function listWorkoutProtocolsForPersonal(
 
 export async function getWorkoutProtocolById(
   personalId: number,
-  academyId: number,
+  academyId: number | null,
   protocolId: number
 ): Promise<WorkoutProtocolRow | null> {
   const result = await pool.query(
@@ -189,7 +195,11 @@ export async function getWorkoutProtocolById(
        AND (
          (p.scope = 'platform' AND p.academy_id IS NULL)
          OR (p.scope = 'academy' AND p.academy_id = $2)
-         OR (p.scope = 'personal' AND p.academy_id = $2 AND p.owner_personal_id = $1)
+         OR (
+           p.scope = 'personal'
+           AND p.owner_personal_id = $1
+           AND ($2::int IS NULL AND p.academy_id IS NULL OR p.academy_id = $2)
+         )
        )
      LIMIT 1`,
     [personalId, academyId, protocolId]
@@ -201,7 +211,7 @@ export async function getWorkoutProtocolById(
 
 export async function createWorkoutProtocol(
   personalId: number,
-  academyId: number,
+  academyId: number | null,
   input: {
     scope: 'personal' | 'academy';
     title: string;
@@ -215,6 +225,11 @@ export async function createWorkoutProtocol(
 ) {
   if (input.scope !== 'personal' && input.scope !== 'academy') {
     throw new Error('Invalid scope for personal create');
+  }
+  // Escopo de academia só faz sentido com tenant resolvido; personal autônomo
+  // (academyId null) só cria protocolo privado.
+  if (input.scope === 'academy' && !academyId) {
+    throw new Error('Academy context required for academy scope');
   }
   const title = String(input.title || '').trim().slice(0, 255);
   if (!title) throw new Error('title is required');
@@ -253,7 +268,7 @@ export async function createWorkoutProtocol(
 
 export async function updateWorkoutProtocol(
   personalId: number,
-  academyId: number,
+  academyId: number | null,
   protocolId: number,
   input: Partial<{
     title: string;
@@ -280,7 +295,8 @@ export async function updateWorkoutProtocol(
     (err as any).code = 'FORBIDDEN';
     throw err;
   }
-  if (Number(row.academy_id) !== academyId) {
+  const rowAcademyId = row.academy_id != null ? Number(row.academy_id) : null;
+  if (rowAcademyId !== (academyId ?? null)) {
     const err = new Error('Forbidden');
     (err as any).code = 'FORBIDDEN';
     throw err;
@@ -340,7 +356,9 @@ export async function updateWorkoutProtocol(
     `UPDATE workout_protocols
      SET title = $1, description = $2, tags = $3::jsonb, week_preset = $4, selected_group = $5,
          payload_json = $6::jsonb, days_json = $7::jsonb, updated_at = NOW()
-     WHERE id = $8 AND owner_personal_id = $9 AND academy_id = $10 AND scope <> 'platform'
+     WHERE id = $8 AND owner_personal_id = $9
+       AND ($10::int IS NULL AND academy_id IS NULL OR academy_id = $10)
+       AND scope <> 'platform'
      RETURNING *`,
     [title, description, JSON.stringify(tags), weekPreset, selectedGroup, JSON.stringify(items), JSON.stringify(days), protocolId, personalId, academyId]
   );
@@ -610,7 +628,6 @@ export async function suggestProtocolsForStudent(
   studentId: number,
   academyId: number | null
 ): Promise<ProtocolSuggestion[]> {
-  if (!academyId) return [];
   const snap = await getPersonalStudentSnapshot(personalId, studentId, academyId);
   const protocols = await listWorkoutProtocolsForPersonal(personalId, academyId, { limit: 80 });
 

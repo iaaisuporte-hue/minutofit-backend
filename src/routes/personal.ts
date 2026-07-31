@@ -753,10 +753,9 @@ router.post('/ai/metabolic-hint', roleCheckMiddleware('personal'), async (req: R
 
 router.get('/protocols', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
+    // Personal autônomo (sem academia) tem academyId null — visibilidade/isolamento
+    // dos protocolos é resolvido por owner_personal_id no service.
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-    if (!academyId) {
-      return res.status(400).json({ success: false, error: 'Academy context required' });
-    }
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
     const scopeRaw = typeof req.query.scope === 'string' ? req.query.scope : undefined;
     const scope =
@@ -819,9 +818,6 @@ router.delete('/protocols/:protocolId/usages/:planId', roleCheckMiddleware('pers
 router.get('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-    if (!academyId) {
-      return res.status(400).json({ success: false, error: 'Academy context required' });
-    }
     const protocolId = Number(req.params.protocolId);
     if (!Number.isFinite(protocolId)) {
       return res.status(400).json({ success: false, error: 'Invalid protocol id' });
@@ -839,9 +835,6 @@ router.get('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req
 router.post('/protocols', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-    if (!academyId) {
-      return res.status(400).json({ success: false, error: 'Academy context required' });
-    }
     const body = req.body || {};
     const scope = body.scope === 'academy' ? 'academy' : 'personal';
     const title = typeof body.title === 'string' ? body.title : '';
@@ -879,9 +872,6 @@ router.post('/protocols', roleCheckMiddleware('personal'), async (req: Request, 
 router.patch('/protocols/:protocolId', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-    if (!academyId) {
-      return res.status(400).json({ success: false, error: 'Academy context required' });
-    }
     const protocolId = Number(req.params.protocolId);
     if (!Number.isFinite(protocolId)) {
       return res.status(400).json({ success: false, error: 'Invalid protocol id' });
@@ -939,9 +929,6 @@ router.delete('/protocols/:protocolId', roleCheckMiddleware('personal'), async (
 router.post('/protocols/:protocolId/favorite', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
   try {
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-    if (!academyId) {
-      return res.status(400).json({ success: false, error: 'Academy context required' });
-    }
     const protocolId = Number(req.params.protocolId);
     if (!Number.isFinite(protocolId)) {
       return res.status(400).json({ success: false, error: 'Invalid protocol id' });
@@ -968,9 +955,6 @@ router.get(
         return res.status(400).json({ success: false, error: 'Invalid student id' });
       }
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
-      if (!academyId) {
-        return res.status(400).json({ success: false, error: 'Academy context required' });
-      }
       const rows = await suggestProtocolsForStudent(req.user!.id, studentId, academyId);
       res.json({ success: true, data: rows });
     } catch (error: any) {

@@ -6,12 +6,28 @@ import logger from '../../lib/logger';
 
 const router = Router();
 
-// P0-4 da auditoria: o cálculo de metabolismo aciona IA (getMetabolicHint via
-// interpretation) — exigir o produto 'app' para não expor custo de IA a
-// qualquer autenticado. Freio anterior era só o rate limit por usuário.
-router.use(authMiddleware, requireProduct('app'));
+/**
+ * P0-4 da auditoria: o cálculo de metabolismo aciona IA (getMetabolicHint via
+ * interpretation) — exigir o produto 'app' para não expor custo de IA a
+ * qualquer autenticado. Freio anterior era só o rate limit por usuário.
+ *
+ * ⚠️ Aplicado POR ROTA, nunca com `router.use()`.
+ *
+ * Este router é montado no prefixo `/api` INTEIRO (`app.use('/api', metabolismRoutes)`),
+ * porque suas rotas são `/me/metabolism*`. Com `router.use(requireProduct('app'))`,
+ * o gate rodava em TODA requisição a `/api/*` que chegasse até aqui — e derrubava
+ * com 403 tudo que estivesse montado DEPOIS no index.ts.
+ *
+ * Efeito observado em produção (31/07/2026): todo personal criado pelo cadastro
+ * público (Spec 026) recebia 403 em `/api/professional/*`, `/api/sport/*`,
+ * `/api/training/*` e `/api/waitlist` — porque o cadastro de personal concede
+ * apenas o produto `personal`, e não `app` (que é do aluno), por design.
+ * Passou despercebido porque as contas legadas de teste tinham `app` por seed,
+ * e porque `/api/personal` está montado ANTES desta linha.
+ */
+const gate = [authMiddleware, requireProduct('app')];
 
-router.get('/me/metabolism', async (req: Request, res: Response) => {
+router.get('/me/metabolism', ...gate, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });
@@ -26,7 +42,7 @@ router.get('/me/metabolism', async (req: Request, res: Response) => {
   }
 });
 
-router.get('/me/metabolism/history', async (req: Request, res: Response) => {
+router.get('/me/metabolism/history', ...gate, async (req: Request, res: Response) => {
   try {
     if (!req.user) {
       return res.status(401).json({ error: 'Authentication required' });

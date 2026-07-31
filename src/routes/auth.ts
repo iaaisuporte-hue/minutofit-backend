@@ -718,14 +718,32 @@ router.patch('/student-compliance', authMiddleware, async (req: Request, res: Re
 // POST /auth/logout - Revoke the refresh token and clear the session
 router.post('/logout', authMiddleware, async (req: Request, res: Response) => {
   try {
+    // Spec 031 — logout que encerra a sessão de verdade.
+    //
+    // Antes: sem `refreshToken` no body o handler respondia 200 e o refresh
+    // continuava válido pelos 7 dias de TTL — o logout não encerrava nada.
+    //
+    // O endpoint é autenticado pelo ACCESS token, que não carrega o `jti` do
+    // refresh; sem o cliente informar qual token é, o servidor não tem como
+    // saber. Daí os dois caminhos:
+    //   1. Cliente coopera (é o caso do nosso app) → revoga só aquele token.
+    //      Logout continua sendo POR DISPOSITIVO: sair no celular não derruba
+    //      o desktop.
+    //   2. Cliente não coopera (legado, body perdido, chamada manual) → não há
+    //      alternativa segura senão invalidar todas as sessões do usuário.
+    let revokedSpecificToken = false;
     const rawRefreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : null;
     if (rawRefreshToken) {
       try {
         const payload = verifyRefreshToken(rawRefreshToken);
         await authService.revokeRefreshToken(payload.jti, payload.id, new Date(payload.exp * 1000));
+        revokedSpecificToken = true;
       } catch {
-        // Token already expired or invalid — nothing to revoke; logout still succeeds
+        // Token expirado/inválido — cai no fallback abaixo.
       }
+    }
+    if (!revokedSpecificToken) {
+      await authService.invalidateUserSessions(req.user!.id);
     }
     logAcademyAction({
       academyId: req.user?.activeAcademyId ?? null,

@@ -167,6 +167,17 @@ async function runBootChain(): Promise<void> {
 const app = express();
 
 /**
+ * Spec 031 — o Render serve a app atrás de um proxy reverso. Sem isto, `req.ip`
+ * é o IP do proxy para TODOS os clientes: o rate limit de login (que chaveia por
+ * `req.ip`) vira um balde único de 5 tentativas/min para a plataforma inteira —
+ * ao mesmo tempo inútil como proteção e trivial de usar como negação de serviço.
+ *
+ * `1` = confia em exatamente um salto (o proxy do Render). Não usar `true`, que
+ * confiaria em qualquer `X-Forwarded-For` recebido e permitiria forjar o IP.
+ */
+app.set('trust proxy', 1);
+
+/**
  * Fronts conhecidos em produção. O header `Origin` do browser é só scheme + host (sem path).
  */
 const BUNDLED_PRODUCTION_ORIGINS = [

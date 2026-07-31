@@ -86,22 +86,40 @@ describe('webhook MP — assinatura HMAC', () => {
     expect(res.status).toBe(401);
   });
 
-  it('aceita request com HMAC válido (não 401)', async () => {
-    const ts = '1700000000';
-    const dataId = '777';
-    const reqId = 'corr-uuid';
+  /** Monta uma assinatura MP válida para o `ts` dado. */
+  function signedRequest(ts: string, dataId = '777', reqId = 'corr-uuid') {
     const template = `id:${dataId};request-id:${reqId};ts:${ts}`;
     const v1 = crypto.createHmac('sha256', 'test-secret').update(template).digest('hex');
-
     mockedQuery.mockResolvedValue({ rows: [], rowCount: 0 });
-
-    const res = await request(buildApp())
+    return request(buildApp())
       .post(`/api/webhooks/mercadopago?data.id=${dataId}`)
       .set('x-signature', `ts=${ts},v1=${v1}`)
       .set('x-request-id', reqId)
       .send({ type: 'payment', data: { id: dataId } });
+  }
 
+  it('aceita request com HMAC válido e ts recente em MILISSEGUNDOS', async () => {
+    const res = await signedRequest(String(Date.now()));
     expect(res.status).not.toBe(401);
+  });
+
+  // Spec 031 — o formato do `ts` do MP não é garantido entre integrações.
+  // Aceitar só um dos dois rejeitaria todos os webhooks em produção se o outro
+  // chegasse: é o caminho do dinheiro, não pode depender de aposta.
+  it('aceita request com HMAC válido e ts recente em SEGUNDOS', async () => {
+    const res = await signedRequest(String(Math.floor(Date.now() / 1000)));
+    expect(res.status).not.toBe(401);
+  });
+
+  it('rejeita assinatura válida porém antiga (anti-replay)', async () => {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const res = await signedRequest(String(oneHourAgo));
+    expect(res.status).toBe(401);
+  });
+
+  it('rejeita ts não numérico', async () => {
+    const res = await signedRequest('not-a-timestamp');
+    expect(res.status).toBe(401);
   });
 });
 

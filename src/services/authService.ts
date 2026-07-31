@@ -71,6 +71,8 @@ export interface User {
   mustChangePassword?: boolean;
   /** Carimbo da última troca de senha — invalida refresh tokens emitidos antes. */
   passwordChangedAt?: string | null;
+  /** Spec 031 — refresh tokens emitidos antes deste instante são inválidos. */
+  sessionsInvalidatedAt?: string | null;
 }
 
 const USER_SELECT_FIELDS = `
@@ -105,7 +107,8 @@ const USER_SELECT_FIELDS = `
   parq_expires_at,
   parq_signature_level,
   COALESCE(must_change_password, false) AS must_change_password,
-  password_changed_at
+  password_changed_at,
+  sessions_invalidated_at
 `;
 
 export function normalizeCpf(cpf: string): string {
@@ -917,6 +920,20 @@ export async function revokeRefreshToken(jti: string, userId: number, expiresAt:
   );
 }
 
+/**
+ * Spec 031 — invalida TODOS os refresh tokens do usuário emitidos até agora.
+ *
+ * Usado no logout. Não depende do cliente enviar o token: o carimbo é comparado
+ * com o `iat` do JWT na rotação, mesmo mecanismo de `password_changed_at`.
+ *
+ * Nota: o access token em curso continua válido até expirar (TTL 1h). Invalidá-lo
+ * exigiria consulta ao banco a cada request autenticado — custo alto para uma
+ * janela curta. Decisão consciente, registrada na spec.
+ */
+export async function invalidateUserSessions(userId: number): Promise<void> {
+  await pool.query(`UPDATE users SET sessions_invalidated_at = NOW() WHERE id = $1`, [userId]);
+}
+
 export async function refreshWithRefreshToken(
   refreshToken: string
 ): Promise<{ user: User; accessToken: string; refreshToken: string }> {
@@ -949,6 +966,18 @@ export async function refreshWithRefreshToken(
     const changedAtSec = Math.floor(new Date(user.passwordChangedAt).getTime() / 1000);
     if (typeof iat === 'number' && iat < changedAtSec) {
       throw new Error('Refresh token invalidated by password change');
+    }
+  }
+
+  // Spec 031 — mesmo mecanismo para o logout. Antes o logout só revogava o
+  // token que o cliente mandasse no body; sem body, respondia 200 e a sessão
+  // seguia viva por 7 dias. Agora o logout carimba `sessions_invalidated_at` e
+  // todo refresh anterior morre, independente de o cliente cooperar.
+  if (user.sessionsInvalidatedAt) {
+    const iat = (payload as { iat?: number }).iat;
+    const invalidatedAtSec = Math.floor(new Date(user.sessionsInvalidatedAt).getTime() / 1000);
+    if (typeof iat === 'number' && iat < invalidatedAtSec) {
+      throw new Error('Refresh token invalidated by logout');
     }
   }
 
@@ -1157,6 +1186,9 @@ function mapUserRow(row: any): User {
     profileCompleted: row.profile_completed || false,
     mustChangePassword: row.must_change_password === true,
     passwordChangedAt: row.password_changed_at ? new Date(row.password_changed_at).toISOString() : null,
+    sessionsInvalidatedAt: row.sessions_invalidated_at
+      ? new Date(row.sessions_invalidated_at).toISOString()
+      : null,
     accessProfile: row.access_profile || undefined,
     oauthGoogleId: row.oauth_google_id,
     oauthAppleId: row.oauth_apple_id,

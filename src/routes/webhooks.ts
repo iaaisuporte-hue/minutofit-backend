@@ -54,6 +54,23 @@ function auditMpMembership(
  *  - x-signature header is missing or malformed
  *  - HMAC does not match
  */
+/** Tolerância de relógio para a assinatura do webhook (anti-replay). */
+const WEBHOOK_TS_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * Converte o `ts` da assinatura para milissegundos, aceitando segundos ou
+ * milissegundos. Retorna null quando não é um número utilizável.
+ *
+ * A fronteira é a magnitude: um timestamp em SEGUNDOS de uma data plausível
+ * (2001 em diante) tem 10 dígitos; em MILISSEGUNDOS, 13. Qualquer valor abaixo
+ * de 1e11 só faria sentido como segundos.
+ */
+function normalizeSignatureTs(raw: string): number | null {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n < 1e11 ? n * 1000 : n;
+}
+
 function validateMercadoPagoSignature(req: Request): boolean {
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET?.trim();
 
@@ -86,6 +103,19 @@ function validateMercadoPagoSignature(req: Request): boolean {
   const v1 = sigParts['v1'];
 
   if (!ts || !v1) {
+    return false;
+  }
+
+  // Spec 031 — janela temporal. O `ts` entrava no HMAC mas nunca era comparado
+  // com o relógio: uma assinatura válida capturada valia para sempre (replay).
+  //
+  // O formato do `ts` do MP não é garantido entre integrações (a fixture do
+  // teste usa segundos; a doc atual usa milissegundos). Assumir um só formato
+  // rejeitaria TODOS os webhooks em produção se o outro chegasse — justamente o
+  // caminho do dinheiro. Normalizamos pela magnitude em vez de apostar.
+  const tsMs = normalizeSignatureTs(ts);
+  if (tsMs === null || Math.abs(Date.now() - tsMs) > WEBHOOK_TS_TOLERANCE_MS) {
+    logger.warn({ ts }, '[webhook] assinatura fora da janela temporal — rejeitando (replay?)');
     return false;
   }
 

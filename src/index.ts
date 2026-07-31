@@ -65,10 +65,6 @@ import { ensureExercisesSchema } from './db/ensureExercisesSchema';
 import { seedExercisesIfEmpty } from './db/seedExercisesIfEmpty';
 import { ensureProductsSchema } from './db/ensureProductsSchema';
 import { backfillUserProducts } from './db/backfillUserProducts';
-import { scheduleDataRetention } from './jobs/dataRetention';
-import { scheduleGraceExpiry } from './jobs/graceExpiry';
-import { scheduleAcademySubExpiry } from './jobs/academySubExpiry';
-import { scheduleStorageOrphanSweep } from './jobs/storageOrphanSweep';
 import { getRedisClient } from './lib/redisClient';
 import { isStorageConfigured, warnIfStorageUnconfigured } from './lib/storage';
 import { isEmailConfigured } from './lib/email';
@@ -496,17 +492,15 @@ runBootChain()
       // Inicializa Redis (não bloqueia o boot — falha silenciosa com fallback in-memory)
       getRedisClient();
 
-      // Job de retenção de dados — LGPD (executa 30s após boot, depois a cada 24h)
-      scheduleDataRetention();
-
-      // Job de expiração de graça — fecha o App bônus vencido (idempotente, 1×/dia)
-      scheduleGraceExpiry();
-
-      // Job de auto-expiração da assinatura da academia — Pro vencido vira Free (Spec 018)
-      scheduleAcademySubExpiry();
-
-      // Job de varredura de órfãos de storage — LGPD (Spec 023; 45s após boot, a cada 6h)
-      scheduleStorageOrphanSweep();
+      // As rotinas agendadas NÃO rodam mais dentro do processo web.
+      //
+      // Eram `setTimeout(30-60s)` + `setInterval(24h)` aqui: num serviço que
+      // reinicia a cada deploy, o ciclo de 24h praticamente nunca disparava —
+      // só a passada inicial. Resultado: assinatura vencida não expirava e a
+      // purga de retenção (LGPD) não completava.
+      //
+      // Agora vivem em `src/scripts/runCronJobs.ts`, executado por Render Cron
+      // Jobs (`daily` e `six-hourly`), com advisory lock e report ao Sentry.
     });
   })
   .catch((err) => {

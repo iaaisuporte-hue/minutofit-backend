@@ -107,6 +107,20 @@ function describeInviteAcceptError(err: any, role: 'personal' | 'nutri'): string
       ? 'Não foi possível concluir o vínculo com este personal.'
       : 'Não foi possível concluir o vínculo com este nutricionista.';
   }
+  // Violação de NOT NULL vazava o texto cru do Postgres para a tela
+  // (`null value in column "cpf" ... violates not-null constraint`) — erro de
+  // formulário disfarçado de falha interna (QA 02/ago/2026).
+  if (err?.code === '23502' || raw.includes('violates not-null constraint')) {
+    if (raw.includes('"cpf"')) return 'Informe o CPF para criar sua conta.';
+    if (raw.includes('"phone"')) return 'Informe o telefone para criar sua conta.';
+    if (raw.includes('"name"')) return 'Informe seu nome para criar sua conta.';
+    return 'Preencha todos os campos obrigatórios para criar sua conta.';
+  }
+  // Nunca devolver mensagem crua de banco: `raw` só passa quando é erro nosso,
+  // com texto escrito para o usuário final.
+  if (/relation |column |constraint|syntax error|violates /i.test(raw)) {
+    return 'Não foi possível concluir o cadastro.';
+  }
   return raw || 'Não foi possível concluir o cadastro.';
 }
 
@@ -1154,11 +1168,32 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
     if (!isNew) {
       const valid = await verifyUserPassword(identityUser.id, password);
       if (!valid) {
+        // O dedup do aceite é amplo (email > cpf > phone). Quando o casamento
+        // veio por CPF/telefone, a conta encontrada é de OUTRO e-mail — devolver
+        // `email`/`userExists` transformava a rota em oráculo: digitando um
+        // telefone alheio, qualquer um descobria que ele tem conta e qual o
+        // e-mail dela (QA 02/ago/2026, P3-10).
+        //
+        // Só confirmamos a existência quando o e-mail digitado é o da própria
+        // conta — aí o dado já é de quem está na tela, e a UX de "entre com a
+        // senha da conta existente" continua funcionando.
+        const matchedByEmail =
+          String(identityUser.email || '').toLowerCase() === finalEmail;
+
+        if (matchedByEmail) {
+          return res.status(401).json({
+            success: false,
+            error: 'Senha incorreta para a conta existente. Faça login para aceitar o convite.',
+            userExists: true,
+            email: identityUser.email,
+          });
+        }
+
         return res.status(401).json({
           success: false,
-          error: 'Senha incorreta para a conta existente. Faça login para aceitar o convite.',
-          userExists: true,
-          email: identityUser.email,
+          error:
+            'Não foi possível concluir o cadastro com estes dados. '
+            + 'Se você já tem conta, faça login e use o link do convite novamente.',
         });
       }
     } else {
@@ -1286,11 +1321,32 @@ router.post('/direct-invite-nutri/:token/accept', async (req: Request, res: Resp
     if (!isNew) {
       const valid = await verifyUserPassword(identityUser.id, password);
       if (!valid) {
+        // O dedup do aceite é amplo (email > cpf > phone). Quando o casamento
+        // veio por CPF/telefone, a conta encontrada é de OUTRO e-mail — devolver
+        // `email`/`userExists` transformava a rota em oráculo: digitando um
+        // telefone alheio, qualquer um descobria que ele tem conta e qual o
+        // e-mail dela (QA 02/ago/2026, P3-10).
+        //
+        // Só confirmamos a existência quando o e-mail digitado é o da própria
+        // conta — aí o dado já é de quem está na tela, e a UX de "entre com a
+        // senha da conta existente" continua funcionando.
+        const matchedByEmail =
+          String(identityUser.email || '').toLowerCase() === finalEmail;
+
+        if (matchedByEmail) {
+          return res.status(401).json({
+            success: false,
+            error: 'Senha incorreta para a conta existente. Faça login para aceitar o convite.',
+            userExists: true,
+            email: identityUser.email,
+          });
+        }
+
         return res.status(401).json({
           success: false,
-          error: 'Senha incorreta para a conta existente. Faça login para aceitar o convite.',
-          userExists: true,
-          email: identityUser.email,
+          error:
+            'Não foi possível concluir o cadastro com estes dados. '
+            + 'Se você já tem conta, faça login e use o link do convite novamente.',
         });
       }
     } else {

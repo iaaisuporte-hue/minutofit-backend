@@ -36,8 +36,12 @@ import {
 } from '../services/pushSubscriptionService';
 import { listPendingVoiceNotesForPatient } from '../services/nutritionVoiceNoteService';
 import pool from '../config/database';
+import { registerNumericParams } from '../middleware/numericParam';
 
 const router = Router();
+// `id` fica de fora: em student_professional_requests / professional_subscriptions
+// o id é UUID, não inteiro.
+registerNumericParams(router, ['professionalId']);
 router.use(authMiddleware);
 
 // ── Student endpoints ─────────────────────────────────────────────────────

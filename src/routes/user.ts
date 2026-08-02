@@ -26,8 +26,12 @@ import { StorageNotConfiguredError } from '../lib/storage';
 import { deleteUserAccount, exportUserData } from '../services/accountDeletionService';
 import bcryptjs from 'bcryptjs';
 import pool from '../config/database';
+import { registerNumericParams } from '../middleware/numericParam';
+import { parseLimit } from '../utils/parseId';
+import { listReviewsForStudent } from '../services/workoutReviewsService';
 
 const router = Router();
+registerNumericParams(router, ['planId', 'mealId', 'id']);
 
 // Eventos de UX do frontend do aluno — allow-list; actorId = subjectUserId = self.
 // Mede percepção real do aluno (card renderizado), não só fetch. Espelha POST /training/events.
@@ -121,6 +125,21 @@ router.post('/workout-plans/:planId/abandon', authMiddleware, async (req: Reques
   } catch (err: any) {
     logger.error({ err: err }, '[user/workout-plans/abandon]');
     return res.status(500).json({ success: false, error: err.message || 'Failed to abandon plan' });
+  }
+});
+
+/**
+ * Feedback de revisão que o personal escreveu PARA o aluno (QA 02/ago/2026, P1-5).
+ * Escopo garantido por `req.user.id` — o aluno só lê as próprias revisões.
+ * Devolve apenas `approved` com feedback preenchido; `internalNotes` fica fora.
+ */
+router.get('/workout-reviews', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const reviews = await listReviewsForStudent(req.user!.id, parseLimit(req.query.limit, 10, 50));
+    res.json({ success: true, data: reviews });
+  } catch (err) {
+    logger.error({ err }, '[user/workout-reviews]');
+    res.status(500).json({ success: false, error: 'Failed to load workout reviews' });
   }
 });
 

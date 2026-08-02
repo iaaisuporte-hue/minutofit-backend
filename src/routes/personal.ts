@@ -33,6 +33,7 @@ import { listPhotosForProfessional } from '../services/progressPhotoService';
 import { StorageNotConfiguredError } from '../lib/storage';
 import {
   approveWorkoutReview,
+  archiveOpenReviewsForPair,
   archiveWorkoutReview,
   createWorkoutReview,
   listWorkoutReviews,
@@ -77,6 +78,7 @@ import {
 } from '../services/personalSessionService';
 import crypto from 'crypto';
 import {
+  ACTION_TYPES,
   createRelationshipAction,
   deleteRelationshipAction,
   listRelationshipTimeline,
@@ -101,8 +103,17 @@ import {
   updateBillingPlan,
   upsertBillingSettings,
 } from '../services/personalBillingService';
+import { registerNumericParams } from '../middleware/numericParam';
 
 const router = Router();
+
+// Todo path param numérico é validado antes de qualquer handler tocar o banco
+// (QA 02/ago/2026, P0-1): id fora da faixa do int4 estourava no Postgres —
+// 500 nas rotas com try/catch e QUEDA DO PROCESSO nas guardadas por middleware
+// async. Aqui vira 400 na porta de entrada.
+registerNumericParams(router, [
+  'studentId', 'planId', 'protocolId', 'reviewId', 'noteId', 'actionId', 'id',
+]);
 
 // ── Rota do ALUNO (precede o gate de produto) ──────────────────────────────
 // O aluno lê a PRÓPRIA ficha atribuída pelo personal. Não pode exigir o produto
@@ -707,6 +718,16 @@ router.delete(
         logger.error({ err, studentId, personalId }, '[personal] cancelMembership pós-desvínculo falhou');
       }
 
+      // Revisões em aberto do par são arquivadas (QA 02/ago/2026, P3-9). Sem
+      // isso, `GET /personal/reviews` seguia listando o ex-aluno pelo nome
+      // depois do desvínculo e da revogação total de consent — as rotas
+      // individuais já bloqueavam, só a lista não sabia.
+      try {
+        await archiveOpenReviewsForPair(personalId, studentId);
+      } catch (err) {
+        logger.error({ err, studentId, personalId }, '[personal] arquivamento de revisões pós-desvínculo falhou');
+      }
+
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       if (academyId != null) {
         logAcademyAction({
@@ -1241,7 +1262,9 @@ router.post(
       }
       const internalNotes =
         typeof req.body?.internalNotes === 'string' ? req.body.internalNotes : undefined;
-      const row = await approveWorkoutReview(req.user!.id, reviewId, internalNotes);
+      const studentFeedback =
+        typeof req.body?.studentFeedback === 'string' ? req.body.studentFeedback : undefined;
+      const row = await approveWorkoutReview(req.user!.id, reviewId, internalNotes, studentFeedback);
       res.json({ success: true, data: row });
     } catch (error: any) {
       if (error?.code === 'NOT_FOUND') {
@@ -1559,7 +1582,16 @@ router.post(
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       const { actionType, payloadJson, source, dueAt, linkedSignalId } = req.body;
 
-      if (!actionType) return res.status(400).json({ success: false, error: 'actionType required' });
+      // Valida contra o enum ANTES do INSERT (QA 02/ago/2026, P2-7): um
+      // actionType desconhecido violava o CHECK do banco e voltava 500
+      // "Internal server error" — erro de cliente disfarçado de falha nossa.
+      if (!actionType || !ACTION_TYPES.includes(actionType as ActionType)) {
+        return res.status(400).json({
+          success: false,
+          error: `actionType inválido. Use: ${ACTION_TYPES.join(', ')}`,
+          code: 'INVALID_ACTION_TYPE',
+        });
+      }
 
       const action = await createRelationshipAction(personalId, studentId, academyId, {
         actionType: actionType as ActionType,

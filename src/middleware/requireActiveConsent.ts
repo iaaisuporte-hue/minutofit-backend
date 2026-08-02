@@ -1,6 +1,7 @@
 import { type Request, type Response, type NextFunction } from 'express';
 import { hasActiveConsent, type ConsentScope, type ProfessionalRole } from '../services/consentService';
 import logger from '../lib/logger';
+import { parseId } from '../utils/parseId';
 
 /**
  * Garante que o profissional autenticado tem consentimento ativo do aluno
@@ -40,13 +41,22 @@ export function requireActiveConsent(scope: ConsentScope) {
       return res.status(403).json({ error: 'consent_subject_unresolved', scope });
     }
 
-    const studentId = parseInt(rawStudentId, 10);
-    if (isNaN(studentId)) return res.status(400).json({ error: 'invalid_student_id' });
+    // Faixa do int4 validada ANTES do banco: id fora dela estourava no Postgres
+    // e, sem o try/catch abaixo, derrubava o processo (QA 02/ago/2026, P0-1).
+    const studentId = parseId(rawStudentId);
+    if (studentId === null) return res.status(400).json({ error: 'invalid_student_id' });
 
-    const allowed = await hasActiveConsent(studentId, professional.id, role, scope);
-    if (!allowed) {
-      return res.status(403).json({ error: 'consent_required', scope });
+    try {
+      const allowed = await hasActiveConsent(studentId, professional.id, role, scope);
+      if (!allowed) {
+        return res.status(403).json({ error: 'consent_required', scope });
+      }
+      return next();
+    } catch (err) {
+      // Middleware async NÃO tem captura automática no Express 4: sem este
+      // catch a rejeição vira `unhandledRejection` e mata o processo. Entrega
+      // ao error handler global, que responde 500 e reporta ao Sentry.
+      return next(err);
     }
-    next();
   };
 }

@@ -21,17 +21,23 @@ export function requirePhysicalActivityClearance() {
       return next();
     }
 
-    const clearance = await getClearanceForUser(req.user.id);
+    // try/catch obrigatório: middleware async sem captura vira
+    // `unhandledRejection` e derruba o processo (QA 02/ago/2026, P0-1).
+    try {
+      const clearance = await getClearanceForUser(req.user.id);
 
-    if (!clearance.valid) {
-      return res.status(403).json({
-        success: false,
-        code: 'PARQ_CLEARANCE_REQUIRED',
-        reason: clearance.reason,
-        expiresAt: clearance.expiresAt,
-      });
+      if (!clearance.valid) {
+        return res.status(403).json({
+          success: false,
+          code: 'PARQ_CLEARANCE_REQUIRED',
+          reason: clearance.reason,
+          expiresAt: clearance.expiresAt,
+        });
+      }
+
+      return next();
+    } catch (err) {
+      return next(err);
     }
-
-    return next();
   };
 }

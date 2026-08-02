@@ -14,8 +14,11 @@ import logger from '../lib/logger';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
 import { createSession, listSessions, getSession, getWorkoutStats } from '../services/workoutSessionService';
 import { dayKey } from '../utils/appDay';
+import { registerNumericParams } from '../middleware/numericParam';
+import { parseLimit } from '../utils/parseId';
 
 const router = Router();
+registerNumericParams(router, ['id']);
 router.use(authMiddleware, requireProduct('app'));
 
 const personalSource = new PersonalPrescriptionSource();
@@ -272,7 +275,9 @@ router.post('/sessions', requirePhysicalActivityClearance(), retroOnly(retroFeat
 // GET /api/training/sessions — histórico do aluno
 router.get('/sessions', async (req: Request, res: Response) => {
   try {
-    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+    // `?limit=' OR '1'='1` virava NaN e chegava ao LIMIT $n → 500
+    // (QA 02/ago/2026, P2-7). Entrada inválida agora cai no default.
+    const limit = parseLimit(req.query.limit, 50);
     const rows = await listSessions(req.user!.id, limit);
     return res.json({ success: true, data: rows });
   } catch (err: any) {

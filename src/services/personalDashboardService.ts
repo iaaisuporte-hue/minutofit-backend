@@ -118,12 +118,31 @@ export function weeklyTargetFromPreset(preset: string | null): number | null {
  *
  * Agora a fonte primária é a prescrição do próprio personal (`week_preset` da
  * ficha ativa); o tier fica como fallback para aluno sem ficha.
+ *
+ * O alvo é PROPORCIONAL ao tempo de vínculo (QA 02/ago/2026, P1-2): medir 30
+ * dias de quem tem 2 dias de carteira é aritmeticamente impossível de acertar.
+ * Um aluno que se cadastrou hoje e já treinou marcava 8% e caía direto em
+ * `adherencePct < 15` → "crítico", indo parar no topo de "Alunos em risco" no
+ * dia em que fez tudo certo. A carência de `isOnboarding` não cobria: ela vale
+ * só enquanto NÃO há sinal nenhum, e o primeiro treino a encerra.
+ *
+ * Piso de 7 dias: abaixo disso o denominador vira uma semana, não um dia — sem
+ * ele, um único treino no primeiro dia marcaria bem mais de 100%.
  */
-export function resolveMonthlyTarget(plan: PersonalDashboardPlan, weekPreset: string | null): number {
+export function resolveMonthlyTarget(
+  plan: PersonalDashboardPlan,
+  weekPreset: string | null,
+  daysSinceAssigned: number | null = null,
+): number {
   const weekly = weeklyTargetFromPreset(weekPreset);
-  if (weekly === null) return targetWorkoutsPerMonth(plan);
   // 30 dias ≈ 4.29 semanas. Arredonda para baixo para não punir a semana parcial.
-  return Math.max(1, Math.floor(weekly * (30 / 7)));
+  const full = weekly === null
+    ? targetWorkoutsPerMonth(plan)
+    : Math.max(1, Math.floor(weekly * (30 / 7)));
+
+  if (daysSinceAssigned === null || daysSinceAssigned >= 30) return full;
+  const window = Math.max(daysSinceAssigned, 7);
+  return Math.max(1, Math.round(full * (window / 30)));
 }
 
 /**
@@ -510,8 +529,12 @@ function computeRetentionInsights(students: PersonalDashboardStudent[]): Retenti
 
   // Sinal individual: aluno com maior queda de risco recente.
   // riskScore null = aluno em onboarding: não há queda, ele nem começou.
+  //
+  // `workouts7d === 0` (era `<= 1`): quem treinou HOJE tem workouts7d = 1 e
+  // entrava aqui, gerando "Sem treino há 0 dias" — contradição factual na cara
+  // do personal (QA 02/ago/2026, P1-3). Sinal de queda é sobre quem PAROU.
   const worstDrop = [...students]
-    .filter((s) => s.riskScore !== null && s.riskScore >= 60 && s.workouts7d <= 1)
+    .filter((s) => s.riskScore !== null && s.riskScore >= 60 && s.workouts7d === 0)
     .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0))[0];
   if (worstDrop) {
     // `daysSinceLastWorkout` devolve null quando nunca houve treino — antes o
@@ -520,10 +543,16 @@ function computeRetentionInsights(students: PersonalDashboardStudent[]): Retenti
     const [title, situacao] =
       dias === null
         ? [`${worstDrop.name} ainda não começou`, 'Ainda não registrou o primeiro treino']
-        : [
-            `${worstDrop.name} com queda de aderência`,
-            `Sem treino há ${dias} ${dias === 1 ? 'dia' : 'dias'}`,
-          ];
+        : dias === 0
+          ? [
+              // Defesa da copy: mesmo que o filtro mude, "há 0 dias" nunca sai daqui.
+              `${worstDrop.name} treinou hoje, mas o ritmo caiu`,
+              'Treinou hoje depois de um período parado',
+            ]
+          : [
+              `${worstDrop.name} com queda de aderência`,
+              `Sem treino há ${dias} ${dias === 1 ? 'dia' : 'dias'}`,
+            ];
     insights.push({
       kind: 'individual_drop',
       title,
@@ -834,11 +863,16 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
   const baseStudents = result.rows.map((row) => {
     const plan = mapPlan(row.subscription_tier);
     const workouts30d = Number(row.workouts_30d || 0);
-    const target30d = resolveMonthlyTarget(plan, row.active_week_preset ?? null);
-    const adherencePct = clamp(Math.round((workouts30d / target30d) * 100), 0, 100);
     const lastWorkoutISO = row.last_workout_at ? new Date(row.last_workout_at).toISOString() : null;
     const lastCheckinISO = row.last_checkin_date ? new Date(row.last_checkin_date).toISOString() : null;
     const assignedAtISO = row.assigned_at ? new Date(row.assigned_at).toISOString() : null;
+    // Denominador proporcional ao tempo de carteira — ver resolveMonthlyTarget.
+    const target30d = resolveMonthlyTarget(
+      plan,
+      row.active_week_preset ?? null,
+      daysSinceOrNull(assignedAtISO),
+    );
+    const adherencePct = clamp(Math.round((workouts30d / target30d) * 100), 0, 100);
     const risk = resolveRisk({
       lastWorkoutISO,
       assignedAtISO,
@@ -945,6 +979,25 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       student.lastCheckinISO = null;
       student.checkins7d = 0;
       student.latestSleptWell = null;
+    }
+    // `workouts` e `profile` faltavam nesta lista (QA 02/ago/2026, P2-6): o
+    // aluno revogava, `/training-summary` passava a devolver 403 — e o
+    // dashboard continuava exibindo treinos, streak, último treino, aderência
+    // e objetivo. Duas rotas, dois comportamentos, para o mesmo escopo.
+    if (!scopes.has('workouts')) {
+      student.workouts7d = 0;
+      student.workouts30d = 0;
+      student.streakDays = 0;
+      student.lastWorkoutISO = null;
+      student.adherencePct = 0;
+      student.adherenceScore = 0;
+    }
+    if (!scopes.has('profile')) {
+      // `goal` NÃO é redigido, e isso é decisão consciente: é objetivo de treino
+      // grosseiro (3 valores, com default 'emagrecimento' para quem não
+      // respondeu), prescrito pelo próprio personal — não dado de saúde. O que
+      // sai é a anotação livre, que pode conter qualquer coisa.
+      student.notes = null;
     }
   }
 

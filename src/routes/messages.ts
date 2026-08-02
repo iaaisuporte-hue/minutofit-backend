@@ -10,8 +10,10 @@ import {
 } from '../services/messagesService';
 import { chatStreamSubscribe } from '../services/chatStream';
 import { recordMessageSentAction } from '../services/personalRetentionService';
+import { registerNumericParams } from '../middleware/numericParam';
 
 const router = Router();
+registerNumericParams(router, ['conversationId']);
 // requireAcademyContext removido: standalone user (sem academia, sem personal/nutri)
 // pode chamar /conversations e recebe []. Operações de envio validam o par
 // user-personal no service layer.

@@ -17,6 +17,8 @@ type ConversationRow = {
   updated_at: Date | string;
   last_read_at_by_student: Date | string | null;
   last_read_at_by_personal: Date | string | null;
+  /** Vínculo personal↔aluno ainda ativo? false = conversa somente leitura. */
+  link_active?: boolean;
 };
 
 type MessageRow = {
@@ -73,6 +75,8 @@ function mapConversation(
     updatedAt: new Date(row.updated_at).toISOString(),
     lastReadAtByStudent: toIsoOrNull(row.last_read_at_by_student),
     lastReadAtByPersonal: toIsoOrNull(row.last_read_at_by_personal),
+    // false = vínculo encerrado: histórico visível, envio bloqueado (P2-8).
+    linkActive: row.link_active !== false,
     unreadCount:
       viewerRole === 'personal'
         ? Number(row.unread_for_personal || 0)
@@ -125,13 +129,14 @@ async function resolveConversationForViewer(
         personal_user.email AS personal_email,
         student_user.name AS student_name,
         student_user.email AS student_email,
-        student_user.phone AS student_phone
+        student_user.phone AS student_phone,
+        (psa.id IS NOT NULL) AS link_active
       FROM chat_conversations cc
       JOIN users personal_user
         ON personal_user.id = cc.personal_id
       JOIN users student_user
         ON student_user.id = cc.student_id
-      JOIN personal_student_assignments psa
+      LEFT JOIN personal_student_assignments psa
         ON psa.personal_id = cc.personal_id
        AND psa.student_id = cc.student_id
        AND psa.status = 'active'
@@ -142,7 +147,20 @@ async function resolveConversationForViewer(
     params
   );
 
-  return result.rows[0] || null;
+  const row = result.rows[0];
+  if (!row) return null;
+
+  // O JOIN de vínculo ativo virou LEFT JOIN (QA 02/ago/2026, P2-8): antes, o
+  // desvínculo apagava a conversa para OS DOIS lados — inclusive para o aluno,
+  // que perdia acesso às mensagens que ELE escreveu. Agora o vínculo encerrado
+  // vira estado (`linkActive`), não sumiço:
+  //   • aluno  → continua lendo o próprio histórico, sem poder responder;
+  //   • personal/admin → segue sem acesso algum ao ex-aluno (comportamento
+  //     anterior preservado — é dado de quem não é mais cliente dele).
+  const linkActive = row.link_active === true;
+  if (!linkActive && viewerRole !== 'user') return null;
+
+  return { ...row, linkActive };
 }
 
 async function resolvePersonalForStudent(studentId: number): Promise<number | null> {
@@ -173,11 +191,14 @@ export async function listChatConversations(
   let viewerFilter = '';
 
   if (viewerRole === 'personal') {
-    viewerFilter = 'cc.personal_id = $1';
+    // Profissional só enxerga a carteira atual — conversa de ex-aluno some.
+    viewerFilter = 'cc.personal_id = $1 AND psa.id IS NOT NULL';
   } else if (viewerRole === 'user') {
+    // Aluno mantém o próprio histórico mesmo após o vínculo terminar (P2-8);
+    // `linkActive: false` diz à UI para renderizar somente leitura.
     viewerFilter = 'cc.student_id = $1';
   } else {
-    viewerFilter = 'TRUE';
+    viewerFilter = 'psa.id IS NOT NULL';
   }
 
   let academyFilter = '';
@@ -210,6 +231,7 @@ export async function listChatConversations(
         student_user.name AS student_name,
         student_user.email AS student_email,
         student_user.phone AS student_phone,
+        (psa.id IS NOT NULL) AS link_active,
         last_message.id AS last_message_id,
         last_message.text AS last_message_text,
         last_message.created_at AS last_message_created_at,
@@ -234,7 +256,7 @@ export async function listChatConversations(
         ON personal_user.id = cc.personal_id
       JOIN users student_user
         ON student_user.id = cc.student_id
-      JOIN personal_student_assignments psa
+      LEFT JOIN personal_student_assignments psa
         ON psa.personal_id = cc.personal_id
        AND psa.student_id = cc.student_id
        AND psa.status = 'active'
@@ -418,6 +440,14 @@ export async function sendMessageToConversation(
   if (!conversation) {
     const err = new Error('Conversation not found');
     (err as Error & { code?: string }).code = 'NOT_FOUND';
+    throw err;
+  }
+
+  // Leitura sobrevive ao fim do vínculo (P2-8); escrita não. Sem vínculo ativo
+  // não existe relação profissional para sustentar a conversa.
+  if (!conversation.linkActive) {
+    const err = new Error('Este acompanhamento foi encerrado — a conversa está somente para leitura.');
+    (err as Error & { code?: string }).code = 'FORBIDDEN';
     throw err;
   }
 

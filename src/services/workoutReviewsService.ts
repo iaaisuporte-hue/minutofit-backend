@@ -78,6 +78,87 @@ export async function listWorkoutReviews(personalId: number): Promise<WorkoutRev
   return result.rows.map(mapRow);
 }
 
+/**
+ * Revisões que o ALUNO pode ver (QA 02/ago/2026, P1-5).
+ *
+ * O campo se chama `studentFeedback` e era escrito pelo personal na aprovação —
+ * mas não existia leitura do lado do aluno: o profissional escrevia achando que
+ * estava falando com ele, e a mensagem morria na própria tela do personal.
+ *
+ * Entram `changes_requested` — o caminho real do produto, botão "Devolve para o
+ * aluno com feedback" — e `approved` com feedback preenchido. Ficam de fora
+ * `pending` (trabalho em andamento) e `archived`. `internal_notes` NUNCA sai
+ * daqui: é anotação privada do profissional.
+ */
+export type StudentVisibleReview = {
+  id: string;
+  title: string;
+  goal: string;
+  status: Extract<ReviewStatus, 'approved' | 'changes_requested'>;
+  studentFeedback: string;
+  personalName: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+};
+
+export async function listReviewsForStudent(
+  studentId: number,
+  limit = 10,
+): Promise<StudentVisibleReview[]> {
+  const result = await pool.query<{
+    id: number;
+    title: string;
+    goal: string;
+    status: 'approved' | 'changes_requested';
+    student_feedback: string;
+    personal_name: string | null;
+    reviewed_at: Date | string | null;
+    created_at: Date | string;
+  }>(
+    `SELECT wr.id, wr.title, wr.goal, wr.status, wr.student_feedback,
+            u.name AS personal_name, wr.reviewed_at, wr.created_at
+       FROM workout_reviews wr
+       LEFT JOIN users u ON u.id = wr.personal_id
+      WHERE wr.student_id = $1
+        AND wr.status IN ('approved', 'changes_requested')
+        AND wr.student_feedback IS NOT NULL
+        AND btrim(wr.student_feedback) <> ''
+      ORDER BY COALESCE(wr.reviewed_at, wr.updated_at) DESC
+      LIMIT $2`,
+    [studentId, limit],
+  );
+
+  return result.rows.map((row) => ({
+    id: String(row.id),
+    title: row.title,
+    goal: row.goal,
+    status: row.status,
+    studentFeedback: row.student_feedback,
+    personalName: row.personal_name,
+    reviewedAt: row.reviewed_at ? new Date(row.reviewed_at).toISOString() : null,
+    createdAt: new Date(row.created_at).toISOString(),
+  }));
+}
+
+/**
+ * Arquiva revisões em aberto quando o vínculo termina (QA 02/ago/2026, P3-9).
+ * Sem isto, `GET /personal/reviews` continuava listando o ex-aluno pelo nome
+ * depois do desvínculo e da revogação total de consent.
+ */
+export async function archiveOpenReviewsForPair(
+  personalId: number,
+  studentId: number,
+): Promise<number> {
+  const result = await pool.query(
+    `UPDATE workout_reviews
+        SET status = 'archived', updated_at = NOW()
+      WHERE personal_id = $1 AND student_id = $2
+        AND status IN ('pending', 'changes_requested')`,
+    [personalId, studentId],
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function createWorkoutReview(
   personalId: number,
   academyId: number | null,
@@ -204,8 +285,17 @@ async function transitionStatus(
   return mapRow(updated.rows[0]);
 }
 
-export function approveWorkoutReview(personalId: number, reviewId: number, internalNotes?: string) {
-  return transitionStatus(personalId, reviewId, 'approved', { internalNotes });
+export function approveWorkoutReview(
+  personalId: number,
+  reviewId: number,
+  internalNotes?: string,
+  studentFeedback?: string,
+) {
+  // `studentFeedback` no approve (QA 02/ago/2026, P1-5): antes só
+  // `request-changes` gravava a mensagem do aluno, então aprovar com um recado
+  // simplesmente descartava o texto. Continua opcional — aprovar sem mensagem
+  // preserva o feedback anterior.
+  return transitionStatus(personalId, reviewId, 'approved', { internalNotes, studentFeedback });
 }
 
 export function requestChangesWorkoutReview(

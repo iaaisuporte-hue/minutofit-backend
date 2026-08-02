@@ -524,6 +524,24 @@ app.use((err: unknown, req: express.Request, res: express.Response, _next: expre
 });
 
 // ---------------------------------------------------------------------------
+// Rede de segurança de processo (QA 02/ago/2026, P0-1).
+//
+// O error handler acima só vê o que o Express entrega — e o Express 4 NÃO
+// captura rejeição de promise em middleware async. Uma única requisição com id
+// fora da faixa do int4 derrubava o processo inteiro (`unhandled-rejections=throw`
+// é o default do Node 20): API fora do ar para todos os usuários até o restart.
+//
+// As causas pontuais foram corrigidas nos middlewares, mas o handler fica como
+// rede permanente: um bug futuro em código async vira alerta no Sentry, não
+// indisponibilidade. `uncaughtException` NÃO entra aqui de propósito — estado
+// corrompido de processo deve mesmo derrubar e deixar o Render reiniciar.
+// ---------------------------------------------------------------------------
+process.on('unhandledRejection', (reason) => {
+  Sentry.captureException(reason);
+  logger.error({ err: reason }, '[process] unhandledRejection — requisição async sem try/catch');
+});
+
+// ---------------------------------------------------------------------------
 // Validação de env de runtime — não derruba o boot (pagamento fora ≠ app fora),
 // mas loga alto (error em produção) para que faltas não passem silenciosas.
 // ---------------------------------------------------------------------------

@@ -39,8 +39,10 @@ import {
   suggestSubstitutions,
   ValidationError,
 } from '../services/dietaryProfileService';
+import { registerNumericParams } from '../middleware/numericParam';
 
 const router = Router();
+registerNumericParams(router, ['patientId', 'planId', 'itemId', 'id']);
 
 const INVITE_EXPIRY_DAYS = 14;
 

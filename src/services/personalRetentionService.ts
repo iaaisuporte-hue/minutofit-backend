@@ -1,15 +1,23 @@
 import pool from '../config/database';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 
-export type ActionType =
-  | 'follow_up_marked'
-  | 'observation'
-  | 'bonus_offered'
-  | 'light_workout_offered'
-  | 'gradual_return_offered'
-  | 'message_sent'
-  | 'quick_nudge'
-  | 'recognition_sent';
+/**
+ * Espelha o CHECK de `personal_relationship_actions.action_type`. Exportado
+ * como valor (não só tipo) para a rota validar antes do INSERT — sem isso o
+ * banco rejeitava e o cliente via 500 (QA 02/ago/2026, P2-7).
+ */
+export const ACTION_TYPES = [
+  'follow_up_marked',
+  'observation',
+  'bonus_offered',
+  'light_workout_offered',
+  'gradual_return_offered',
+  'message_sent',
+  'quick_nudge',
+  'recognition_sent',
+] as const;
+
+export type ActionType = (typeof ACTION_TYPES)[number];
 
 export type CreateActionInput = {
   actionType: ActionType;

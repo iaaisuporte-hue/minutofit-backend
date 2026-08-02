@@ -2,6 +2,8 @@ import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { authMiddleware } from '../middleware/auth';
 import * as authService from '../services/authService';
+import { isValidEmail } from '../utils/emailPolicy';
+import { parseAndValidateOnboarding } from '../services/complianceValidation';
 import * as oauthService from '../services/oauthService';
 import { generateAccessToken, generateRefreshToken } from '../utils/jwt';
 import { verifyRegistrationCaptcha } from '../services/captchaService';
@@ -81,6 +83,34 @@ const forgotPasswordRateLimit = rateLimit({
 
 const router = Router();
 
+/**
+ * O aceite de convite pode esbarrar em `uniq_active_personal_per_student` /
+ * `uniq_active_nutri_per_patient` (um profissional ativo por aluno). Isso
+ * acontece de verdade: a identidade é deduplicada por e-mail > CPF > telefone,
+ * então a mesma pessoa que já treina com o profissional A, ao aceitar o convite
+ * do B com outro e-mail, é reconhecida e bate no índice.
+ *
+ * Sem tradução, o `err.message` cru do Postgres ia direto para a tela —
+ * "duplicate key value violates unique constraint ..." — vazando nome de índice
+ * e sem dizer o que fazer (QA 01/ago/2026).
+ */
+function describeInviteAcceptError(err: any, role: 'personal' | 'nutri'): string {
+  const raw = String(err?.message ?? '');
+  if (err?.code === '23505' || raw.includes('duplicate key value')) {
+    if (raw.includes('uniq_active_personal_per_student')) {
+      return 'Você já está vinculado a um personal. Peça para encerrar o vínculo atual antes de aceitar um novo convite.';
+    }
+    if (raw.includes('uniq_active_nutri_per_patient')) {
+      return 'Você já está vinculado a um nutricionista. Peça para encerrar o vínculo atual antes de aceitar um novo convite.';
+    }
+    return role === 'personal'
+      ? 'Não foi possível concluir o vínculo com este personal.'
+      : 'Não foi possível concluir o vínculo com este nutricionista.';
+  }
+  return raw || 'Não foi possível concluir o cadastro.';
+}
+
+
 // POST /auth/register - Register with email and password
 router.post('/register', registerRateLimit, async (req: Request, res: Response) => {
   try {
@@ -108,6 +138,16 @@ router.post('/register', registerRateLimit, async (req: Request, res: Response) 
       return res.status(400).json({
         success: false,
         error: 'Nome, CPF, telefone, email e senha sao obrigatorios.',
+      });
+    }
+
+    // O e-mail é a chave de identidade do signup público e o canal de reset de
+    // senha — aceitar string livre criava conta irrecuperável (QA ago/2026).
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Informe um email valido.',
+        code: 'INVALID_EMAIL',
       });
     }
 
@@ -192,6 +232,16 @@ router.post('/register-personal', registerRateLimit, async (req: Request, res: R
       return res.status(400).json({
         success: false,
         error: 'Nome, CPF, telefone, email e senha sao obrigatorios.',
+      });
+    }
+
+    // O e-mail é a chave de identidade do signup público e o canal de reset de
+    // senha — aceitar string livre criava conta irrecuperável (QA ago/2026).
+    if (!isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Informe um email valido.',
+        code: 'INVALID_EMAIL',
       });
     }
 
@@ -631,6 +681,24 @@ router.patch('/complete-profile', authMiddleware, async (req: Request, res: Resp
       });
     }
 
+    // `fitnessGoal` e `experienceLevel` alimentam o motor de recomendação e
+    // aceitavam qualquer string ("jedi" entrava e marcava profileCompleted).
+    //
+    // Validamos FORMA, não um enum fechado: hoje os produtores discordam do
+    // vocabulário — o SPA envia rótulos PT-BR ("Perda de Peso", "Iniciante") e
+    // o seed usa snake_case em inglês ('weight_loss', 'hypertrophy'). Fechar o
+    // enum agora rejeitaria dado legítimo de um dos dois lados. Unificar o
+    // vocabulário é decisão de produto e fica registrada como pendência.
+    const isShortLabel = (v: unknown): boolean =>
+      typeof v === 'string' && v.trim().length > 0 && v.trim().length <= 100;
+    if (!isShortLabel(fitnessGoal) || !isShortLabel(experienceLevel)) {
+      return res.status(400).json({
+        success: false,
+        error: 'fitnessGoal e experienceLevel devem ser textos de até 100 caracteres.',
+        code: 'INVALID_PROFILE_FIELD',
+      });
+    }
+
     normalizeMetabolicCheckinInput({
       weightKg,
       waistCm,
@@ -712,6 +780,31 @@ router.patch('/student-compliance', authMiddleware, async (req: Request, res: Re
     });
   } catch (error: any) {
     res.status(400).json({ success: false, error: String(error?.message || 'Falha ao salvar compliance.') });
+  }
+});
+
+// PATCH /auth/parq-medical-release — aluno declara que obteve liberacao medica.
+// Unica saida do estado `medical_clearance_required`, criado quando o PAR-Q tem
+// ao menos um "sim". Nao aceita nenhum dado do cliente alem da propria acao: o
+// alvo e sempre req.user.id e a data e do servidor.
+router.patch('/parq-medical-release', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    if (req.user!.role !== 'user') {
+      return res.status(403).json({ success: false, error: 'Disponivel apenas para alunos.' });
+    }
+    const user = await authService.declareParqMedicalRelease(req.user!.id, {
+      ip: req.ip,
+      userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : undefined,
+    });
+    res.json({ success: true, data: { user } });
+  } catch (error: any) {
+    const code = String(error?.code || '');
+    const status = code === 'PARQ_NOT_SIGNED' || code === 'MEDICAL_RELEASE_NOT_REQUIRED' ? 409 : 400;
+    res.status(status).json({
+      success: false,
+      error: String(error?.message || 'Falha ao registrar a liberacao medica.'),
+      ...(code ? { code } : {}),
+    });
   }
 });
 
@@ -886,6 +979,23 @@ router.patch('/onboarding', authMiddleware, async (req: Request, res: Response) 
 
     if (Object.keys(sanitized).length === 0) {
       return res.status(400).json({ success: false, error: 'Nenhuma chave de onboarding válida.' });
+    }
+
+    // A whitelist acima cobre as CHAVES; os VALORES não eram validados, então
+    // `daysPerWeek: "muitos"` e `timePerDay: -50` eram gravados na mesma coluna
+    // que `PATCH /auth/student-compliance` valida com enum fechado. Pior: como
+    // `rowOnboardingComplete()` revalida na leitura, uma gravação parcial ou
+    // inválida derrubava `studentComplianceComplete` para false — o aluno perdia
+    // o compliance por reabrir o wizard. Agora os dois escritores usam a mesma
+    // regra: só grava quando o conjunto está completo e válido.
+    try {
+      parseAndValidateOnboarding(sanitized);
+    } catch (err: any) {
+      return res.status(400).json({
+        success: false,
+        error: String(err?.message || 'Onboarding inválido.'),
+        code: 'INVALID_ONBOARDING',
+      });
     }
 
     await pool.query(
@@ -1074,15 +1184,22 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
     // personal recebe `consent_required` ao abrir as fichas do aluno.
     await grantConsents(identityUser.id, invite.personal_id, 'personal', DIRECT_INVITE_SCOPES_PERSONAL, pool);
 
-    // Grant PERSONAL membership
+    // Grant PERSONAL membership.
+    // `source` é COLUNA, não metadata: é por ela que `cancelMembership` acha o
+    // App bônus para colocar em grace_period (BONUS_SOURCE_BY_PARENT). Antes a
+    // origem ia só dentro de `metadata` e a linha caía no default 'corefit',
+    // então o hook de graça nunca casava e a conversão B2C na borda do churn
+    // não acontecia (QA 01/ago/2026, P1-4).
     await grantMembership(identityUser.id, 'personal', {
       professionalId: invite.personal_id,
-      metadata: { source: 'direct_invite', token },
+      source: 'bonus_personal',
+      metadata: { origin: 'direct_invite', token },
     });
 
     // Grant APP membership (idempotent — existing users may already have it)
     await grantMembership(identityUser.id, 'app', {
-      metadata: { source: 'direct_invite_personal' },
+      source: 'bonus_personal',
+      metadata: { origin: 'direct_invite_personal' },
     });
 
     // Mark invite as accepted
@@ -1116,7 +1233,7 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
     });
   } catch (err: any) {
     logger.error({ err }, '[auth] direct-invite accept error');
-    res.status(400).json({ success: false, error: err.message || 'Não foi possível concluir o cadastro.' });
+    res.status(400).json({ success: false, error: describeInviteAcceptError(err, 'personal') });
   }
 });
 
@@ -1198,12 +1315,15 @@ router.post('/direct-invite-nutri/:token/accept', async (req: Request, res: Resp
     await grantConsents(identityUser.id, invite.nutri_id, 'nutri', DIRECT_INVITE_SCOPES_NUTRI, pool);
 
     // Grant NUTRI + APP memberships
+    // Mesmo motivo do convite de personal: `source` é coluna, não metadata.
     await grantMembership(identityUser.id, 'nutri', {
       professionalId: invite.nutri_id,
-      metadata: { source: 'direct_invite', token },
+      source: 'bonus_nutri',
+      metadata: { origin: 'direct_invite', token },
     });
     await grantMembership(identityUser.id, 'app', {
-      metadata: { source: 'direct_invite_nutri' },
+      source: 'bonus_nutri',
+      metadata: { origin: 'direct_invite_nutri' },
     });
 
     // Mark invite accepted
@@ -1235,7 +1355,7 @@ router.post('/direct-invite-nutri/:token/accept', async (req: Request, res: Resp
     });
   } catch (err: any) {
     logger.error({ err }, '[auth] direct-invite-nutri accept error');
-    res.status(400).json({ success: false, error: err.message || 'Não foi possível concluir o cadastro.' });
+    res.status(400).json({ success: false, error: describeInviteAcceptError(err, 'nutri') });
   }
 });
 

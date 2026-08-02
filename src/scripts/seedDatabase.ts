@@ -2,6 +2,8 @@ import pool from '../config/database';
 import bcryptjs from 'bcryptjs';
 import { ensureAcademiesSchema } from '../db/ensureAcademiesSchema';
 import { seedDefaultAcademy } from '../db/seedDefaultAcademy';
+import { ensureUsersCoreColumns } from '../db/ensureUsersCoreColumns';
+import { ensureTenantColumnsPhase2 } from '../db/ensureTenantColumnsPhase2';
 
 async function getDefaultAcademyId(): Promise<number | null> {
   const res = await pool.query(`SELECT id FROM academies WHERE slug = 'corefit-direto' LIMIT 1`);
@@ -25,11 +27,11 @@ CREATE TABLE IF NOT EXISTS users (
   height_cm DECIMAL(5,2),
   weight_kg DECIMAL(6,2),
   dietary_restrictions TEXT,
-  sem_historico_hipertensao BOOLEAN DEFAULT TRUE,
-  sem_historico_cardiaco BOOLEAN DEFAULT TRUE,
-  sem_restricao_medica_exercicio BOOLEAN DEFAULT TRUE,
-  apto_para_atividade_fisica BOOLEAN DEFAULT TRUE,
-  aceita_responsabilidade_informacoes BOOLEAN DEFAULT TRUE,
+  sem_historico_hipertensao BOOLEAN,
+  sem_historico_cardiaco BOOLEAN,
+  sem_restricao_medica_exercicio BOOLEAN,
+  apto_para_atividade_fisica BOOLEAN,
+  aceita_responsabilidade_informacoes BOOLEAN,
   profile_completed BOOLEAN DEFAULT FALSE,
   oauth_google_id VARCHAR(255) UNIQUE,
   oauth_apple_id VARCHAR(255) UNIQUE,
@@ -249,6 +251,15 @@ async function runMigration() {
     // Seed default tags
     await seedTags();
 
+    // seedDefaultAcademy marca admins com `users.is_corefit_admin`, coluna que
+    // só ensureUsersCoreColumns cria. Num banco novo o seed morria aqui com
+    // `column "is_corefit_admin" does not exist` (QA 01/ago/2026, P0-3).
+    await ensureUsersCoreColumns();
+
+    // Idem para `academy_id` nas tabelas operacionais: seedUsers/
+    // seedPersonalDashboardActivity gravam com tenant, e a coluna vem daqui.
+    await ensureTenantColumnsPhase2();
+
     // Ensure default academy exists before seeding users (required for academy_id FK)
     await seedDefaultAcademy();
 
@@ -270,11 +281,11 @@ async function ensureUserRegistrationFields() {
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS cpf VARCHAR(11)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(20)`);
   await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS access_profile VARCHAR(50)`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_historico_hipertensao BOOLEAN DEFAULT TRUE`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_historico_cardiaco BOOLEAN DEFAULT TRUE`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_restricao_medica_exercicio BOOLEAN DEFAULT TRUE`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS apto_para_atividade_fisica BOOLEAN DEFAULT TRUE`);
-  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS aceita_responsabilidade_informacoes BOOLEAN DEFAULT TRUE`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_historico_hipertensao BOOLEAN`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_historico_cardiaco BOOLEAN`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS sem_restricao_medica_exercicio BOOLEAN`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS apto_para_atividade_fisica BOOLEAN`);
+  await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS aceita_responsabilidade_informacoes BOOLEAN`);
 }
 
 async function ensureGamificationTables() {
@@ -684,18 +695,11 @@ async function seedUsers() {
        AND st.name = 'Premium'`,
   );
   await pool.query(`UPDATE users SET role = 'admin', access_profile = 'admin_owner' WHERE email = 'gerencia@corefit.com.br'`);
-  await pool.query(`UPDATE users SET sem_historico_hipertensao = TRUE WHERE sem_historico_hipertensao IS NULL`);
-  await pool.query(`UPDATE users SET sem_historico_cardiaco = TRUE WHERE sem_historico_cardiaco IS NULL`);
-  await pool.query(`UPDATE users SET sem_restricao_medica_exercicio = TRUE WHERE sem_restricao_medica_exercicio IS NULL`);
-  await pool.query(`UPDATE users SET apto_para_atividade_fisica = TRUE WHERE apto_para_atividade_fisica IS NULL`);
-  await pool.query(`UPDATE users SET aceita_responsabilidade_informacoes = TRUE WHERE aceita_responsabilidade_informacoes IS NULL`);
+  // As 5 declarações de saúde do PAR-Q ficam NULL quando o aluno não respondeu.
+  // O bloco que as forçava para TRUE + NOT NULL foi removido: ele fabricava
+  // declaração de saúde em nome do usuário (ver migration 1821000000000).
   await pool.query(`ALTER TABLE users ALTER COLUMN cpf SET NOT NULL`);
   await pool.query(`ALTER TABLE users ALTER COLUMN phone SET NOT NULL`);
-  await pool.query(`ALTER TABLE users ALTER COLUMN sem_historico_hipertensao SET NOT NULL`);
-  await pool.query(`ALTER TABLE users ALTER COLUMN sem_historico_cardiaco SET NOT NULL`);
-  await pool.query(`ALTER TABLE users ALTER COLUMN sem_restricao_medica_exercicio SET NOT NULL`);
-  await pool.query(`ALTER TABLE users ALTER COLUMN apto_para_atividade_fisica SET NOT NULL`);
-  await pool.query(`ALTER TABLE users ALTER COLUMN aceita_responsabilidade_informacoes SET NOT NULL`);
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_cpf ON users(cpf)`);
 }
 

@@ -96,11 +96,82 @@ function targetWorkoutsPerMonth(plan: PersonalDashboardPlan) {
   return 6;
 }
 
+/**
+ * Treinos/semana que a ficha ativa prescreve. `week_preset` é o que o personal
+ * escolheu no builder: '4' | '5' | '6' | 'semana_util' (5 dias úteis).
+ */
+export function weeklyTargetFromPreset(preset: string | null): number | null {
+  if (!preset) return null;
+  if (preset === 'semana_util') return 5;
+  const n = Number(preset);
+  return Number.isFinite(n) && n >= 1 && n <= 7 ? n : null;
+}
+
+/**
+ * Alvo mensal de treinos (QA 01/ago/2026, P1-3).
+ *
+ * Antes vinha SÓ do tier de assinatura — o que, para a persona V1 (aluno entra
+ * grátis como bônus, portanto sempre 'basic'), fixava o denominador em 6/mês
+ * para todo mundo, independente da ficha. Um aluno com ficha de 5x/semana
+ * treinando 2x/semana marcava 100% de aderência: a métrica saturava e não
+ * media nada.
+ *
+ * Agora a fonte primária é a prescrição do próprio personal (`week_preset` da
+ * ficha ativa); o tier fica como fallback para aluno sem ficha.
+ */
+export function resolveMonthlyTarget(plan: PersonalDashboardPlan, weekPreset: string | null): number {
+  const weekly = weeklyTargetFromPreset(weekPreset);
+  if (weekly === null) return targetWorkoutsPerMonth(plan);
+  // 30 dias ≈ 4.29 semanas. Arredonda para baixo para não punir a semana parcial.
+  return Math.max(1, Math.floor(weekly * (30 / 7)));
+}
+
+/**
+ * Sentinela de "nunca aconteceu" para as COMPARAÇÕES de gap (um aluno sem
+ * treino algum deve ordenar como o mais inativo possível). Nunca use este
+ * número em texto exibido ao personal — para copy, use `daysSinceOrNull`.
+ */
+const NEVER_DAYS = 999;
+
 function daysSince(iso: string | null) {
-  if (!iso) return 999;
+  return daysSinceOrNull(iso) ?? NEVER_DAYS;
+}
+
+/** Versão sem sentinela: `null` = não há data. Use em qualquer copy. */
+function daysSinceOrNull(iso: string | null): number | null {
+  if (!iso) return null;
   const value = new Date(iso).getTime();
-  if (Number.isNaN(value)) return 999;
+  if (Number.isNaN(value)) return null;
   return Math.floor((Date.now() - value) / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Janela de carência do aluno recém-atribuído (QA 01/ago/2026, P1-1).
+ *
+ * `resolveRisk` já tratava o caso ("começando" ≠ "sumido"), mas os scores
+ * numéricos não: engajamento 0 ⇒ riskScore 100 ⇒ o aluno cadastrado há dois
+ * minutos aparecia no topo de "Alunos em risco", com o chip mostrando
+ * "100 OK" (score novo brigando com o label legado) e o insight dizendo
+ * "sem treino há 999 dias".
+ *
+ * Enquanto não há NENHUM sinal (treino, check-in) e o vínculo é recente, os
+ * scores viram `null` — "ainda não dá para dizer" —, e quem consome filtra
+ * o null em vez de tratá-lo como risco máximo.
+ */
+const ONBOARDING_GRACE_DAYS = 7;
+
+export function isOnboarding(input: {
+  lastWorkoutISO: string | null;
+  lastCheckinISO: string | null;
+  assignedAtISO?: string | null;
+  workouts30d: number;
+  checkins7d: number;
+}): boolean {
+  if (input.lastWorkoutISO || input.lastCheckinISO) return false;
+  if (input.workouts30d > 0 || input.checkins7d > 0) return false;
+  const sinceAssigned = daysSinceOrNull(input.assignedAtISO ?? null);
+  // Sem data de atribuição não há como afirmar que é recente — não dá carência.
+  return sinceAssigned !== null && sinceAssigned < ONBOARDING_GRACE_DAYS;
 }
 
 function addDays(baseISO: string | null, days: number) {
@@ -179,12 +250,16 @@ function resolveEngagementStatus(input: {
   return 'on_track';
 }
 
-function computeEngagementScore(input: {
+/** `null` quando o aluno ainda está na carência de onboarding — ver `isOnboarding`. */
+export function computeEngagementScore(input: {
   adherencePct: number;
   workouts7d: number;
   streakDays: number;
   checkins7d: number;
-}): number {
+  onboarding: boolean;
+}): number | null {
+  if (input.onboarding) return null;
+
   const recency7d = clamp((input.workouts7d / 4) * 100, 0, 100);
   const streakNorm = clamp((input.streakDays / 14) * 100, 0, 100);
   const checkinFreq = clamp((input.checkins7d / 7) * 100, 0, 100);
@@ -196,14 +271,17 @@ function computeEngagementScore(input: {
   return Math.round(clamp(score, 0, 100));
 }
 
-function computeRiskScore(input: {
-  engagementScore: number;
+/** `null` quando não há engajamento apurável (aluno em onboarding). */
+export function computeRiskScore(input: {
+  engagementScore: number | null;
   metabolismDelta7d: number | null;
   latestSleptWell: boolean | null;
   lastWorkoutISO: string | null;
   lastCheckinISO: string | null;
   assignedAtISO?: string | null;
-}): number {
+}): number | null {
+  if (input.engagementScore === null) return null;
+
   let score = 100 - input.engagementScore;
   if (input.metabolismDelta7d !== null && input.metabolismDelta7d <= -15) score += 15;
   if (input.latestSleptWell === false) score += 10;
@@ -430,16 +508,26 @@ function computeRetentionInsights(students: PersonalDashboardStudent[]): Retenti
     }
   }
 
-  // Sinal individual: aluno com maior queda de risco recente
+  // Sinal individual: aluno com maior queda de risco recente.
+  // riskScore null = aluno em onboarding: não há queda, ele nem começou.
   const worstDrop = [...students]
-    .filter((s) => s.riskScore >= 60 && s.workouts7d <= 1)
-    .sort((a, b) => b.riskScore - a.riskScore)[0];
+    .filter((s) => s.riskScore !== null && s.riskScore >= 60 && s.workouts7d <= 1)
+    .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0))[0];
   if (worstDrop) {
-    const daysSince = daysSinceLastWorkout(worstDrop.lastWorkoutISO);
+    // `daysSinceLastWorkout` devolve null quando nunca houve treino — antes o
+    // sentinela 999 vazava literalmente para a copy ("Sem treino há 999 dias").
+    const dias = daysSinceLastWorkout(worstDrop.lastWorkoutISO);
+    const [title, situacao] =
+      dias === null
+        ? [`${worstDrop.name} ainda não começou`, 'Ainda não registrou o primeiro treino']
+        : [
+            `${worstDrop.name} com queda de aderência`,
+            `Sem treino há ${dias} ${dias === 1 ? 'dia' : 'dias'}`,
+          ];
     insights.push({
       kind: 'individual_drop',
-      title: `${worstDrop.name} com queda de aderência`,
-      body: `Sem treino há ${daysSince} dias e engajamento baixo nas últimas 2 semanas. Um contato rápido pode fazer diferença.`,
+      title,
+      body: `${situacao} e engajamento baixo nas últimas 2 semanas. Um contato rápido pode fazer diferença.`,
       studentId: worstDrop.id,
     });
   }
@@ -460,9 +548,9 @@ function computeRetentionInsights(students: PersonalDashboardStudent[]): Retenti
   return insights.slice(0, 3);
 }
 
-function daysSinceLastWorkout(iso: string | null): number {
-  if (!iso) return 999;
-  return Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24));
+/** `null` = nunca treinou. Destinado a copy — nunca devolve sentinela. */
+export function daysSinceLastWorkout(iso: string | null): number | null {
+  return daysSinceOrNull(iso);
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +794,19 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
           WHERE sen.student_id = u.id
             AND sen.personal_id = $1
             AND ($2::integer IS NULL OR sen.academy_id IS NULL OR sen.academy_id = $2)
-        ) AS last_technical_note_at
+        ) AS last_technical_note_at,
+        (
+          -- Denominador de aderência: a ficha ATIVA que este personal prescreveu.
+          -- Sem ela, cai no alvo por tier de assinatura (ver targetWorkoutsPerMonth).
+          SELECT pwp.week_preset
+          FROM personal_workout_plans pwp
+          WHERE pwp.student_id = u.id
+            AND pwp.personal_id = $1
+            AND pwp.abandoned_at IS NULL
+            AND ($2::integer IS NULL OR pwp.academy_id IS NULL OR pwp.academy_id = $2)
+          ORDER BY pwp.created_at DESC
+          LIMIT 1
+        ) AS active_week_preset
       FROM personal_student_assignments psa
       JOIN users u
         ON u.id = psa.student_id
@@ -734,7 +834,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
   const baseStudents = result.rows.map((row) => {
     const plan = mapPlan(row.subscription_tier);
     const workouts30d = Number(row.workouts_30d || 0);
-    const target30d = targetWorkoutsPerMonth(plan);
+    const target30d = resolveMonthlyTarget(plan, row.active_week_preset ?? null);
     const adherencePct = clamp(Math.round((workouts30d / target30d) * 100), 0, 100);
     const lastWorkoutISO = row.last_workout_at ? new Date(row.last_workout_at).toISOString() : null;
     const lastCheckinISO = row.last_checkin_date ? new Date(row.last_checkin_date).toISOString() : null;
@@ -786,11 +886,19 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     const baselineScore = m?.baseline_score ?? null;
     const delta =
       latestScore !== null && baselineScore !== null ? latestScore - baselineScore : null;
+    const onboarding = isOnboarding({
+      lastWorkoutISO: s.lastWorkoutISO,
+      lastCheckinISO: s.lastCheckinISO,
+      assignedAtISO: s.assignedAtISO,
+      workouts30d: s.workouts30d,
+      checkins7d: s.checkins7d,
+    });
     const engagementScore = computeEngagementScore({
       adherencePct: s.adherencePct,
       workouts7d: s.workouts7d,
       streakDays: s.streakDays,
       checkins7d: s.checkins7d,
+      onboarding,
     });
     const riskScore = computeRiskScore({
       engagementScore,
@@ -872,8 +980,11 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     { low: 0, moderate: 0, high: 0, unknown: 0 }
   );
 
+  // riskScore null (aluno em onboarding) fica de fora: "ainda não dá para
+  // dizer" não é "em risco". Antes, engajamento 0 virava risco 100 e o aluno
+  // recém-cadastrado abria a lista de risco no primeiro acesso do personal.
   const atRiskTop = [...students]
-    .filter((s) => s.riskScore >= 55)
+    .filter((s): s is typeof s & { riskScore: number } => s.riskScore !== null && s.riskScore >= 55)
     .sort((a, b) => b.riskScore - a.riskScore)
     .slice(0, 8);
 

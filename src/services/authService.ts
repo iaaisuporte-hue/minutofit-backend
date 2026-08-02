@@ -104,6 +104,7 @@ const USER_SELECT_FIELDS = `
   parq_signed_at,
   parq_signature_data,
   parq_any_yes,
+  parq_medical_release_at,
   parq_expires_at,
   parq_signature_level,
   COALESCE(must_change_password, false) AS must_change_password,
@@ -153,21 +154,18 @@ function validateHealthFlags(healthFlags: HealthFlags) {
     throw new Error('Todas as declaracoes de saude sao obrigatorias.');
   }
 
+  // O aceite de responsabilidade é o único obrigatoriamente `true`: sem ele a
+  // evidência não vale.
   if (!healthFlags.aceitaResponsabilidadeInformacoes) {
     throw new Error('Voce precisa confirmar a responsabilidade pelas informacoes fornecidas.');
   }
 
-  if (!healthFlags.aptoParaAtividadeFisica) {
-    throw new Error('Antes de seguir, procure avaliacao medica para confirmar sua aptidao fisica.');
-  }
-
-  if (
-    !healthFlags.semHistoricoHipertensao ||
-    !healthFlags.semHistoricoCardiaco ||
-    !healthFlags.semRestricaoMedicaExercicio
-  ) {
-    throw new Error('Para comecar com seguranca, regularize suas restricoes de saude e procure orientacao medica antes do cadastro.');
-  }
+  // As 4 condições de saúde podem ser gravadas como `false`. Antes, declarar
+  // hipertensão (ou não se declarar apto) fazia a gravação FALHAR — o aluno com
+  // condição real não conseguia nem salvar a triagem, e a única saída era mentir
+  // no formulário. Agora a resposta honesta é aceita e a consequência fica na
+  // camada de liberação: `deriveClearance` devolve `medical_clearance_required`
+  // e o aluno segue após declarar a liberação médica.
 }
 
 function throwFriendlyUniqueError(error: any): never {
@@ -775,7 +773,10 @@ export async function saveStudentCompliance(
         parq_signature_data = $10,
         parq_any_yes = $11,
         parq_expires_at = $12,
-        parq_signature_level = 1
+        parq_signature_level = 1,
+        -- Assinatura nova zera a liberação médica anterior: ela se referia às
+        -- respostas antigas. Se o aluno voltar a marcar "sim", declara de novo.
+        parq_medical_release_at = NULL
       WHERE id = $13 AND role = 'user'
       RETURNING ${USER_SELECT_FIELDS}`,
       [
@@ -848,6 +849,70 @@ export async function saveStudentCompliance(
   invalidateClearanceCache(userId);
 
   return mapUserRow(updatedRow);
+}
+
+/**
+ * Aluno declara que obteve liberação médica para atividade física (P1-1).
+ *
+ * É a saída do estado `medical_clearance_required`: quem responde "sim" a
+ * alguma pergunta do PAR-Q é orientado a procurar avaliação médica, e volta
+ * aqui para registrar que a obteve. A declaração é do aluno (mesmo nível de
+ * evidência do resto do PAR-Q, que também é auto-declaratório) — não é laudo,
+ * e por isso fica auditada com data, IP e user agent.
+ *
+ * Só faz sentido para quem tem PAR-Q assinado com `parq_any_yes = true`;
+ * chamar em qualquer outro estado é 409, para não criar liberação órfã.
+ */
+export async function declareParqMedicalRelease(
+  userId: number,
+  meta?: { ip?: string; userAgent?: string }
+): Promise<User> {
+  const current = await pool.query(
+    `SELECT parq_signed_at, parq_any_yes,
+            sem_historico_hipertensao, sem_historico_cardiaco,
+            sem_restricao_medica_exercicio, apto_para_atividade_fisica
+       FROM users WHERE id = $1 AND role = 'user' LIMIT 1`,
+    [userId]
+  );
+  if (current.rows.length === 0) {
+    throw new Error('Usuario nao encontrado ou sem permissao.');
+  }
+  const row = current.rows[0];
+  if (!row.parq_signed_at) {
+    const err = new Error('Assine o PAR-Q antes de declarar a liberacao medica.');
+    (err as { code?: string }).code = 'PARQ_NOT_SIGNED';
+    throw err;
+  }
+  // Precisa haver um motivo real: "sim" no PAR-Q OU condição de saúde declarada.
+  const declaredHealthCondition = [
+    row.sem_historico_hipertensao,
+    row.sem_historico_cardiaco,
+    row.sem_restricao_medica_exercicio,
+    row.apto_para_atividade_fisica,
+  ].some((v) => v === false);
+  if (row.parq_any_yes !== true && !declaredHealthCondition) {
+    const err = new Error('Sua triagem nao exige liberacao medica.');
+    (err as { code?: string }).code = 'MEDICAL_RELEASE_NOT_REQUIRED';
+    throw err;
+  }
+
+  const updated = await pool.query(
+    `UPDATE users SET parq_medical_release_at = NOW()
+      WHERE id = $1 AND role = 'user'
+      RETURNING ${USER_SELECT_FIELDS}`,
+    [userId]
+  );
+
+  await logDataAccessEvent({
+    actorId: userId,
+    subjectUserId: userId,
+    eventType: 'parq.medical_release_declared',
+    eventPayload: { declaredAt: new Date().toISOString() },
+    ip: meta?.ip,
+  });
+  invalidateClearanceCache(userId);
+
+  return mapUserRow(updated.rows[0]);
 }
 
 function rowHealthComplete(row: any): boolean {

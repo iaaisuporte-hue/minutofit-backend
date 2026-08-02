@@ -8,6 +8,31 @@ export function buildRecommendations(
   const recs: Recommendation[] = [];
   const factorIds = new Set(factors.map((f) => f.id));
 
+  // Conta nova, sem sinal nenhum: as recomendações padrão são todas escritas em
+  // cima de um histórico que não existe ("você treinou 0x nos últimos 7 dias",
+  // "nenhuma sessão de cardio em 14 dias"). Para quem se cadastrou há minutos
+  // isso soa como cobrança por algo que nunca teve chance de fazer.
+  if (output.status === 'onboarding') {
+    return [
+      {
+        id: 'rec.onboarding.first_checkin',
+        title: 'Comece pelo check-in de hoje',
+        reason: 'É com sono, energia e humor que o app aprende a te acompanhar',
+        impact: 'Destrava a primeira leitura do seu estado',
+        cta: { label: 'Fazer check-in', route: '/app/user/today' },
+        priority: 10,
+      },
+      {
+        id: 'rec.onboarding.first_workout',
+        title: 'Registre seu primeiro treino',
+        reason: 'Pode ser um treino em casa, uma caminhada ou algo que você já faz',
+        impact: 'Começa a calibrar seu score',
+        cta: { label: 'Ver treinos', route: '/app/user/treinos/em-casa' },
+        priority: 9,
+      },
+    ];
+  }
+
   if (factorIds.has('frequency.zero') || input.workoutsLast7Days < 2) {
     recs.push({
       id: 'rec.add_workout',

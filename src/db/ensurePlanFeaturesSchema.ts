@@ -14,17 +14,26 @@ const featureCatalog = [
   ['settings', 'Configuracoes', 'Configuracoes da conta e preferencias gerais.'],
   ['reports', 'Relatorios', 'Relatorios e insights de desempenho.'],
   ['diet', 'Dieta', 'Recursos de alimentacao e planejamento nutricional.'],
-  ['movement_lab', 'Lab de Movimento', 'Analise de execucao por camera (beta) — liberado tambem no Free para validacao.'],
-  ['movement_lab_guided', 'Lab de Movimento — Guiado pela ficha', 'Abrir o Lab de um exercicio da ficha, contar series/reps e gravar execucao real (Spec 022). No Free por ora; flipar p/ pago = remover do Free.'],
+  ['movement_lab', 'Lab de Movimento', 'Analise de execucao por camera (beta). Recurso pago — saiu do Free em ago/2026.'],
+  ['movement_lab_guided', 'Lab de Movimento — Guiado pela ficha', 'Abrir o Lab de um exercicio da ficha, contar series/reps e gravar execucao real (Spec 022). Recurso pago — saiu do Free em ago/2026.'],
   ['retro_workout_enabled', 'Registro Retroativo de Treino', 'Registrar treino feito nos ultimos 3 dias que o aluno esqueceu de marcar (Spec 024). Flag = kill-switch; liberada no Free.'],
 ] as const;
 
 /**
  * Plano Free: sem catálogo geral de treinos / ficha — só Hoje, sugestão do dia,
- * treinos em casa, perfil e config. `movement_lab` é a exceção consciente: entra
- * no Free em modo beta para validação real do recurso (a flag é o kill-switch).
+ * treinos em casa, perfil e config.
+ *
+ * `tracker` entra no Free (ago/2026): o item já aparecia no menu de todo aluno e
+ * a corrida já era gravada em `activity_sessions`, mas o check-in que alimenta
+ * streak/XP/score tomava 403 e morria num catch silencioso — o aluno registrava
+ * dado que nenhum motor lia. Ou liberava, ou escondia; liberar é coerente com a
+ * tese (o Tracker é insumo do score, não capacidade premium).
+ *
+ * `movement_lab*` sai do Free na mesma troca — o beta de validação cumpriu o
+ * papel e o recurso vira pago. A flag continua sendo o kill-switch: devolver as
+ * duas chaves a esta lista religa o Lab no Free sem migration.
  */
-const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'movement_lab', 'movement_lab_guided', 'retro_workout_enabled'];
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled'];
 
 const PRO_PRODUCT_FEATURES: string[] = [
   'today',

@@ -184,10 +184,14 @@ async function transitionStatus(
       ? String(patch.studentFeedback).slice(0, 4000)
       : existing.student_feedback;
 
+  // Casts explícitos: sem eles o Postgres tenta deduzir UM tipo para $3 a
+  // partir de dois usos incompatíveis (coluna varchar no SET, comparação text
+  // no CASE) e recusa a query inteira com "inconsistent types deduced for
+  // parameter $3" — approve/request-changes/archive quebravam com 500.
   const updated = await pool.query<Row>(
     `UPDATE workout_reviews
-     SET status = $3, internal_notes = $4, student_feedback = $5,
-         reviewed_at = CASE WHEN $3 IN ('approved', 'changes_requested') THEN NOW() ELSE reviewed_at END,
+     SET status = $3::varchar, internal_notes = $4, student_feedback = $5,
+         reviewed_at = CASE WHEN $3::text IN ('approved', 'changes_requested') THEN NOW() ELSE reviewed_at END,
          updated_at = NOW()
      WHERE id = $1 AND personal_id = $2
      RETURNING id, personal_id, student_id,

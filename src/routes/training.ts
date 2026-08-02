@@ -2,6 +2,7 @@ import { Router, Request, Response, RequestHandler } from 'express';
 import { authMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
 import { requireFeature } from '../middleware/featureGate';
+import { requirePhysicalActivityClearance } from '../middleware/requirePhysicalActivityClearance';
 import { createRateLimiter } from '../lib/rateLimiter';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { PersonalPrescriptionSource } from '../modules/training/adaptive/personal.source';
@@ -12,6 +13,7 @@ import pool from '../config/database';
 import logger from '../lib/logger';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
 import { createSession, listSessions, getSession, getWorkoutStats } from '../services/workoutSessionService';
+import { dayKey } from '../utils/appDay';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('app'));
@@ -162,9 +164,53 @@ const utcDayMs = (key: string): number => {
   return Date.UTC(y, m - 1, d);
 };
 
+/**
+ * Valida o payload retroativo ANTES do rate limiter.
+ *
+ * O limitador (3/24h) rodava primeiro e contava tentativa rejeitada: quem errava
+ * a data duas vezes — ano errado no seletor, por exemplo — queimava a cota do dia
+ * e recebia "Limite de registros retroativos atingido" tendo registrado ZERO
+ * treinos. A janela retroativa é de 3 dias, então perder a cota é perder o treino.
+ *
+ * O resultado fica em `res.locals` para o handler não revalidar.
+ */
+const validateRetroPayload: RequestHandler = (req, res, next) => {
+  const raw = req.body?.performedAt;
+  if (typeof raw !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return res.status(400).json({ success: false, error: 'invalid_performed_at' });
+  }
+  // Âncora ao meio-dia UTC: não vira de dia ao fazer ::date em nenhum fuso.
+  const anchored = new Date(`${raw}T12:00:00Z`);
+  if (Number.isNaN(anchored.getTime())) {
+    return res.status(400).json({ success: false, error: 'invalid_performed_at' });
+  }
+  // "Hoje" no fuso do aluno — em UTC, um treino salvo às 22h (BRT) já contava
+  // como do dia anterior e exigia confirmação de honestidade sem motivo.
+  const diffDays = Math.round((utcDayMs(dayKey()) - utcDayMs(raw)) / (24 * 60 * 60 * 1000));
+  if (diffDays < 0) {
+    return res.status(400).json({ success: false, error: 'performed_at_in_future' });
+  }
+  if (diffDays > RETRO_WINDOW_DAYS) {
+    return res.status(400).json({ success: false, error: 'retro_window_exceeded' });
+  }
+  // Aceite de honestidade obrigatório server-side (não confiar só na UI).
+  if (diffDays >= 1 && req.body?.confirmedHonesty !== true) {
+    return res.status(400).json({ success: false, error: 'honesty_confirmation_required' });
+  }
+  res.locals.retro = { performedAt: anchored, confirmationAccepted: req.body?.confirmedHonesty === true };
+  return next();
+};
+
 // POST /api/training/sessions — registra a sessão executada (caminho rápido:
 // só prescribed + status; ou detalhado: sets com carga/reps reais).
-router.post('/sessions', retroOnly(retroFeatureGate), retroOnly(retroRateLimiter), async (req: Request, res: Response) => {
+// Ordem importa: feature gate → validação → rate limiter. Só tentativa VÁLIDA
+// consome cota.
+// O gate de PAR-Q estava só no roteador do SPA (`RequireClearance`) — a API
+// aceitava o registro de treino de quem não tinha liberação, enquanto
+// `/activities` e `/movement/sessions` já barravam. Passa a valer nos três: com
+// o PAR-Q agora gateando de verdade (P1-1), a brecha deixaria o aluno em estado
+// `medical_clearance_required` registrando treino normalmente pela API.
+router.post('/sessions', requirePhysicalActivityClearance(), retroOnly(retroFeatureGate), retroOnly(validateRetroPayload), retroOnly(retroRateLimiter), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
     const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
@@ -186,33 +232,11 @@ router.post('/sessions', retroOnly(retroFeatureGate), retroOnly(retroRateLimiter
       return res.status(400).json({ success: false, error: 'too_many_sets' });
     }
 
-    // Validação do modo retroativo (Spec 024). Ausência de performedAt = ao vivo.
-    let performedAt: Date | null = null;
-    let confirmationAccepted = false;
-    if (body.performedAt != null) {
-      if (typeof body.performedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body.performedAt)) {
-        return res.status(400).json({ success: false, error: 'invalid_performed_at' });
-      }
-      // Âncora ao meio-dia UTC: não vira de dia ao fazer ::date em nenhum fuso.
-      const anchored = new Date(`${body.performedAt}T12:00:00Z`);
-      if (Number.isNaN(anchored.getTime())) {
-        return res.status(400).json({ success: false, error: 'invalid_performed_at' });
-      }
-      const todayKey = new Date().toISOString().slice(0, 10);
-      const diffDays = Math.round((utcDayMs(todayKey) - utcDayMs(body.performedAt)) / (24 * 60 * 60 * 1000));
-      if (diffDays < 0) {
-        return res.status(400).json({ success: false, error: 'performed_at_in_future' });
-      }
-      if (diffDays > RETRO_WINDOW_DAYS) {
-        return res.status(400).json({ success: false, error: 'retro_window_exceeded' });
-      }
-      // Aceite de honestidade obrigatório server-side (não confiar só na UI).
-      if (diffDays >= 1 && body.confirmedHonesty !== true) {
-        return res.status(400).json({ success: false, error: 'honesty_confirmation_required' });
-      }
-      performedAt = anchored;
-      confirmationAccepted = body.confirmedHonesty === true;
-    }
+    // Modo retroativo (Spec 024): já validado por `validateRetroPayload`, que
+    // roda antes do rate limiter. Ausência de performedAt = ao vivo.
+    const retro = res.locals.retro as { performedAt: Date; confirmationAccepted: boolean } | undefined;
+    const performedAt: Date | null = retro?.performedAt ?? null;
+    const confirmationAccepted: boolean = retro?.confirmationAccepted ?? false;
 
     const result = await createSession(userId, academyId, {
       source: body.source,
@@ -271,8 +295,17 @@ router.get('/stats', async (req: Request, res: Response) => {
 // GET /api/training/sessions/:id — detalhe (séries)
 router.get('/sessions/:id', async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    // `parseInt` para no primeiro caractere inválido, então "1' OR '1'='1" e
+    // "1e10" viravam o id 1 e devolviam a sessão 1. Não havia SQLi (a query é
+    // parametrizada) nem IDOR (a busca é escopada por user_id), mas aceitar
+    // lixo como identificador é ruído que esconde bug de cliente.
+    if (!/^\d+$/.test(req.params.id)) {
+      return res.status(400).json({ success: false, error: 'invalid_id' });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ success: false, error: 'invalid_id' });
+    }
     const session = await getSession(req.user!.id, id);
     if (!session) return res.status(404).json({ success: false, error: 'not_found' });
     return res.json({ success: true, data: session });

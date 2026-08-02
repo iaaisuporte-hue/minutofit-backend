@@ -187,6 +187,50 @@ export function validateBiSetPairs(items: WorkoutPlanItemPayload[]): string[] {
   return errors;
 }
 
+/** Limite da coluna `personal_workout_plans.title` / `workout_protocols.title`. */
+const PLAN_TITLE_MAX = 255;
+
+/**
+ * `title` era o único campo do plano que não passava por sanitização — os
+ * itens já eram cortados. Um título acima de 255 chars estourava a coluna e o
+ * personal via "Internal server error" no builder (QA 01/ago/2026, P2-3).
+ * Cortar (em vez de 400) preserva o trabalho já feito na tela.
+ */
+function normalizePlanTitle(raw: unknown): string {
+  return String(raw ?? '').trim().slice(0, PLAN_TITLE_MAX) || 'Treino';
+}
+
+/**
+ * `sanitizeWorkoutPlanItem` só valida o FORMATO do exerciseId (UUID v4). Sem
+ * esta checagem referencial um UUID bem-formado porém inexistente era aceito
+ * (201) e a ficha chegava ao aluno com um exercício fantasma: nome livre, sem
+ * mídia, sem instruções, invisível para o Lab (QA 01/ago/2026, P2-2).
+ * Não há FK em `personal_workout_plans` (o payload é JSONB), então a
+ * verificação precisa ser explícita.
+ */
+async function assertExercisesExist(
+  client: PoolClient,
+  items: WorkoutPlanItemPayload[]
+): Promise<void> {
+  const ids = [...new Set(items.map((i) => i.exerciseId))];
+  if (ids.length === 0) return;
+
+  const { rows } = await client.query<{ id: string }>(
+    `SELECT id::text FROM exercises WHERE id = ANY($1::uuid[])`,
+    [ids]
+  );
+  const found = new Set(rows.map((r) => r.id));
+  const missing = ids.filter((id) => !found.has(id));
+  if (missing.length > 0) {
+    const err = new Error('Exercícios inválidos no plano');
+    (err as any).code = 'INVALID_EXERCISES';
+    (err as any).details = missing.map(
+      (id) => `exerciseId "${id}" não existe na biblioteca de exercícios`
+    );
+    throw err;
+  }
+}
+
 export function validateWorkoutItems(rawItems: unknown[]): WorkoutPlanItemPayload[] {
   const errors: string[] = [];
   const valid: WorkoutPlanItemPayload[] = [];
@@ -260,6 +304,41 @@ async function createPersonalProtocolSnapshot(
   }));
   const items = buildProtocolItemsFromDays(days);
   if (!items.length) throw new Error('At least one valid exercise item is required');
+
+  // Dedupe por (dono, título): toda gravação de ficha cria um snapshot na
+  // biblioteca, então um personal que revisa a ficha do aluno semanalmente
+  // acumulava dezenas de protocolos quase idênticos na aba Programas — junto
+  // com rascunhos descartados (QA 01/ago/2026, P2-4). Mesmo dono + mesmo
+  // título ⇒ atualiza o snapshot existente em vez de criar outro.
+  const existing = await client.query<{ id: number }>(
+    `SELECT id
+       FROM workout_protocols
+      WHERE scope = 'personal'
+        AND owner_personal_id = $1
+        AND lower(title) = lower($2)
+        AND academy_id IS NOT DISTINCT FROM $3
+      ORDER BY id ASC
+      LIMIT 1`,
+    [personalId, input.title, academyId]
+  );
+
+  if (existing.rows.length > 0) {
+    const id = Number(existing.rows[0].id);
+    await client.query(
+      `UPDATE workout_protocols
+          SET week_preset = $2, selected_group = $3,
+              payload_json = $4::jsonb, days_json = $5::jsonb, updated_at = NOW()
+        WHERE id = $1`,
+      [
+        id,
+        input.weekPreset,
+        input.selectedGroup,
+        JSON.stringify(items),
+        JSON.stringify(days),
+      ]
+    );
+    return id;
+  }
 
   const result = await client.query(
     `INSERT INTO workout_protocols
@@ -387,7 +466,7 @@ export async function createPersonalWorkoutPlanWithDays(
     throw err;
   }
 
-  const title = String(input.title || '').trim() || 'Treino';
+  const title = normalizePlanTitle(input.title);
   const weekPreset = String(input.weekPreset || '5').slice(0, 32);
 
   const client = await pool.connect();
@@ -410,6 +489,8 @@ export async function createPersonalWorkoutPlanWithDays(
       }
       days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
     }
+
+    await assertExercisesExist(client, days.flatMap((d) => d.items));
 
     const requestedProtocolId = Number(input.sourceProtocolId);
     const sourceProtocolId = Number.isFinite(requestedProtocolId) && requestedProtocolId > 0
@@ -478,7 +559,7 @@ export async function createPersonalWorkoutPlan(
     throw err;
   }
 
-  const title = String(input.title || '').trim() || 'Treino';
+  const title = normalizePlanTitle(input.title);
   const weekPreset = String(input.weekPreset || '5').slice(0, 32);
   const selectedGroup = input.selectedGroup ? String(input.selectedGroup).slice(0, 64) : null;
   const rawItems = Array.isArray(input.items) ? input.items : [];
@@ -494,6 +575,8 @@ export async function createPersonalWorkoutPlan(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    await assertExercisesExist(client, items);
 
     const requestedProtocolId = Number(input.sourceProtocolId);
     const sourceProtocolId = Number.isFinite(requestedProtocolId) && requestedProtocolId > 0
@@ -555,7 +638,7 @@ export async function updatePersonalWorkoutPlanWithDays(
     days: Array<{ name: string; focus?: string | null; items: unknown[] }>;
   }
 ) {
-  const title = String(input.title || '').trim() || 'Treino';
+  const title = normalizePlanTitle(input.title);
   const weekPreset = String(input.weekPreset || '5').slice(0, 32);
 
   const client = await pool.connect();
@@ -591,6 +674,8 @@ export async function updatePersonalWorkoutPlanWithDays(
       }
       days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
     }
+
+    await assertExercisesExist(client, days.flatMap((d) => d.items));
 
     // Update parent
     await client.query(

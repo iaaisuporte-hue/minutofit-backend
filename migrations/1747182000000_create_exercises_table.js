@@ -18,16 +18,20 @@ exports.up = (pgm) => {
         default: pgm.func('gen_random_uuid()'),
       },
       external_id: { type: 'text', notNull: false },
-      source: { type: 'text', notNull: true, default: "'corefit'" },
+      // `default` com string simples é ESCAPADO por node-pg-migrate: passar
+      // "'corefit'" gera DEFAULT '''corefit''' (valor com aspas dentro) e
+      // "'{}'" num text[] estoura "malformed array literal". Expressões SQL
+      // precisam de pgm.func().
+      source: { type: 'text', notNull: true, default: pgm.func("'corefit'") },
       name: { type: 'text', notNull: true },
       normalized_name: { type: 'text', notNull: true },
       body_part: { type: 'text', notNull: true },
       target_muscle: { type: 'text', notNull: true },
-      secondary_muscles: { type: 'text[]', notNull: false, default: "'{}'" },
+      secondary_muscles: { type: 'text[]', notNull: false, default: pgm.func("'{}'::text[]") },
       equipment: { type: 'text', notNull: true },
-      tags: { type: 'text[]', notNull: false, default: "'{}'" },
-      instructions: { type: 'jsonb', notNull: false, default: "'[]'" },
-      tips: { type: 'jsonb', notNull: false, default: "'[]'" },
+      tags: { type: 'text[]', notNull: false, default: pgm.func("'{}'::text[]") },
+      instructions: { type: 'jsonb', notNull: false, default: pgm.func("'[]'::jsonb") },
+      tips: { type: 'jsonb', notNull: false, default: pgm.func("'[]'::jsonb") },
       created_at: { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') },
       updated_at: { type: 'timestamptz', notNull: true, default: pgm.func('NOW()') },
     },

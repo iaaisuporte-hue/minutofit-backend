@@ -2,13 +2,27 @@ import { Router, Request, Response } from 'express';
 import pool from '../config/database';
 import { authMiddleware } from '../middleware/auth';
 import { requireProduct } from '../middleware/productGate';
+import { requireFeature } from '../middleware/featureGate';
 import { requirePhysicalActivityClearance } from '../middleware/requirePhysicalActivityClearance';
 import logger from '../lib/logger';
 
 const router = Router();
 // requireAcademyContext removido: standalone user pode usar Movement Lab.
 // GET filtra por user_id sem tenant; POST stamp academy_id=NULL.
-router.use(authMiddleware, requireProduct('app'));
+//
+// `requireFeature('movement_lab')` no roteador inteiro: enquanto o Lab esteve
+// liberado no Free a ausência de gate não tinha efeito prático, mas o recurso
+// virou pago em ago/2026 e a API continuava aberta — o SPA escondia a entrada e
+// o endpoint aceitava. Mesma classe do buraco inverso do Tracker (feature off,
+// rota aberta), só que agora custando assinatura. Vem depois de `requireProduct`
+// para que o erro de produto apareça antes do de plano.
+router.use(authMiddleware, requireProduct('app'), requireFeature('movement_lab'));
+
+/**
+ * Os 5 exercícios que o Lab sabe analisar — espelha `ExerciseId` em
+ * `pages/user/lib/exerciseRules.ts` no SPA. Ampliar o Lab exige atualizar os dois.
+ */
+const LAB_EXERCISE_IDS = new Set(['biceps_curl', 'squat', 'push_up', 'lunge', 'lateral_raise']);
 
 // POST /api/movement/sessions — save a completed movement lab session
 router.post('/sessions', requirePhysicalActivityClearance(), async (req: Request, res: Response) => {
@@ -28,6 +42,22 @@ router.post('/sessions', requirePhysicalActivityClearance(), async (req: Request
 
     if (!exerciseId) {
       return res.status(400).json({ success: false, error: 'exerciseId é obrigatório.' });
+    }
+
+    // O Lab analisa 5 exercícios. `exerciseId` era texto livre e os scores não
+    // tinham faixa, então um payload errado gravava uma sessão de zeros com
+    // rótulo arbitrário — histórico poluído sem ninguém perceber.
+    if (!LAB_EXERCISE_IDS.has(String(exerciseId))) {
+      return res.status(400).json({ success: false, error: 'invalid_exercise_id' });
+    }
+    const scores = { repCount, avgFormScore, bestRepScore, worstRepScore, avgSymmetry };
+    for (const [field, value] of Object.entries(scores)) {
+      if (value == null) continue;
+      const n = Number(value);
+      const max = field === 'repCount' ? 1000 : 100;
+      if (!Number.isFinite(n) || n < 0 || n > max) {
+        return res.status(400).json({ success: false, error: `invalid_${field}` });
+      }
     }
 
     const result = await pool.query(

@@ -41,12 +41,24 @@ export interface MembershipOptions {
 /** Produtos pai cujo cancelamento dispara grace no App bônus. */
 const APP_BONUS_PARENT_PRODUCTS: ReadonlyArray<ProductKey> = ['academia', 'personal', 'nutri'];
 
-/** Mapeia produto pai → source de bônus correspondente no App. */
-const PARENT_TO_BONUS_SOURCE: Record<string, MembershipSource> = {
+/**
+ * Mapeia produto pai → source de bônus correspondente no App.
+ *
+ * Exportado porque quem CONCEDE o vínculo precisa gravar exatamente este valor
+ * na coluna `source` — é a chave que `enterGraceForAppBonus` usa para achar o
+ * App bônus no cancelamento. Passar a origem só em `metadata` deixa a linha com
+ * o default 'corefit' e o hook de graça nunca casa (QA 01/ago/2026, P1-4).
+ */
+export const PARENT_TO_BONUS_SOURCE: Record<string, MembershipSource> = {
   academia: 'bonus_academy',
   personal: 'bonus_personal',
   nutri:    'bonus_nutri',
 };
+
+/** `source` de bônus do App para o produto pai, ou 'corefit' se não houver. */
+export function bonusSourceFor(parentProductKey: string): MembershipSource {
+  return PARENT_TO_BONUS_SOURCE[parentProductKey] ?? 'corefit';
+}
 
 /** Janela padrão de graça do App bônus quando o produto pai é cancelado. */
 export const APP_BONUS_GRACE_DAYS = 30;

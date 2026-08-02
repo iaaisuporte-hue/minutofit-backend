@@ -62,6 +62,18 @@ router.post('/create-checkout', authMiddleware, blockAccessProfilesMiddleware('c
       return res.status(400).json({ success: false, error: 'Cannot checkout free tier' });
     }
 
+    // Sem token do Mercado Pago o checkout não tem como existir. Antes isso caía
+    // no catch genérico e virava 400 "Failed to create subscription" — logo no
+    // momento de conversão, o aluno via um erro sem explicação nem saída. Mesmo
+    // 503 que o checkout do personal já devolve.
+    if (!process.env.MERCADOPAGO_ACCESS_TOKEN && !process.env.MERCADO_PAGO_ACCESS_TOKEN) {
+      return res.status(503).json({
+        success: false,
+        error: 'Pagamento indisponível no momento. Tente novamente em instantes.',
+        code: 'PAYMENTS_UNAVAILABLE',
+      });
+    }
+
     // Create Mercado Pago preapproval
     const { preapprovalId, initPoint } = await mercadoPagoService.createPreapprovalSubscription(
       req.user!.id,

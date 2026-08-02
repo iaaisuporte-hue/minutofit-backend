@@ -10,7 +10,7 @@ import {
   type ProfessionalRole,
 } from './consentService';
 import { assertProfessionalCanReceiveDiscoveryRequest } from './professionalNetworkService';
-import { grantMembership, cancelMembership } from './membershipService';
+import { grantMembership, cancelMembership, bonusSourceFor } from './membershipService';
 import { getPersonalPlan } from './personalPlanService';
 
 export type RequestStatus = 'pending' | 'accepted' | 'rejected' | 'cancelled' | 'expired';
@@ -240,13 +240,18 @@ export async function acceptConnectionRequest(opts: {
     // abrir a ficha. Fora da transação porque grantMembership usa o pool (idempotente).
     // Vínculo via request é autônomo (sem academia) por design — academyId fica null.
     try {
+      // `source` na coluna (não em metadata): é a chave do hook de graça do App
+      // bônus quando o vínculo é encerrado — ver PARENT_TO_BONUS_SOURCE.
+      const bonusSource = bonusSourceFor(req.professional_role);
       await grantMembership(req.student_id, req.professional_role, {
         professionalId,
-        metadata: { source: 'connection_request_accept', requestId },
+        source: bonusSource,
+        metadata: { origin: 'connection_request_accept', requestId },
       });
       await grantMembership(req.student_id, 'app', {
         professionalId,
-        metadata: { source: 'connection_request_accept', requestId },
+        source: bonusSource,
+        metadata: { origin: 'connection_request_accept', requestId },
       });
     } catch (grantErr) {
       logger.error(

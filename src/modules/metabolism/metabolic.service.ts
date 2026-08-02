@@ -105,6 +105,7 @@ export async function getMetabolismForUser(userId: number, academyId: number | n
 
   const input: MetabolicInput = {
     ageYears: profile.ageYears,
+    accountAgeDays: profile.accountAgeDays,
     fitnessGoal: profile.fitnessGoal,
     experienceLevel: profile.experienceLevel,
     ...metrics,
@@ -114,7 +115,11 @@ export async function getMetabolismForUser(userId: number, academyId: number | n
   const result = computeMetabolism(input, previousSnapshots);
   const recommendations = buildRecommendations(input, result, result.factors);
 
-  await upsertSnapshot(userId, result.score, result.status, result.trend, result.factors, input);
+  // Estado de onboarding não vira snapshot: o score é um placeholder, e gravá-lo
+  // sujaria o histórico e as tendências com pontos que não medem nada.
+  if (result.status !== 'onboarding') {
+    await upsertSnapshot(userId, result.score, result.status, result.trend, result.factors, input);
+  }
 
   const withTrends = await attachTrends(userId, { ...result, recommendations }, academyId);
   return attachInterpretation(userId, withTrends);

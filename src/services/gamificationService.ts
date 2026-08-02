@@ -4,6 +4,7 @@ import { invalidateMetabolismSnapshot } from '../modules/metabolism/metabolic.se
 import { invalidatePersonalDashboardForStudent } from './personalDashboardService';
 import { invalidateReadinessSnapshot } from '../modules/readiness/readiness.service';
 import logger from '../lib/logger';
+import { dayKey } from '../utils/appDay';
 
 type CheckinSource = 'workout' | 'activity' | 'wellbeing';
 export type MuscleGroup =
@@ -62,8 +63,13 @@ export type RecordCheckinInput = {
   signals?: WellbeingSignals | null;
 };
 
+/**
+ * Dia corrente no fuso do aluno. Era `toISOString()` (dia UTC), o que jogava
+ * todo check-in/treino feito depois das 21h (BRT) para o dia seguinte e quebrava
+ * a sequência. Ver `utils/appDay.ts`.
+ */
 function todayDateKey(date = new Date()) {
-  return date.toISOString().slice(0, 10);
+  return dayKey(date);
 }
 
 function normalizeLevel(xp: number) {
@@ -423,16 +429,15 @@ export async function getGamificationSummary(userId: number, alreadyCheckedIn = 
     xp: Number(stats.xp || 0),
     level: normalizeLevel(Number(stats.xp || 0)),
     streak,
-    todayCheckedIn: checkinResult.rows.some((row: { date_key?: Date }) =>
-      row.date_key instanceof Date
-        ? row.date_key.toISOString().slice(0, 10) === todayDateKey()
-        : String(row.date_key).slice(0, 10) === todayDateKey(),
+    // `date_key` é coluna `date`: o driver devolve meia-noite LOCAL. Passar por
+    // toISOString() aqui deslocava o dia em servidor fora de UTC — `toDateKey`
+    // usa os getters locais e é o leitor correto para esse tipo.
+    todayCheckedIn: checkinResult.rows.some(
+      (row: { date_key?: Date }) => toDateKey(row.date_key) === todayDateKey(),
     ),
     alreadyCheckedIn,
     heatmap: checkinResult.rows
-      .map((row: { date_key?: Date }) =>
-        row.date_key instanceof Date ? row.date_key.toISOString().slice(0, 10) : String(row.date_key).slice(0, 10),
-      )
+      .map((row: { date_key?: Date }) => toDateKey(row.date_key))
       .filter(Boolean),
     lastWorkout: lastWorkoutResult.rows[0]
       ? {

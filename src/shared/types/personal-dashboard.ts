@@ -51,8 +51,10 @@ export type PersonalDashboardStudent = {
   lastWorkoutISO: string | null;
   adherencePct: number;
   adherenceScore: number;
-  engagementScore: number;
-  riskScore: number;
+  /** `null` = aluno em carência de onboarding: sem sinal para pontuar ainda. */
+  engagementScore: number | null;
+  /** `null` = aluno em carência de onboarding — NÃO tratar como risco máximo. */
+  riskScore: number | null;
   risk: PersonalDashboardRisk;
   goal: PersonalDashboardGoal;
   notes: string | null;

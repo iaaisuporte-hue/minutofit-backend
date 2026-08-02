@@ -110,10 +110,58 @@ function resolveTrend(previousSnapshots: MetabolicHistory): MetabolicTrend {
   return 'stable';
 }
 
+/** Janela de carência: conta nova sem nenhum sinal ainda não tem o que ler. */
+const ONBOARDING_GRACE_DAYS = 7;
+
+/**
+ * Nenhum sinal registrado: nem treino, nem atividade, nem sequência. Diferente
+ * de "zerou nos últimos 7 dias" — aqui não existe histórico nenhum.
+ */
+export function hasNoSignalYet(input: MetabolicInput): boolean {
+  return (
+    input.workoutsLast28Days === 0 &&
+    input.currentStreakDays === 0 &&
+    input.activityMinutesLast7Days === 0 &&
+    input.cardioSessionsLast14Days === 0 &&
+    input.daysSinceLastActivity === null
+  );
+}
+
+/**
+ * Carência de onboarding: durante os primeiros dias, um aluno sem sinal nenhum
+ * fica em `onboarding` em vez de levar a penalidade de "sem treinos recentes".
+ * Antes disso, quem acabava de se cadastrar abria o app e via 33/100 com o
+ * rótulo "Pedindo recuperação" — o oposto do tom de acolhimento do produto, e
+ * factualmente errado: não há o que recuperar quando ainda não houve esforço.
+ */
+export function isOnboardingState(input: MetabolicInput): boolean {
+  return (
+    hasNoSignalYet(input) &&
+    input.accountAgeDays !== null &&
+    input.accountAgeDays < ONBOARDING_GRACE_DAYS
+  );
+}
+
 export function computeMetabolism(
   input: MetabolicInput,
   previousSnapshots: MetabolicHistory = [],
 ): Pick<MetabolicOutput, 'score' | 'status' | 'trend' | 'factors'> {
+  if (isOnboardingState(input)) {
+    return {
+      score: BASE_SCORE,
+      status: 'onboarding',
+      trend: 'stable',
+      factors: [
+        {
+          id: 'onboarding.calibrating',
+          label: 'Calibrando',
+          delta: 0,
+          hint: 'Seu estado metabólico aparece assim que houver os primeiros registros',
+        },
+      ],
+    };
+  }
+
   const factors = computeFactors(input);
   const totalDelta = factors.reduce((sum, f) => sum + f.delta, 0);
   const score = clamp(BASE_SCORE + totalDelta, 0, 100);

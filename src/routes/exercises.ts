@@ -39,7 +39,17 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
         : undefined;
 
     const exercises = await searchExercises({ q, bodyPart, equipment, tags, limit, offset });
-    res.json({ exercises, total: exercises.length });
+    // `total` era `exercises.length` — o tamanho da PÁGINA, não o total da
+    // busca. Qualquer paginação construída em cima disso pararia na primeira
+    // página. Enquanto `searchExercises` não devolve a contagem real, expomos
+    // o que de fato temos e sinalizamos se há mais.
+    res.json({
+      exercises,
+      count: exercises.length,
+      hasMore: exercises.length === limit,
+      /** @deprecated tamanho da página, não o total da busca. Use `count`/`hasMore`. */
+      total: exercises.length,
+    });
   } catch (err: unknown) {
     logger.error({ err }, 'GET /api/exercises error');
     res.status(500).json({ error: 'Erro ao buscar exercícios' });

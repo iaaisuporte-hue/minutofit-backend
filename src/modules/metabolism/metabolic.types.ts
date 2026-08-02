@@ -1,8 +1,16 @@
-export type MetabolicStatus = 'low' | 'moderate' | 'high';
+/**
+ * `onboarding` = conta nova, ainda sem nenhum sinal. Não é um estado ruim, é
+ * ausência de leitura: sem ele, o aluno recém-cadastrado abria o app e recebia
+ * 33/100 "Pedindo recuperação" por causa da penalidade de "sem treinos nos
+ * últimos 7 dias" — que confunde "parou de treinar" com "acabou de chegar".
+ */
+export type MetabolicStatus = 'onboarding' | 'low' | 'moderate' | 'high';
 export type MetabolicTrend = 'up' | 'down' | 'stable';
 
 export interface MetabolicInput {
   ageYears: number | null;
+  /** Dias desde o cadastro — usado para a carência de onboarding. */
+  accountAgeDays: number | null;
   workoutsLast7Days: number;
   workoutsLast28Days: number;
   distinctMuscleGroupsLast14Days: number;

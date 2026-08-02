@@ -44,6 +44,7 @@ export type DataAccessEventType =
   | 'nutri.clinical_profile.updated'
   | 'nutri.data.patient_deletion'
   | 'parq.signed'
+  | 'parq.medical_release_declared'
   | 'training.adaptation.applied'
   | 'training.adaptation.viewed'
   | 'training.policy.updated'

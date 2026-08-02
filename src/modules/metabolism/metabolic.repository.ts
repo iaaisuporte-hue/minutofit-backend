@@ -3,6 +3,7 @@ import type { MetabolicFactor, MetabolicHistory, MetabolicInput } from './metabo
 
 interface UserProfile {
   ageYears: number | null;
+  accountAgeDays: number | null;
   fitnessGoal: string | null;
   experienceLevel: string | null;
 }
@@ -15,13 +16,15 @@ export async function loadUserProfile(userId: number): Promise<UserProfile> {
          ELSE NULL
        END AS age_years,
        fitness_goal,
-       experience_level
+       experience_level,
+       (EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400)::int AS account_age_days
      FROM users WHERE id = $1 LIMIT 1`,
     [userId],
   );
   const row = result.rows[0];
   return {
     ageYears: row?.age_years ?? null,
+    accountAgeDays: row?.account_age_days ?? null,
     fitnessGoal: row?.fitness_goal ?? null,
     experienceLevel: row?.experience_level ?? null,
   };
@@ -68,17 +71,38 @@ export async function loadActivityMetrics(userId: number): Promise<{
        WHERE user_id = $1 AND completed_at >= NOW() - INTERVAL '14 days'`,
       [userId],
     ),
+    // Atividade (GPS) vem de DUAS tabelas: `activity_sessions` (a sessão rica,
+    // gravada por POST /activities) e `user_activity_logs` (a projeção do
+    // check-in de gamificação). O Tracker escreve nas duas para a MESMA corrida,
+    // então somar direto dobraria. Dedupe por (dia, tipo) pegando o maior valor —
+    // mesmo padrão que a frequência de treino já usa acima. Antes o motor lia só
+    // a projeção: se o check-in falhasse, a corrida sumia do score.
     pool.query(
-      `SELECT COALESCE(SUM(duration_seconds) / 60, 0)::int AS minutes
-       FROM user_activity_logs
-       WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '7 days'`,
+      `SELECT COALESCE(SUM(secs) / 60, 0)::int AS minutes FROM (
+         SELECT day, activity_type, MAX(duration_seconds) AS secs FROM (
+           SELECT date_trunc('day', created_at) AS day, activity_type, duration_seconds
+             FROM user_activity_logs
+             WHERE user_id = $1 AND created_at >= NOW() - INTERVAL '7 days'
+           UNION ALL
+           SELECT date_trunc('day', started_at) AS day, activity_type, duration_seconds
+             FROM activity_sessions
+             WHERE user_id = $1 AND started_at >= NOW() - INTERVAL '7 days'
+         ) a GROUP BY day, activity_type
+       ) d`,
       [userId],
     ),
     pool.query(
-      `SELECT COUNT(*)::int AS count FROM user_activity_logs
-       WHERE user_id = $1
-         AND activity_type IN ('run', 'cycling', 'cardio')
-         AND created_at >= NOW() - INTERVAL '14 days'`,
+      `SELECT COUNT(*)::int AS count FROM (
+         SELECT date_trunc('day', created_at) AS day, activity_type
+           FROM user_activity_logs
+           WHERE user_id = $1 AND activity_type IN ('run', 'cycling', 'cardio')
+             AND created_at >= NOW() - INTERVAL '14 days'
+         UNION
+         SELECT date_trunc('day', started_at) AS day, activity_type
+           FROM activity_sessions
+           WHERE user_id = $1 AND activity_type IN ('run', 'cycling', 'cardio')
+             AND started_at >= NOW() - INTERVAL '14 days'
+       ) d`,
       [userId],
     ),
     // Dias desde a atividade MAIS RECENTE entre as três fontes (workout log,
@@ -93,6 +117,8 @@ export async function loadActivityMetrics(userId: number): Promise<{
            WHERE user_id = $1 AND status IN ('completed', 'partial')
          UNION ALL
          SELECT created_at AS ts FROM user_activity_logs WHERE user_id = $1
+         UNION ALL
+         SELECT started_at AS ts FROM activity_sessions WHERE user_id = $1
        ) t`,
       [userId],
     ),

@@ -2,6 +2,8 @@ import pool from '../config/database';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { applyGamificationCheckinTx, invalidateAfterCheckin, type MuscleGroup } from './gamificationService';
+import { dayKey } from '../utils/appDay';
+import logger from '../lib/logger';
 
 // Grupos musculares aceitos em user_workout_logs.muscle_groups (paridade com o
 // enum MuscleGroup da gamificação). Sanitizamos o que vem do cliente.
@@ -131,6 +133,37 @@ function numOrNull(v: unknown): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+/**
+ * Repetições: 0–999. As colunas de reps/descanso são `smallint` (teto 32767) e
+ * `numOrNull` não tinha limite superior, então um dedo escorregando no campo do
+ * Modo Treino (32768+) estourava o INSERT e derrubava a sessão INTEIRA com 500 —
+ * o aluno terminava o treino e perdia tudo. Clampar é melhor que rejeitar: a
+ * série já foi feita, e nenhum ser humano faz 1000 repetições.
+ */
+function clampReps(v: unknown): number | null {
+  const n = numOrNull(v);
+  if (n == null) return null;
+  return Math.min(999, Math.round(n));
+}
+
+/** Segundos de descanso: 0–7200 (2h), dentro do smallint. */
+function clampRestSeconds(v: unknown): number | null {
+  const n = v == null ? null : leadingInt(v);
+  if (n == null) return null;
+  return Math.min(7200, Math.max(0, n));
+}
+
+/**
+ * Carga: 0–9999.99 kg, o teto de `numeric(6,2)`. Acima disso o INSERT estourava
+ * com 500 (mesma perda de sessão do clampReps). O recorde mundial de levantamento
+ * fica em ~0,5 t, então o teto só corta erro de digitação.
+ */
+function clampLoadKg(v: unknown): number | null {
+  const n = numOrNull(v);
+  if (n == null) return null;
+  return Math.min(9999.99, Math.round(n * 100) / 100);
+}
+
 /** 0–100 int ou null — para form score / simetria do Lab. */
 function clampScore(v: unknown): number | null {
   const n = numOrNull(v);
@@ -152,14 +185,22 @@ function sanitizeConfidence(v: unknown): string | null {
 export async function createSession(userId: number, academyId: number | null, input: CreateSessionInput) {
   const client = await pool.connect();
   try {
-    // Retroativo (Spec 024): data real vs hoje, em dias de calendário (UTC — mesma
-    // convenção do todayDateKey da gamificação). diffDays: 0 = hoje (fluxo normal);
-    // 1..3 = retro; <0 = futuro; >3 = fora da janela. A rota já validou, mas
-    // revalidamos aqui (defesa em profundidade — o serviço é chamado direto em testes).
+    // Retroativo (Spec 024): data real vs hoje, em dias de calendário. diffDays:
+    // 0 = hoje (fluxo normal); 1..3 = retro; <0 = futuro; >3 = fora da janela.
+    // A rota já validou, mas revalidamos aqui (defesa em profundidade — o
+    // serviço é chamado direto em testes).
+    //
+    // `todayKey` sai do fuso do ALUNO: com o dia em UTC, quem salvava um treino
+    // às 22h (BRT) tinha "hoje" já virado, então o treino do próprio dia caía
+    // como retroativo e era barrado por falta de `confirmedHonesty`.
+    // `performedKey` continua em UTC de propósito: a data escolhida vem ancorada
+    // ao meio-dia UTC pela rota, então toISOString() a devolve intacta.
     const now = new Date();
     const performedAt = input.performedAt ?? now;
-    const performedKey = performedAt.toISOString().slice(0, 10);
-    const todayKey = now.toISOString().slice(0, 10);
+    const performedKey = input.performedAt
+      ? performedAt.toISOString().slice(0, 10)
+      : dayKey(now);
+    const todayKey = dayKey(now);
     const utcMs = (k: string) => { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d); };
     const diffDays = Math.round((utcMs(todayKey) - utcMs(performedKey)) / (24 * 60 * 60 * 1000));
     if (diffDays < 0) {
@@ -263,6 +304,41 @@ export async function createSession(userId: number, academyId: number | null, in
       });
     }
 
+    // `safeUuid` só valida FORMATO. Um UUID bem-formado que não existe em
+    // `exercises` passava direto e explodia na FK de workout_set_logs → 500, com
+    // a sessão inteira perdida. Resolvemos quais IDs existem de fato e zeramos os
+    // órfãos: a série continua registrada (o nome do exercício é preservado na
+    // própria linha), só perde o vínculo com a biblioteca. Melhor do que
+    // devolver 400 e descartar um treino que o aluno acabou de fazer.
+    const candidateIds = Array.from(
+      new Set(
+        rows
+          .flatMap((r) => [safeUuid(r.exerciseId), safeUuid(r.substitutedFromExerciseId)])
+          .filter((id): id is string => id !== null),
+      ),
+    );
+    let knownExerciseIds = new Set<string>();
+    if (candidateIds.length > 0) {
+      const found = await client.query<{ id: string }>(
+        `SELECT id FROM exercises WHERE id = ANY($1::uuid[])`,
+        [candidateIds],
+      );
+      knownExerciseIds = new Set(found.rows.map((row) => row.id));
+      if (knownExerciseIds.size !== candidateIds.length) {
+        logger.warn(
+          {
+            userId,
+            missing: candidateIds.filter((id) => !knownExerciseIds.has(id)),
+          },
+          '[training] sessão referencia exercício inexistente — vínculo zerado',
+        );
+      }
+    }
+    const knownUuid = (v: unknown): string | null => {
+      const id = safeUuid(v);
+      return id && knownExerciseIds.has(id) ? id : null;
+    };
+
     for (const r of rows) {
       const setLog = await client.query(
         `INSERT INTO workout_set_logs
@@ -273,19 +349,19 @@ export async function createSession(userId: number, academyId: number | null, in
          RETURNING id`,
         [
           sessionId,
-          safeUuid(r.exerciseId),
+          knownUuid(r.exerciseId),
           String(r.name ?? '').slice(0, 200) || '—',
           r.orderIndex ?? 0,
           r.setIndex ?? 1,
           r.plannedReps ?? null,
-          numOrNull(r.repsDone),
-          numOrNull(r.plannedLoadKg),
-          numOrNull(r.loadDoneKg),
-          leadingInt(r.plannedRestS),
-          leadingInt(r.restDoneS),
+          clampReps(r.repsDone),
+          clampLoadKg(r.plannedLoadKg),
+          clampLoadKg(r.loadDoneKg),
+          clampRestSeconds(r.plannedRestS),
+          clampRestSeconds(r.restDoneS),
           clampRpe(r.rpe),
           r.discomfort ? String(r.discomfort).slice(0, 280) : null,
-          safeUuid(r.substitutedFromExerciseId),
+          knownUuid(r.substitutedFromExerciseId),
           r.substitutionReason ? String(r.substitutionReason).slice(0, 280) : null,
           r.status === 'skipped' ? 'skipped' : 'done',
         ],
@@ -324,7 +400,16 @@ export async function createSession(userId: number, academyId: number | null, in
     let countedForStreak = false;
     let streak: number | null = null;
     let xp: number | null = null;
-    if (input.awardGamification && (input.status === 'completed' || input.status === 'partial')) {
+    // Sessão sem nenhum conteúdo não vale streak nem XP. Antes, um POST com
+    // `prescribed: []` e `sets: []` devolvia 201 com XP 60 e sequência contada —
+    // dava para inflar streak sem treinar, e o volume falso ainda entrava no
+    // score metabólico. `rows` já cobre os dois caminhos (séries detalhadas ou
+    // expandidas do prescrito), então basta exigir que exista ao menos uma.
+    const hasContent = rows.length > 0;
+    if (input.awardGamification && !hasContent) {
+      logger.info({ userId, sessionId }, '[training] sessão sem exercícios — XP/streak não concedidos');
+    }
+    if (input.awardGamification && hasContent && (input.status === 'completed' || input.status === 'partial')) {
       if (diffDays <= 1) {
         await applyGamificationCheckinTx(client, {
           userId,

@@ -63,7 +63,7 @@ import { getStudentExecutionSummary } from '../services/workoutSessionService';
 import { listCamps } from '../services/campService';
 import { getFatigue7d, getLastRecoveryGap } from '../services/postWorkoutService';
 import { findOrCreateUserFromContext } from '../services/userIdentityService';
-import { grantMembership } from '../services/membershipService';
+import { cancelMembership, grantMembership } from '../services/membershipService';
 import {
   checkStudentLimitGate,
   getPersonalPlan,
@@ -689,6 +689,24 @@ router.delete(
         return res.status(404).json({ success: false, error: 'Aluno não encontrado na sua carteira.' });
       }
 
+      // Vínculo desfeito ⇒ membership do produto 'personal' encerrada.
+      // Sem isto a linha ficava `active` para sempre, com professional_id
+      // apontando para um ex-personal, e — pior — o hook de graça do App bônus
+      // nunca rodava: o aluno não ganhava a janela de 30 dias que existe
+      // justamente para convertê-lo em B2C standalone (QA 01/ago/2026, P1-4).
+      //
+      // Fora da transação de propósito: o cancelamento é consequência do
+      // desvínculo, não pré-requisito dele. Falhar aqui não deve reverter uma
+      // revogação de consent que já foi comunicada como concluída.
+      try {
+        await cancelMembership(studentId, 'personal', {
+          revokedByUserId: personalId,
+          reason: 'personal removeu o aluno da carteira',
+        });
+      } catch (err) {
+        logger.error({ err, studentId, personalId }, '[personal] cancelMembership pós-desvínculo falhou');
+      }
+
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       if (academyId != null) {
         logAcademyAction({
@@ -710,6 +728,14 @@ router.delete(
 );
 
 router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  // Gate de plano ANTES do 503: IA é feature do Pro (Spec 008). Sem isto, as
+  // duas rotas de IA mais caras ficavam abertas ao Free enquanto só
+  // `ai-summary` era protegida — vazamento de receita e de custo OpenAI
+  // (QA 01/ago/2026, P2-1).
+  const planConfig = await getPersonalPlan(req.user!.id);
+  if (!planConfig.aiEnabled) {
+    return res.status(403).json({ success: false, code: 'AI_NOT_ENABLED', upgradeRequired: 'pro' });
+  }
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'Geração com IA não configurada neste ambiente.' });
   }
@@ -735,6 +761,10 @@ router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req:
 });
 
 router.post('/ai/metabolic-hint', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  const planConfig = await getPersonalPlan(req.user!.id);
+  if (!planConfig.aiEnabled) {
+    return res.status(403).json({ success: false, code: 'AI_NOT_ENABLED', upgradeRequired: 'pro' });
+  }
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'IA não configurada neste ambiente.' });
   }
@@ -1287,11 +1317,18 @@ router.post(
 
       const gate = await checkStudentLimitGate(personalId);
       if (gate.over) {
+        // `error` legível junto do código: sem ele o cliente cai no fallback
+        // genérico ("Não foi possível criar o convite") e o personal não
+        // descobre que bateu no limite — justo no momento de converter para o
+        // Pro (QA 01/ago/2026, P2-5).
         return res.status(403).json({
           success: false,
+          error: `Seu plano permite ${gate.limit} alunos e você já tem ${gate.current}. `
+            + 'Faça upgrade para o Pro para adicionar mais alunos.',
           code: 'STUDENT_LIMIT_REACHED',
           limit: gate.limit,
           current: gate.current,
+          upgradeRequired: 'pro',
         });
       }
 
@@ -1357,13 +1394,17 @@ router.post(
         [personalId, user.id, academyId]
       );
 
+      // `source: 'bonus_personal'` é o que liga o App bônus ao hook de graça
+      // no cancelamento — ver PARENT_TO_BONUS_SOURCE.
       await grantMembership(user.id, 'personal', {
         professionalId: personalId,
         academyId: academyId ?? undefined,
-        metadata: { source: 'personal_direct_add' },
+        source: 'bonus_personal',
+        metadata: { origin: 'personal_direct_add' },
       });
       await grantMembership(user.id, 'app', {
-        metadata: { source: 'personal_direct_add' },
+        source: 'bonus_personal',
+        metadata: { origin: 'personal_direct_add' },
       });
 
       res.status(201).json({
@@ -1395,11 +1436,18 @@ router.post(
 
       const gate = await checkStudentLimitGate(personalId);
       if (gate.over) {
+        // `error` legível junto do código: sem ele o cliente cai no fallback
+        // genérico ("Não foi possível criar o convite") e o personal não
+        // descobre que bateu no limite — justo no momento de converter para o
+        // Pro (QA 01/ago/2026, P2-5).
         return res.status(403).json({
           success: false,
+          error: `Seu plano permite ${gate.limit} alunos e você já tem ${gate.current}. `
+            + 'Faça upgrade para o Pro para adicionar mais alunos.',
           code: 'STUDENT_LIMIT_REACHED',
           limit: gate.limit,
           current: gate.current,
+          upgradeRequired: 'pro',
         });
       }
 

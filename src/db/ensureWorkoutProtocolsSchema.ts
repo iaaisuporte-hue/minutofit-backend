@@ -16,9 +16,14 @@ export async function ensureWorkoutProtocolsSchema() {
       payload_json JSONB NOT NULL DEFAULT '[]'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      -- 'personal' exige DONO, não academia: personal autônomo tem academy_id
+      -- NULL por design (isolamento por owner_personal_id). Ver migration
+      -- 1819000000000 — o predicado antigo quebrava todo save de ficha do
+      -- autônomo, porque createPersonalProtocolSnapshot grava com academy_id nulo.
       CONSTRAINT workout_protocols_scope_academy_chk CHECK (
         (scope = 'platform' AND academy_id IS NULL)
-        OR (scope IN ('personal', 'academy') AND academy_id IS NOT NULL)
+        OR (scope = 'academy' AND academy_id IS NOT NULL)
+        OR (scope = 'personal' AND owner_personal_id IS NOT NULL)
       )
     )
   `);

@@ -218,10 +218,10 @@ router.post('/register', registerRateLimit, async (req: Request, res: Response) 
     // exibia "este email já tem conta" para um CPF duplicado (email novo).
     if (!code) {
       if (message === 'Email ja cadastrado.') code = 'EMAIL_ALREADY_REGISTERED';
-      else if (message === 'CPF ja cadastrado.') code = 'CPF_ALREADY_REGISTERED';
     }
-    const status =
-      code === 'EMAIL_ALREADY_REGISTERED' || code === 'CPF_ALREADY_REGISTERED' ? 409 : 400;
+    // `REGISTRATION_CONFLICT` cobre CPF/telefone: mesmo status e mesma mensagem
+    // genérica, para o endpoint não confirmar que aquele documento tem conta.
+    const status = code === 'EMAIL_ALREADY_REGISTERED' || code === 'REGISTRATION_CONFLICT' ? 409 : 400;
     res.status(status).json({
       success: false,
       error: message,
@@ -307,10 +307,8 @@ router.post('/register-personal', registerRateLimit, async (req: Request, res: R
     let code = String(error?.code || '');
     if (!code) {
       if (message === 'Email ja cadastrado.') code = 'EMAIL_ALREADY_REGISTERED';
-      else if (message === 'CPF ja cadastrado.') code = 'CPF_ALREADY_REGISTERED';
     }
-    const status =
-      code === 'EMAIL_ALREADY_REGISTERED' || code === 'CPF_ALREADY_REGISTERED' ? 409 : 400;
+    const status = code === 'EMAIL_ALREADY_REGISTERED' || code === 'REGISTRATION_CONFLICT' ? 409 : 400;
     res.status(status).json({
       success: false,
       error: message,
@@ -649,6 +647,14 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
       data: { user: { ...user, accessProfile: effectiveProfile }, products }
     });
   } catch (error: any) {
+    // Conta excluída com token ainda dentro da validade (outra aba, outro
+    // aparelho): o `authMiddleware` só valida a assinatura do JWT, não vai ao
+    // banco. Devolver 404 deixava o SPA num limbo — `authFetch` só reage a 401.
+    // Com 401 o cliente limpa os tokens e cai no fluxo de sessão encerrada,
+    // que é exatamente o que aconteceu (QA final 02/ago/2026).
+    if (String(error?.message) === 'User not found') {
+      return res.status(401).json({ success: false, error: 'Sessao invalida.', code: 'ACCOUNT_NOT_FOUND' });
+    }
     res.status(404).json({ success: false, error: error.message });
   }
 });

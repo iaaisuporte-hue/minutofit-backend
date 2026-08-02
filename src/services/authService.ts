@@ -172,8 +172,20 @@ function throwFriendlyUniqueError(error: any): never {
   const detail = String(error?.detail || '');
   const constraint = String(error?.constraint || '');
 
+  // CPF/telefone NÃO confirmam existência de conta (QA final 02/ago/2026).
+  // O cadastro é público e sem autenticação: devolver "CPF ja cadastrado."
+  // transformava o endpoint num oráculo — dá para testar o CPF de qualquer
+  // pessoa e descobrir se ela usa a plataforma (dado de saúde, por associação).
+  // O e-mail continua explícito de propósito: é a chave de identidade do signup
+  // e o próprio dono o conhece, então a mensagem específica é o que permite
+  // oferecer "entre" ou "recupere a senha" em vez de deixar o usuário travado.
   if (detail.includes('(cpf)') || constraint.includes('cpf')) {
-    throw new Error('CPF ja cadastrado.');
+    const err: any = new Error(
+      'Nao foi possivel concluir o cadastro com os dados informados. '
+        + 'Se voce ja tem conta, entre com seu e-mail ou recupere a senha.',
+    );
+    err.code = 'REGISTRATION_CONFLICT';
+    throw err;
   }
 
   if (detail.includes('(email)') || constraint.includes('email')) {

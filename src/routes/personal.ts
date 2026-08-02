@@ -277,6 +277,29 @@ router.get(
       if (!scopes.has('chat_history') && data.week) {
         data.week.latestMessagePreview = null;
       }
+      // `workouts` faltava aqui (QA final 02/ago/2026): a revogação já derrubava
+      // /training-summary, /notes e /workout-plans para 403 e já era respeitada
+      // no dashboard agregado — mas o snapshot continuava entregando em quais
+      // dias o aluno treinou, o último treino, streak, aderência e volume por
+      // grupo muscular. Mesmo escopo, três comportamentos diferentes.
+      if (!scopes.has('workouts')) {
+        data.adherencePct = 0;
+        data.streakDays = 0;
+        if (data.today) {
+          data.today.latestWorkout = null;
+          data.today.workoutStatus = 'not_started';
+        }
+        if (data.week) {
+          data.week.days = data.week.days.map((d) => ({ ...d, workedOut: false }));
+          data.week.avgFormScore = null;
+          data.week.movementSessions7d = 0;
+        }
+        if (data.history) {
+          data.history.muscleGroupCounts = [];
+          data.history.formScoreSeries = [];
+          data.history.xp = 0;
+        }
+      }
 
       void logDataAccessEvent({
         actorId: req.user!.id,

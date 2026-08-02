@@ -96,7 +96,9 @@ export async function getAuditTrailForUser(
   limit = 50
 ): Promise<Array<{
   id: string;
-  actorId: number;
+  /** NULL = ator excluído (anonimizado pelo ON DELETE SET NULL). A linha
+   *  sobrevive porque pertence à trilha DESTE titular, não à do ator. */
+  actorId: number | null;
   eventType: string;
   eventPayload: Record<string, unknown>;
   createdAt: string;

@@ -490,8 +490,13 @@ app.get('/api/health', async (_req, res) => {
   // Last migration applied
   let lastMigration: string | null = null;
   try {
+    // `run_on` tem granularidade de segundo e um deploy aplica várias
+    // migrations no mesmo instante: ordenar só por ele devolvia uma migration
+    // do meio da lista (visto no QA de 02/ago — reportava a #14 com 62
+    // aplicadas), e a verificação pós-deploy passava a mentir. `id` é serial
+    // e desempata na ordem real de execução.
     const migResult = await pool.query(
-      `SELECT name FROM pgmigrations ORDER BY run_on DESC LIMIT 1`
+      `SELECT name FROM pgmigrations ORDER BY run_on DESC, id DESC LIMIT 1`
     );
     lastMigration = migResult.rows[0]?.name ?? null;
   } catch {

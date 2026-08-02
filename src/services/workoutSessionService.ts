@@ -2,7 +2,7 @@ import pool from '../config/database';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { applyGamificationCheckinTx, invalidateAfterCheckin, type MuscleGroup } from './gamificationService';
-import { dayKey } from '../utils/appDay';
+import { dayKey, APP_TIMEZONE } from '../utils/appDay';
 import logger from '../lib/logger';
 
 // Grupos musculares aceitos em user_workout_logs.muscle_groups (paridade com o
@@ -219,6 +219,76 @@ export async function createSession(userId: number, academyId: number | null, in
     const storedSource: SessionSource = isRetroactive ? 'user_retroactive' : input.source;
 
     await client.query('BEGIN');
+
+    // ── Idempotência da conclusão (QA final 02/ago/2026) ────────────────────
+    // A guarda de duplo envio era só de UI, e `registeredToday` nasce `false` a
+    // cada montagem do componente: recarregar a página, abrir numa segunda aba
+    // ou terminar o mesmo treino em outro aparelho criava uma SEGUNDA sessão e
+    // somava 30 XP de novo (medido: 30 → 60). Aderência/frequência não infla
+    // (as queries contam `COUNT(DISTINCT day)`), mas o histórico do aluno
+    // passava a listar o mesmo treino duas vezes e o XP virava ficção.
+    //
+    // Chave natural: aluno + ficha + dia da ficha + DIA DO ALUNO (fuso do app,
+    // não UTC). O reenvio devolve a sessão que já existe — semântica de replay
+    // idempotente, não erro: o cliente que perdeu a resposta por rede recebe o
+    // mesmo resultado da primeira tentativa.
+    //
+    // O advisory lock (transacional, liberado no COMMIT/ROLLBACK) serializa duas
+    // requisições simultâneas com a mesma chave — sem ele o SELECT abaixo passa
+    // limpo nos dois e ambas inserem. Não dá para trocar por UNIQUE INDEX: a
+    // conversão de fuso (`AT TIME ZONE`) é STABLE, não IMMUTABLE, e o Postgres
+    // recusa a expressão num índice.
+    //
+    // Escopo: só sessões ligadas a uma ficha (`planId`) e efetivamente
+    // treinadas. Avulso/tracker/Lab não têm chave natural — e o Lab já grava com
+    // `awardGamification: false`, então não há XP em jogo.
+    const dedupable =
+      input.planId != null && (input.status === 'completed' || input.status === 'partial');
+    if (dedupable) {
+      const idemKey = `workout-session:${userId}:${input.planId}:${input.dayIndex ?? -1}:${performedKey}`;
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [idemKey]);
+
+      const existing = await client.query(
+        `SELECT id, started_at, performed_at
+           FROM workout_sessions
+          WHERE user_id = $1
+            AND plan_id = $2
+            AND day_index IS NOT DISTINCT FROM $3
+            AND status IN ('completed', 'partial')
+            AND (started_at AT TIME ZONE $4)::date = $5::date
+          ORDER BY id ASC
+          LIMIT 1`,
+        [userId, input.planId, input.dayIndex ?? null, APP_TIMEZONE, performedKey],
+      );
+
+      if (existing.rows.length > 0) {
+        const prev = existing.rows[0];
+        const stats = await client.query(
+          `SELECT xp, current_streak FROM user_gamification_stats WHERE user_id = $1`,
+          [userId],
+        );
+        const setCount = await client.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM workout_set_logs WHERE session_id = $1`,
+          [prev.id],
+        );
+        await client.query('COMMIT');
+        logger.info(
+          { userId, planId: input.planId, dayIndex: input.dayIndex, sessionId: prev.id },
+          '[training] reenvio da mesma conclusão — devolvendo a sessão existente',
+        );
+        return {
+          id: Number(prev.id),
+          startedAt: prev.started_at,
+          performedAt: prev.performed_at,
+          isRetroactive,
+          countedForStreak: false,
+          setCount: Number(setCount.rows[0]?.n ?? 0),
+          streak: stats.rows[0] ? Number(stats.rows[0].current_streak ?? 0) : null,
+          xp: stats.rows[0] ? Number(stats.rows[0].xp ?? 0) : null,
+          duplicate: true,
+        };
+      }
+    }
 
     // Deriva personal (quando há plano). Adaptação/readiness só no fluxo ao vivo:
     // no retroativo o snapshot de readiness é de hoje, não da data real — não vincular.
@@ -464,6 +534,7 @@ export async function createSession(userId: number, academyId: number | null, in
       setCount: rows.length,
       streak,
       xp,
+      duplicate: false,
     };
   } catch (err) {
     await client.query('ROLLBACK');

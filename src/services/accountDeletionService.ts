@@ -66,6 +66,19 @@ export async function deleteUserAccount(
     // Tabelas sem CASCADE que referenciam o usuário — limpar explicitamente.
     await client.query(`DELETE FROM personal_direct_invites WHERE accepted_user_id = $1`, [userId]);
 
+    // Biblioteca de protocolos do personal (QA final 02/ago/2026).
+    // `owner_personal_id` é ON DELETE SET NULL, mas o CHECK
+    // `workout_protocols_scope_academy_chk` exige que todo protocolo de
+    // `scope='personal'` TENHA dono — então o SET NULL estourava a constraint e
+    // a exclusão do PERSONAL voltava 500 (o defeito não aparecia no aluno, que
+    // não tem biblioteca). Protocolo pessoal sem dono não tem leitor nem
+    // significado: some junto. Os de `scope='academy'` ficam com a academia e
+    // apenas perdem o vínculo de autoria (o SET NULL da FK dá conta).
+    await client.query(
+      `DELETE FROM workout_protocols WHERE owner_personal_id = $1 AND scope = 'personal'`,
+      [userId],
+    );
+
     // Fotos de progresso (LGPD art. 11): CASCADE apaga as LINHAS, não os binários.
     const photoRes = await client.query<{ storage_key: string }>(
       `SELECT storage_key FROM progress_photos WHERE user_id = $1`,

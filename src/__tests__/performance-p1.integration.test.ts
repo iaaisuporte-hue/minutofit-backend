@@ -14,6 +14,8 @@
  *
  * Sem `TEST_DATABASE_URL` a suíte inteira se auto-pula. Ver helpers/integrationDb.ts.
  */
+import { createRequire } from 'module';
+
 import type { Client } from 'pg';
 
 import {
@@ -27,6 +29,8 @@ import {
   hasTestDb,
   runBackfill,
 } from './helpers/integrationDb';
+
+const loadCjs = createRequire(__filename);
 
 // O serviço real precisa do pool apontando para o banco de teste. Só faz
 // sentido quando há banco; sem ele o describe é pulado e nada disto roda.
@@ -55,8 +59,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
   describe('1 · migration é reversível de verdade', () => {
     it('down remove as 4 tabelas e up as recria com constraints', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const migration = require('../../migrations/1823000000000_performance-foundation.js');
+      const migration = loadCjs('../../migrations/1823000000000_performance-foundation.js');
       const pgm = { db: { query: (sql: string, p?: unknown[]) => c.query(sql, p) } };
       const TABLES = [
         'workout_session_metrics',
@@ -96,8 +99,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     });
 
     it('up roda duas vezes seguidas sem erro (idempotente)', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const migration = require('../../migrations/1823000000000_performance-foundation.js');
+      const migration = loadCjs('../../migrations/1823000000000_performance-foundation.js');
       const pgm = { db: { query: (sql: string, p?: unknown[]) => c.query(sql, p) } };
       await expect(migration.up(pgm)).resolves.not.toThrow();
       await expect(migration.up(pgm)).resolves.not.toThrow();

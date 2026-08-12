@@ -19,7 +19,12 @@
  *
  * NUNCA aponte para o banco de produção: o setup faz DDL e DELETE.
  */
+import { createRequire } from 'module';
+
 import { Client } from 'pg';
+
+/** Migrations são CommonJS; `createRequire` é o padrão já usado nos testes. */
+const loadCjs = createRequire(__filename);
 
 export const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL ?? '';
 export const hasTestDb = TEST_DATABASE_URL.length > 0;
@@ -121,7 +126,6 @@ export async function createSetLog(
 
 /** Reexecuta o backfill da migration 1823 sobre o banco de teste. */
 export async function runBackfill(c: Client): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const migration = require('../../../migrations/1823000000000_performance-foundation.js');
+  const migration = loadCjs('../../../migrations/1823000000000_performance-foundation.js');
   await migration.up({ db: { query: (sql: string, params?: unknown[]) => c.query(sql, params) } });
 }

@@ -58,6 +58,9 @@ export type DataAccessEventType =
   | 'retro_workout.date_selected'
   | 'retro_workout.submitted'
   | 'retro_workout.blocked_over_limit'
+  // Módulo Performance (Spec 033) — UX do aluno sobre o próprio dado.
+  | 'performance.opened'
+  | 'performance.tab_viewed'
   | 'identity.user_created'
   | 'identity.user_reused';
 

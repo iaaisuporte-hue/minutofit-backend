@@ -147,7 +147,7 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
     `SELECT id, name, email, role, phone, fitness_goal, experience_level, height_cm, weight_kg, created_at
        FROM users WHERE id = $1`, [userId]);
 
-  const [workoutSessions, dailyCheckins, metabolicCheckins, nutritionPlans, adherence, mealCheckins, consents, messages, photos, sport] =
+  const [workoutSessions, dailyCheckins, metabolicCheckins, nutritionPlans, adherence, mealCheckins, consents, messages, photos, sport, sessionMetrics, prEvents, perfGoals, perfSnapshots] =
     await Promise.all([
       section('workout_sessions', `SELECT * FROM workout_sessions WHERE user_id = $1 ORDER BY id`, [userId]),
       section('daily_checkins', `SELECT * FROM user_daily_checkins WHERE user_id = $1 ORDER BY id`, [userId]),
@@ -159,6 +159,12 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
       section('messages', `SELECT id, conversation_id, sender_role, text, created_at FROM chat_messages WHERE sender_id = $1 ORDER BY id`, [userId]),
       section('progress_photos', `SELECT id, storage_key, content_type, taken_at, pose, note, status, created_at FROM progress_photos WHERE user_id = $1 AND status = 'active' ORDER BY id`, [userId]),
       section('sport_profile', `SELECT * FROM user_sport_profile WHERE user_id = $1`, [userId]),
+      // Módulo Performance (Spec 033). Dado derivado continua sendo dado do
+      // titular: se ele pede a própria cópia, tem que vir junto.
+      section('performance_session_metrics', `SELECT * FROM workout_session_metrics WHERE user_id = $1 ORDER BY performed_at`, [userId]),
+      section('performance_pr_events', `SELECT * FROM user_pr_events WHERE user_id = $1 ORDER BY achieved_at`, [userId]),
+      section('performance_goals', `SELECT * FROM user_performance_goals WHERE user_id = $1 ORDER BY id`, [userId]),
+      section('performance_snapshots', `SELECT * FROM user_performance_snapshots WHERE user_id = $1 ORDER BY snapshot_date`, [userId]),
     ]);
 
   // URLs de leitura assinadas curtas para as fotos (não expor storage_key cru).
@@ -185,5 +191,11 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
     consents,
     messages,
     sportProfile: sport[0] ?? null,
+    performance: {
+      sessionMetrics,
+      prEvents,
+      goals: perfGoals,
+      snapshots: perfSnapshots,
+    },
   };
 }

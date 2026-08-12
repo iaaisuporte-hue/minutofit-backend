@@ -46,6 +46,10 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'retro_workout.date_selected',
   'retro_workout.submitted',
   'retro_workout.blocked_over_limit',
+  // Spec 033 P1. Os eventos de PR, meta e upgrade entram com as ondas que os
+  // produzem — allow-list só aceita o que já existe de verdade.
+  'performance.opened',
+  'performance.tab_viewed',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

@@ -20,8 +20,37 @@ import {
 import { dayKey } from '../utils/appDay';
 
 const readSrc = (rel: string): string => fs.readFileSync(path.join(__dirname, rel), 'utf8');
+
+/** Raiz do monorepo — dois níveis acima do submódulo do backend. */
+const MONOREPO_ROOT = path.join(__dirname, '../../../..');
+
 const readRepo = (rel: string): string =>
-  fs.readFileSync(path.join(__dirname, '../../../..', rel), 'utf8');
+  fs.readFileSync(path.join(MONOREPO_ROOT, rel), 'utf8');
+
+/**
+ * Os irmãos estão por perto?
+ *
+ * As invariantes de loja moram no app e no site, não aqui: o backend só é o
+ * lugar onde alguém lembrou de testá-las. No monorepo isso funciona; no CI
+ * deste repositório, não — o `actions/checkout` traz o backend SOZINHO, e
+ * `../../../..` resolve para a raiz do sistema de arquivos. O resultado era um
+ * `ENOENT: '/minutofit-web/app/(legal)/excluir-conta/page.tsx'`, e o CI ficou
+ * vermelho desde que estes testes entraram.
+ *
+ * Pular quando os arquivos não existem é a mesma escolha já feita para os
+ * testes de banco (`describeWithDb`): quem tem o ambiente completo recebe a
+ * garantia, quem não tem continua rodando o resto da suíte.
+ *
+ * O custo é explícito e precisa ser dito: **estas cinco checagens não rodam no
+ * CI do backend**. Elas valem no monorepo — que é onde as três frentes são
+ * editadas juntas. Verificá-las em CI exigiria um job que faz checkout dos três
+ * repositórios, e esse job pertence à raiz, não a este submódulo.
+ */
+const HAS_SIBLINGS =
+  fs.existsSync(path.join(MONOREPO_ROOT, 'minutofit-app/minutofit-app/src')) &&
+  fs.existsSync(path.join(MONOREPO_ROOT, 'minutofit-web/app'));
+
+const describeWithMonorepo: jest.Describe = HAS_SIBLINGS ? describe : describe.skip;
 
 describe('SR-1 · data de nascimento e idade mínima', () => {
   it('aceita data válida e normaliza ISO completo', () => {
@@ -119,7 +148,7 @@ describe('SR-1 · data de nascimento e idade mínima', () => {
   });
 });
 
-describe('SR-2 · política das lojas no app empacotado', () => {
+describeWithMonorepo('SR-2 · política das lojas no app empacotado', () => {
   const appSrc = (rel: string) =>
     readRepo(path.join('minutofit-app/minutofit-app/src', rel));
 

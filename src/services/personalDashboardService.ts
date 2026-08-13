@@ -16,6 +16,7 @@ import type {
   PersonalMetabolicBand,
   PersonalMetabolicTrend,
 } from '../shared/types/personal-dashboard';
+import { resolveWeekDays } from '../utils/weekPreset';
 
 const DASHBOARD_CACHE_TTL = 60; // seconds
 
@@ -101,10 +102,11 @@ function targetWorkoutsPerMonth(plan: PersonalDashboardPlan) {
  * escolheu no builder: '4' | '5' | '6' | 'semana_util' (5 dias úteis).
  */
 export function weeklyTargetFromPreset(preset: string | null): number | null {
-  if (!preset) return null;
-  if (preset === 'semana_util') return 5;
-  const n = Number(preset);
-  return Number.isFinite(n) && n >= 1 && n <= 7 ? n : null;
+  // Delega ao intérprete único (`utils/weekPreset`). A regra vivia aqui e numa
+  // segunda cópia em `personal.source.ts`, que fazia `parseInt` e transformava
+  // 'semana_util' em NaN — o aluno era contado como 5 treinos previstos
+  // enquanto o app lhe entregava sempre o Dia 1.
+  return resolveWeekDays(preset);
 }
 
 /**

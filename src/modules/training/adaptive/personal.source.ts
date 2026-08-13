@@ -2,6 +2,8 @@ import pool from '../../../config/database';
 import type { AdaptableWorkoutDay, AdaptationPolicy, WorkoutSourceProvider } from './types';
 import { DEFAULT_POLICY } from './types';
 import type { WorkoutPlanItemPayload } from '../../../services/personalWorkoutPlanService';
+import { dayKey } from '../../../utils/appDay';
+import { computeTodayDayIndex } from '../../../utils/weekPreset';
 
 export class PersonalPrescriptionSource implements WorkoutSourceProvider {
   async loadTodayDay(
@@ -35,7 +37,7 @@ export class PersonalPrescriptionSource implements WorkoutSourceProvider {
     if (!planRow) return null;
 
     // Determine which day to load
-    const targetDayIndex = dayIndex ?? computeTodayDayIndex(planRow.week_preset);
+    const targetDayIndex = dayIndex ?? computeTodayDayIndex(planRow.week_preset, dayKey());
 
     const { rows: dayRows } = await pool.query(
       `SELECT d.id, d.day_index, d.name, d.focus, d.payload_json
@@ -111,11 +113,4 @@ export class PersonalPrescriptionSource implements WorkoutSourceProvider {
   }
 }
 
-function computeTodayDayIndex(weekPreset: string | null): number {
-  if (!weekPreset) return 1;
-  const days = parseInt(weekPreset, 10);
-  if (!Number.isFinite(days) || days < 1) return 1;
-  // Rotate by ISO day-of-week (1=Mon … 7=Sun), map into available days
-  const dow = new Date().getDay() || 7; // 1–7
-  return ((dow - 1) % days) + 1;
-}
+

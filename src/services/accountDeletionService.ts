@@ -79,6 +79,13 @@ export async function deleteUserAccount(
       [userId],
     );
 
+    // Desafios criados pelo personal (Spec 034, C2). `personal_id` é ON DELETE
+    // SET NULL, e um desafio sem dono é entidade social órfã carregando dado
+    // pessoal de terceiros — o precedente da migration 1826 é claro: entidade
+    // operacional não sobrevive ao dono. Os participantes vão por CASCADE, e o
+    // XP já pago fica: ele é do titular de cada participante, não do desafio.
+    await client.query(`DELETE FROM challenges WHERE personal_id = $1`, [userId]);
+
     // Fotos de progresso (LGPD art. 11): CASCADE apaga as LINHAS, não os binários.
     const photoRes = await client.query<{ storage_key: string }>(
       `SELECT storage_key FROM progress_photos WHERE user_id = $1`,
@@ -147,7 +154,7 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
     `SELECT id, name, email, role, phone, fitness_goal, experience_level, height_cm, weight_kg, created_at
        FROM users WHERE id = $1`, [userId]);
 
-  const [workoutSessions, dailyCheckins, metabolicCheckins, nutritionPlans, adherence, mealCheckins, consents, messages, photos, sport, sessionMetrics, prEvents, perfGoals, perfSnapshots, xpEvents, milestones] =
+  const [workoutSessions, dailyCheckins, metabolicCheckins, nutritionPlans, adherence, mealCheckins, consents, messages, photos, sport, sessionMetrics, prEvents, perfGoals, perfSnapshots, xpEvents, milestones, challengeParticipations] =
     await Promise.all([
       section('workout_sessions', `SELECT * FROM workout_sessions WHERE user_id = $1 ORDER BY id`, [userId]),
       section('daily_checkins', `SELECT * FROM user_daily_checkins WHERE user_id = $1 ORDER BY id`, [userId]),
@@ -169,6 +176,19 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
       // pediu a própria cópia, e "derivado" não deixa de ser dele.
       section('xp_events', `SELECT * FROM xp_events WHERE user_id = $1 ORDER BY id`, [userId]),
       section('milestones', `SELECT * FROM user_milestones WHERE user_id = $1 ORDER BY unlocked_at`, [userId]),
+      // Participações em desafio: o dado é do titular. O desafio em si é do
+      // personal — daqui vai só o que descreve a participação DESTA pessoa.
+      section(
+        'challenges',
+        `SELECT p.challenge_id, c.title, c.kind, c.starts_on, c.ends_on,
+                p.status, p.invited_at, p.joined_at, p.left_at, p.completed_at,
+                p.consent_ack_at, p.final_pct
+           FROM challenge_participants p
+           JOIN challenges c ON c.id = p.challenge_id
+          WHERE p.user_id = $1
+          ORDER BY p.id`,
+        [userId],
+      ),
     ]);
 
   // URLs de leitura assinadas curtas para as fotos (não expor storage_key cru).
@@ -204,6 +224,7 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
     community: {
       xpEvents,
       milestones,
+      challenges: challengeParticipations,
     },
   };
 }

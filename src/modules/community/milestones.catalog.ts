@@ -43,11 +43,10 @@ export interface MilestoneDefinition {
    */
   ruleVersion: number;
   /**
-   * `false` enquanto a fonte do marco não existe. `challenge_completed` está no
-   * catálogo desde a C1 — com título, descrição e critério — mas sem avaliador
-   * ativo: `challenge_participants` só nasce na C2. Deixar a definição pronta e
-   * o avaliador desligado é o oposto de criar dependência com tabela
-   * inexistente: nada consulta o que não existe.
+   * `false` enquanto a FONTE do marco não existe. Foi o caso de
+   * `challenge_completed` durante a C1: definição pronta no catálogo, avaliador
+   * desligado, nada consultando tabela inexistente. A C2 criou
+   * `challenge_participants` e o ligou.
    */
   evaluated: boolean;
 }
@@ -115,8 +114,8 @@ export const MILESTONE_CATALOG: readonly MilestoneDefinition[] = Object.freeze([
     description: 'Você concluiu um desafio até o fim.',
     criterion: 'Primeiro desafio concluído.',
     ruleVersion: 1,
-    // Avaliador desligado até a C2 criar `challenge_participants`.
-    evaluated: false,
+    // Ligado na C2, quando `challenge_participants` passou a existir.
+    evaluated: true,
   }),
 ]);
 

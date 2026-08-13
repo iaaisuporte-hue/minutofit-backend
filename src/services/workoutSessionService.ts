@@ -3,6 +3,7 @@ import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { applyGamificationCheckinTx, invalidateAfterCheckin, type MuscleGroup } from './gamificationService';
 import { evaluateMilestones, type MilestoneAward } from '../modules/community/milestones.service';
+import { evaluateChallengesAfterSession } from '../modules/community/challenges.service';
 import {
   evaluateGoalsAfterSession,
   type GoalAchievement,
@@ -696,6 +697,14 @@ export async function createSession(userId: number, academyId: number | null, in
     const milestonesUnlocked = await evaluateMilestones(userId).catch((err) => {
       logger.warn({ err, userId }, '[training] avaliação de marcos falhou após a sessão');
       return [] as MilestoneAward[];
+    });
+
+    // Desafios em curso (Spec 034, C2), mesma forma: transação própria, espaço
+    // de advisory lock próprio (4) e erro que não derruba o treino. Também há
+    // recuperação por leitura — abrir o desafio reavalia —, então perder esta
+    // passagem atrasa a conclusão, nunca a perde.
+    await evaluateChallengesAfterSession(userId).catch((err) => {
+      logger.warn({ err, userId }, '[training] avaliação de desafios falhou após a sessão');
     });
 
     return {

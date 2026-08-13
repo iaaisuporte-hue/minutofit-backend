@@ -83,6 +83,9 @@ export type DataAccessEventType =
   // que o aluno executa sobre um marco. O desbloqueio é servidor e já vira log
   // — a allow-list não recebe evento que ninguém emite.
   | 'community.milestone_share_changed'
+  // Spec 034 C2. A leitura do painel agrega nome e progresso de vários alunos —
+  // uma linha por titular lido, como nas rotas irmãs de performance.
+  | 'personal.challenge_participants_viewed'
   // Onda P5 — adoção da visão do personal.
   | 'personal.performance_opened'
   | 'personal.performance_insight_opened'

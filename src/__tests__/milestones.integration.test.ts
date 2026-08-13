@@ -413,8 +413,10 @@ describeWithDb('Marcos · determinísticos, idempotentes e privados', () => {
       expect(m.available).toBe(false);
       expect(m.unavailableReason).toMatch(/ficha/i);
     }
-    // O desafio também: a tabela dele só nasce na C2.
-    expect(lista.find((m) => m.code === 'challenge_completed')?.available).toBe(false);
+    // O desafio deixou de ser indisponível na C2: existe caminho (o personal
+    // criar um), então é "ainda não conquistado", não "sem porta".
+    expect(lista.find((m) => m.code === 'challenge_completed')?.available).toBe(true);
+    expect(lista.find((m) => m.code === 'challenge_completed')?.unlockedAt).toBeNull();
     // E o que foi conquistado continua disponível.
     expect(lista.find((m) => m.code === 'first_workout')?.available).toBe(true);
   });

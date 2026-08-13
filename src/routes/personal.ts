@@ -7,6 +7,14 @@ import { listMetabolicCheckins } from '../services/metabolicCheckinService';
 import { getWorkoutStats } from '../services/workoutSessionService';
 import logger from '../lib/logger';
 import {
+  ChallengeError,
+  cancelChallengeAsPersonal,
+  createChallenge,
+  inviteToChallenge,
+  listChallengesForPersonalUser,
+  listParticipantsForPersonal,
+} from '../modules/community/challenges.service';
+import {
   getPersonalConsulting,
   getPersonalDashboard,
   getPersonalStudentSnapshot,
@@ -58,6 +66,7 @@ import { generateWorkout } from '../services/ai/workoutAi';
 import { getMetabolicHint } from '../services/ai/metabolicHint';
 import pool from '../config/database';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
+import { createRateLimiter } from '../lib/rateLimiter';
 import { getSportProfile } from '../services/sportProfileService';
 import { getReadinessToday } from '../services/sportReadinessService';
 import { getStudentExecutionSummary } from '../services/workoutSessionService';
@@ -2352,6 +2361,124 @@ router.post(
       }
       logger.error({ err, studentId }, '[performance] POST insight error');
       return res.status(500).json({ success: false, error: 'Falha ao gerar o resumo.' });
+    }
+  },
+);
+
+/* ------------------------------------------------------------------ *
+ * Desafios do personal (Spec 034, C2)
+ *
+ * O `personalId` vem SEMPRE de `req.user!.id` — o cliente não escolhe para
+ * quem cria nem de quem lê. E o desafio só é encontrado quando pertence a quem
+ * pergunta: desafio de outro personal responde 404, sem confirmar existência.
+ * ------------------------------------------------------------------ */
+
+/**
+ * O lado do aluno tem limite; o do personal também precisa: criar desafio e
+ * convidar são escritas, e a leitura de participantes agrega dados de toda a
+ * turma. 120/hora cobre uso real com folga.
+ */
+const challengeLimiter = createRateLimiter({
+  storeKey: 'personal_challenges',
+  keyFn: (req) => `personal:${req.user!.id}`,
+  limit: 120,
+  windowSeconds: 3600,
+  errorMessage: 'Muitas requisições. Tente novamente em instantes.',
+});
+
+/**
+ * Id de desafio é BIGINT, e o `registerNumericParams` deste router valida `:id`
+ * contra a faixa do int4 — por isso o param se chama `:challengeId`. Com o
+ * nome `:id`, a rota passaria a responder 400 para todo desafio assim que a
+ * sequência ultrapassasse 2.147.483.647, sem ninguém entender por quê.
+ */
+function challengeIdParam(raw: unknown): string | null {
+  const s = String(raw ?? '');
+  if (!/^[0-9]{1,18}$/.test(s) || s === '0') return null;
+  return s;
+}
+
+function respondChallengeError(err: unknown, res: Response, contexto: string): Response {
+  if (err instanceof ChallengeError) {
+    return res.status(err.httpStatus).json({ success: false, error: err.message, code: err.code });
+  }
+  logger.error({ err }, `[community] ${contexto}`);
+  return res.status(500).json({ success: false, error: 'Falha ao processar o desafio.' });
+}
+
+router.post('/challenges', roleCheckMiddleware('personal'), challengeLimiter, async (req: Request, res: Response) => {
+  try {
+    const data = await createChallenge(req.user!.id, req.body ?? {});
+    return res.status(201).json({ success: true, data });
+  } catch (err) {
+    return respondChallengeError(err, res, 'POST /personal/challenges');
+  }
+});
+
+router.get('/challenges', roleCheckMiddleware('personal'), challengeLimiter, async (req: Request, res: Response) => {
+  try {
+    const challenges = await listChallengesForPersonalUser(req.user!.id);
+    return res.json({ success: true, data: { challenges } });
+  } catch (err) {
+    return respondChallengeError(err, res, 'GET /personal/challenges');
+  }
+});
+
+router.post(
+  '/challenges/:challengeId/invite',
+  roleCheckMiddleware('personal'),
+  challengeLimiter,
+  async (req: Request, res: Response) => {
+    const id = challengeIdParam(req.params.challengeId);
+    if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+    try {
+      const data = await inviteToChallenge(req.user!.id, id, req.body?.studentIds);
+      return res.json({ success: true, data });
+    } catch (err) {
+      return respondChallengeError(err, res, 'POST /personal/challenges/:id/invite');
+    }
+  },
+);
+
+router.get(
+  '/challenges/:challengeId/participants',
+  roleCheckMiddleware('personal'),
+  challengeLimiter,
+  async (req: Request, res: Response) => {
+    const id = challengeIdParam(req.params.challengeId);
+    if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+    try {
+      const data = await listParticipantsForPersonal(req.user!.id, id);
+      // A leitura agrega nome e progresso de vários alunos: entra na trilha,
+      // como as rotas irmãs de performance. Rastreabilidade é o que sustenta o
+      // pacto de dados quando alguém pergunta "quem viu o quê".
+      for (const p of data.participants) {
+        void logDataAccessEvent({
+          actorId: req.user!.id,
+          subjectUserId: p.userId,
+          eventType: 'personal.challenge_participants_viewed',
+          eventPayload: { challengeId: id },
+        });
+      }
+      return res.json({ success: true, data });
+    } catch (err) {
+      return respondChallengeError(err, res, 'GET /personal/challenges/:id/participants');
+    }
+  },
+);
+
+router.post(
+  '/challenges/:challengeId/cancel',
+  roleCheckMiddleware('personal'),
+  challengeLimiter,
+  async (req: Request, res: Response) => {
+    const id = challengeIdParam(req.params.challengeId);
+    if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+    try {
+      const data = await cancelChallengeAsPersonal(req.user!.id, id);
+      return res.json({ success: true, data });
+    } catch (err) {
+      return respondChallengeError(err, res, 'POST /personal/challenges/:id/cancel');
     }
   },
 );

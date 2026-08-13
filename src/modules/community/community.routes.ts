@@ -17,6 +17,14 @@ import { requireProduct } from '../../middleware/productGate';
 import { createRateLimiter } from '../../lib/rateLimiter';
 import logger from '../../lib/logger';
 import { listMilestonesForUser, setMilestoneShared } from './milestones.service';
+import {
+  ChallengeError,
+  getActiveChallengeCard,
+  getChallengeDetailForUser,
+  joinChallengeAsUser,
+  leaveChallengeAsUser,
+  listMyChallenges,
+} from './challenges.service';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('app'));
@@ -70,6 +78,86 @@ router.patch('/milestones/:code', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, '[community] PATCH /milestones/:code error');
     return res.status(500).json({ success: false, error: 'Failed to update milestone' });
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Desafios (Spec 034, C2)
+ *
+ * Todas as rotas resolvem o dono pelo JWT. O `:id` do desafio é validado
+ * CONTRA a participação do requisitante: um desafio de que ele não participa
+ * responde 404 igual a um inexistente — não existe leitura de desafio alheio,
+ * nem confirmação de que ele existe.
+ * ------------------------------------------------------------------ */
+
+/** Id de desafio: bigint positivo. Lixo vira 404, nunca 500. */
+function parseChallengeId(raw: unknown): string | null {
+  const s = String(raw ?? '');
+  if (!/^[0-9]{1,18}$/.test(s) || s === '0') return null;
+  return s;
+}
+
+function handleChallengeError(err: unknown, res: Response, contexto: string): Response {
+  if (err instanceof ChallengeError) {
+    return res.status(err.httpStatus).json({ success: false, error: err.message, code: err.code });
+  }
+  logger.error({ err }, `[community] ${contexto}`);
+  return res.status(500).json({ success: false, error: 'Failed to process challenge' });
+}
+
+// GET /api/community/challenges — os desafios do próprio aluno.
+router.get('/challenges', async (req: Request, res: Response) => {
+  try {
+    const challenges = await listMyChallenges(req.user!.id);
+    return res.json({ success: true, data: { challenges } });
+  } catch (err) {
+    return handleChallengeError(err, res, 'GET /challenges');
+  }
+});
+
+// GET /api/community/challenges/active — card da tela Hoje.
+router.get('/challenges/active', async (req: Request, res: Response) => {
+  try {
+    const challenge = await getActiveChallengeCard(req.user!.id);
+    return res.json({ success: true, data: { challenge } });
+  } catch (err) {
+    return handleChallengeError(err, res, 'GET /challenges/active');
+  }
+});
+
+// GET /api/community/challenges/:id — detalhe, com faixas agregadas quando permitido.
+router.get('/challenges/:id', async (req: Request, res: Response) => {
+  const id = parseChallengeId(req.params.id);
+  if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+  try {
+    const data = await getChallengeDetailForUser(req.user!.id, id);
+    return res.json({ success: true, data });
+  } catch (err) {
+    return handleChallengeError(err, res, 'GET /challenges/:id');
+  }
+});
+
+// POST /api/community/challenges/:id/join — aceitar É o consentimento.
+router.post('/challenges/:id/join', async (req: Request, res: Response) => {
+  const id = parseChallengeId(req.params.id);
+  if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+  try {
+    const data = await joinChallengeAsUser(req.user!.id, id);
+    return res.status(201).json({ success: true, data });
+  } catch (err) {
+    return handleChallengeError(err, res, 'POST /challenges/:id/join');
+  }
+});
+
+// POST /api/community/challenges/:id/leave — revoga a visibilidade na hora.
+router.post('/challenges/:id/leave', async (req: Request, res: Response) => {
+  const id = parseChallengeId(req.params.id);
+  if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+  try {
+    const data = await leaveChallengeAsUser(req.user!.id, id);
+    return res.json({ success: true, data });
+  } catch (err) {
+    return handleChallengeError(err, res, 'POST /challenges/:id/leave');
   }
 });
 

@@ -91,7 +91,10 @@ async function loadFacts(userId: number): Promise<MilestoneFacts> {
   const today = dayKey();
   const windowStart = addDays(today, -(MILESTONE_WINDOW_DAYS - 1));
 
-  const [firstSessionRes, firstPrRes, goalsRes, activeDays, previousActiveDay, plan, firstActiveDay] =
+  const [
+    firstSessionRes, firstPrRes, goalsRes, activeDays, previousActiveDay, plan,
+    firstActiveDay, challengeRes,
+  ] =
     await Promise.all([
       pool.query<{ id: number; performed_at: Date }>(
         `SELECT id, performed_at
@@ -125,6 +128,17 @@ async function loadFacts(userId: number): Promise<MilestoneFacts> {
       // mudou em um lugar só.
       loadWeeklyFrequencyTarget(userId),
       findFirstActiveDay(userId),
+      // Primeiro desafio concluído (Spec 034, C2). Ordenado pela conclusão:
+      // o marco celebra o PRIMEIRO, não o mais recente.
+      pool.query<{ challenge_id: string; title: string; completed_at: Date; final_pct: string | null }>(
+        `SELECT p.challenge_id::text, c.title, p.completed_at, p.final_pct::text
+           FROM challenge_participants p
+           JOIN challenges c ON c.id = p.challenge_id
+          WHERE p.user_id = $1 AND p.status = 'completed'
+          ORDER BY p.completed_at ASC, p.id ASC
+          LIMIT 1`,
+        [userId],
+      ),
     ]);
 
   const firstSession = firstSessionRes.rows[0]
@@ -156,6 +170,17 @@ async function loadFacts(userId: number): Promise<MilestoneFacts> {
     previousActiveDay,
     weeklyTarget: plan.weeklyTarget,
     planActiveSince: plan.since,
+    firstChallengeCompleted: challengeRes.rows[0]
+      ? {
+          challengeId: challengeRes.rows[0].challenge_id,
+          title: challengeRes.rows[0].title,
+          completedAt: new Date(challengeRes.rows[0].completed_at).toISOString(),
+          finalPct:
+            challengeRes.rows[0].final_pct != null
+              ? Number(challengeRes.rows[0].final_pct)
+              : null,
+        }
+      : null,
   };
 }
 
@@ -370,6 +395,10 @@ export async function listMilestonesForUser(userId: number): Promise<MilestoneDt
       if (!def.evaluated) {
         available = false;
         unavailableReason = 'Chega com os desafios.';
+      } else if (def.code === 'challenge_completed') {
+        // Existe caminho — depende de o personal criar um desafio — então não é
+        // "indisponível"; é só ainda não conquistado.
+        available = true;
       } else if (REQUIRE_WEEKLY_TARGET.has(def.code) && !temAlvoSemanal) {
         available = false;
         // Duas saídas, não uma: quem não tem personal destrava criando a

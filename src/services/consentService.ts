@@ -14,7 +14,13 @@ export type ConsentScope =
   | 'parq_anamnese'
   | 'activity_logs'
   | 'chat_history'
-  | 'sports'; // Fight Intelligence — Onda B: coach/nutri view
+  | 'sports' // Fight Intelligence — Onda B: coach/nutri view
+  // Spec 034 C2. Os 13 escopos acima cobrem PROFISSIONAL lendo dado do aluno.
+  // Aparecer numa turma, para OUTROS ALUNOS, é divulgação de natureza
+  // diferente — reusar `workouts` seria consentimento fora da finalidade.
+  // Aqui o consentimento é por contexto de desafio
+  // (`challenge_participants.consent_ack_at`), não por par profissional↔aluno.
+  | 'group_visibility';
 
 export type ProfessionalRole = 'personal' | 'nutri';
 

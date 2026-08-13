@@ -95,6 +95,20 @@ export interface MilestoneFacts {
   /** Dias de treino previstos por semana. `null` = sem ficha ativa. */
   weeklyTarget: number | null;
   /**
+   * Primeiro desafio CONCLUÍDO (Spec 034, C2). `null` = nenhum ainda.
+   *
+   * Concluir um desafio e desbloquear o primeiro marco de desafio são fatos
+   * diferentes, e é por isso que são pagos por chaves diferentes no ledger:
+   * o desafio paga `challenge_completed` (50 XP), o marco paga `milestone`
+   * (10 XP). Tratá-los como um só pagaria duas vezes pelo mesmo fato.
+   */
+  firstChallengeCompleted: {
+    challengeId: string;
+    title: string;
+    completedAt: string;
+    finalPct: number | null;
+  } | null;
+  /**
    * Dia em que a ficha ATIVA passou a valer (`null` = sem ficha).
    *
    * Os marcos de semana só julgam o período em que o alvo atual vigorou. Sem
@@ -221,6 +235,21 @@ function evalFirstPr(f: MilestoneFacts): MilestoneUnlock | null {
       exerciseId: f.firstRealPr.exerciseId,
       kind: f.firstRealPr.kind,
       achievedAt: f.firstRealPr.achievedAt,
+    },
+  };
+}
+
+function evalChallengeCompleted(f: MilestoneFacts): MilestoneUnlock | null {
+  if (!f.firstChallengeCompleted) return null;
+  const c = f.firstChallengeCompleted;
+  return {
+    code: 'challenge_completed',
+    unlockedAt: c.completedAt,
+    evidence: {
+      challengeId: c.challengeId,
+      title: c.title,
+      completedAt: c.completedAt,
+      finalPct: c.finalPct,
     },
   };
 }
@@ -435,7 +464,8 @@ function evalComeback(f: MilestoneFacts, weeks: WeekBucket[]): MilestoneUnlock |
  * engine: assim a função continua pura e o reprocessamento é trivialmente
  * seguro.
  *
- * `challenge_completed` não aparece: não tem avaliador na C1 (§catálogo).
+ * Todos os oito têm avaliador desde a C2 — `challenge_completed` foi o último
+ * a ganhar fonte, quando `challenge_participants` passou a existir.
  */
 export function evaluateMilestoneFacts(facts: MilestoneFacts): MilestoneUnlock[] {
   const weeks = buildWeekBuckets(facts);
@@ -443,6 +473,7 @@ export function evaluateMilestoneFacts(facts: MilestoneFacts): MilestoneUnlock[]
   const unlocks = [
     evalFirstWorkout(facts),
     evalFirstPr(facts),
+    evalChallengeCompleted(facts),
     evalTenGoals(facts),
     evalFirstFullWeek(facts, weeks),
     evalFourConsistentWeeks(facts, weeks),

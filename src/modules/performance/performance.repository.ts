@@ -259,6 +259,129 @@ export async function findLastActiveDayBefore(
 }
 
 /**
+ * Dias ativos por USUÁRIO e por SEMANA ISO, numa query só (Spec 034, C2).
+ *
+ * As faixas de um desafio precisam do progresso de todos os participantes. Com
+ * uma consulta por pessoa e por semana, um desafio de 20 pessoas × 4 semanas
+ * custaria ~120 idas ao banco num endpoint de LEITURA — sobre um pool de 10
+ * conexões, isso não é lentidão, é indisponibilidade.
+ *
+ * A UNIÃO é a mesma de `countActiveDaysBetween`; o que muda é o agrupamento.
+ * A segunda-feira sai de ARITMÉTICA sobre a data já convertida
+ * (`d - (ISODOW - 1)`), não de `date_trunc`: a invariante deste módulo proíbe
+ * `date_trunc` nas queries de consistência porque, sobre um timestamp, ele
+ * resolveria no fuso do SERVIDOR. Aritmética sobre `date` não tem fuso — e o
+ * resultado bate com `startOfIsoWeek` do TypeScript.
+ */
+export async function loadActiveDaysByUserWeek(
+  userIds: number[],
+  fromDay: string,
+  toDay: string,
+): Promise<Map<number, Map<string, number>>> {
+  const saida = new Map<number, Map<string, number>>();
+  if (userIds.length === 0) return saida;
+
+  const rawSince = `${fromDay}T00:00:00Z`;
+  const { rows } = await pool.query<{ user_id: number; week: string; n: number }>(
+    `SELECT user_id,
+            to_char(d - (EXTRACT(ISODOW FROM d)::int - 1), 'YYYY-MM-DD') AS week,
+            COUNT(*)::int AS n
+       FROM (
+         SELECT DISTINCT user_id, d FROM (
+           SELECT uwl.user_id AS user_id, ${SOURCE_DAY_EXPR.workoutLog} AS d
+             FROM user_workout_logs uwl
+            WHERE uwl.user_id = ANY($1::int[])
+              AND uwl.completed_at >= ($3::timestamptz AT TIME ZONE 'UTC') - INTERVAL '2 days'
+              AND ${SOURCE_DAY_EXPR.workoutLog} BETWEEN $4::date AND $5::date
+           UNION
+           SELECT ws.user_id, ${SOURCE_DAY_EXPR.session}
+             FROM workout_sessions ws
+            WHERE ws.user_id = ANY($1::int[])
+              AND ws.status IN ('completed', 'partial')
+              AND ws.performed_at >= $3::timestamptz - INTERVAL '2 days'
+              AND ${SOURCE_DAY_EXPR.session} BETWEEN $4::date AND $5::date
+           UNION
+           SELECT psl.student_id, ${SOURCE_DAY_EXPR.personalLog}
+             FROM personal_session_logs psl
+            WHERE psl.student_id = ANY($1::int[])
+              AND psl.status IN ('present', 'partial')
+              AND psl.session_at >= $3::timestamptz - INTERVAL '2 days'
+              AND ${SOURCE_DAY_EXPR.personalLog} BETWEEN $4::date AND $5::date
+         ) t
+       ) u
+      GROUP BY user_id, d - (EXTRACT(ISODOW FROM d)::int - 1)`,
+    // $2 é SEMPRE o fuso neste arquivo — é o que `SOURCE_DAY_EXPR` assume.
+    [userIds, APP_TIMEZONE, rawSince, fromDay, toDay],
+  );
+
+  for (const r of rows) {
+    if (!saida.has(r.user_id)) saida.set(r.user_id, new Map());
+    saida.get(r.user_id)!.set(r.week, Number(r.n));
+  }
+  return saida;
+}
+
+/**
+ * Alvo semanal de VÁRIOS usuários — duas queries, não duas por pessoa.
+ *
+ * Mesma precedência de `loadWeeklyFrequencyTarget` (ficha → meta → null), pela
+ * mesma função pura: a regra continua num lugar só, o que muda é o número de
+ * viagens ao banco.
+ */
+export async function loadWeeklyTargetsForUsers(
+  userIds: number[],
+): Promise<Map<number, WeeklyFrequencyTarget>> {
+  const saida = new Map<number, WeeklyFrequencyTarget>();
+  if (userIds.length === 0) return saida;
+
+  const [planos, metas] = await Promise.all([
+    pool.query<{ student_id: number; week_preset: string | null; active_since: string | null; days_since: number | null }>(
+      `SELECT DISTINCT ON (student_id)
+              student_id, week_preset,
+              to_char((created_at AT TIME ZONE $2)::date, 'YYYY-MM-DD') AS active_since,
+              (EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400)::int AS days_since
+         FROM personal_workout_plans
+        WHERE student_id = ANY($1::int[]) AND abandoned_at IS NULL
+        ORDER BY student_id, created_at DESC`,
+      [userIds, APP_TIMEZONE],
+    ),
+    pool.query<{ user_id: number; target: string | null; since: string | null; days_since: number | null }>(
+      `SELECT user_id, MAX(target_value)::text AS target,
+              to_char(MIN(starts_on), 'YYYY-MM-DD') AS since,
+              (CURRENT_DATE - MIN(starts_on))::int AS days_since
+         FROM user_performance_goals
+        WHERE user_id = ANY($1::int[]) AND kind = 'weekly_frequency' AND status = 'active'
+        GROUP BY user_id`,
+      [userIds],
+    ),
+  ]);
+
+  const porPlano = new Map(planos.rows.map((r) => [r.student_id, r]));
+  const porMeta = new Map(metas.rows.map((r) => [r.user_id, r]));
+
+  for (const id of userIds) {
+    const p = porPlano.get(id);
+    const m = porMeta.get(id);
+    saida.set(
+      id,
+      pickWeeklyTarget(
+        {
+          weeklyTarget: weeklyTargetFromPreset(p?.week_preset ?? null),
+          since: p?.active_since ?? null,
+          daysSinceStarted: p?.days_since ?? null,
+        },
+        {
+          weeklyTarget: m?.target != null ? Number(m.target) : null,
+          since: m?.since ?? null,
+          daysSinceStarted: m?.days_since ?? null,
+        },
+      ),
+    );
+  }
+  return saida;
+}
+
+/**
  * PRIMEIRO dia com treino, de todos os tempos (Spec 034, C1).
  *
  * Usa a mesma UNION das três fontes. Sem isto, o marco de primeiro treino

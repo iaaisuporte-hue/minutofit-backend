@@ -18,6 +18,7 @@ const featureCatalog = [
   ['movement_lab', 'Lab de Movimento', 'Analise de execucao por camera (beta). Recurso pago — saiu do Free em ago/2026.'],
   ['movement_lab_guided', 'Lab de Movimento — Guiado pela ficha', 'Abrir o Lab de um exercicio da ficha, contar series/reps e gravar execucao real (Spec 022). Recurso pago — saiu do Free em ago/2026.'],
   ['retro_workout_enabled', 'Registro Retroativo de Treino', 'Registrar treino feito nos ultimos 3 dias que o aluno esqueceu de marcar (Spec 024). Flag = kill-switch; liberada no Free.'],
+  ['challenges', 'Desafios', 'Participar de desafio criado pelo personal (Spec 034 C2). Liberada no Free por decisao de produto: cobrar do aluno para participar de um desafio que o personal dele criou quebraria o compromisso assumido com a turma.'],
 ] as const;
 
 /**
@@ -34,7 +35,7 @@ const featureCatalog = [
  * papel e o recurso vira pago. A flag continua sendo o kill-switch: devolver as
  * duas chaves a esta lista religa o Lab no Free sem migration.
  */
-const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled'];
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges'];
 
 const PRO_PRODUCT_FEATURES: string[] = [
   'today',
@@ -51,6 +52,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
   'movement_lab',
   'movement_lab_guided',
   'retro_workout_enabled',
+  'challenges',
 ];
 
 const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog.map((row) => row[0]);

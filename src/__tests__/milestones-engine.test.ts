@@ -34,6 +34,7 @@ function facts(over: Partial<MilestoneFacts> = {}): MilestoneFacts {
     previousActiveDay: null,
     weeklyTarget: null,
     planActiveSince: null,
+    firstChallengeCompleted: null,
     ...over,
   };
 }
@@ -70,10 +71,24 @@ describe('catálogo', () => {
     }
   });
 
-  it('challenge_completed existe mas não é avaliado na C1', () => {
-    expect(findMilestone('challenge_completed')?.evaluated).toBe(false);
-    expect(EVALUATED_CODES).not.toContain('challenge_completed');
-    expect(EVALUATED_CODES).toHaveLength(7);
+  it('todos os oito têm avaliador desde a C2', () => {
+    expect(findMilestone('challenge_completed')?.evaluated).toBe(true);
+    expect(EVALUATED_CODES).toContain('challenge_completed');
+    expect(EVALUATED_CODES).toHaveLength(8);
+  });
+
+  it('o marco de desafio nasce do fato real, com evidência auditável', () => {
+    const f = facts({
+      firstChallengeCompleted: {
+        challengeId: '42',
+        title: 'Quatro semanas firmes',
+        completedAt: '2026-03-01T12:00:00.000Z',
+        finalPct: 100,
+      },
+    });
+    const unlock = evaluateMilestoneFacts(f).find((u) => u.code === 'challenge_completed')!;
+    expect(unlock.unlockedAt).toBe('2026-03-01T12:00:00.000Z');
+    expect(unlock.evidence).toMatchObject({ challengeId: '42', finalPct: 100 });
   });
 
   it('a UI fala "recorde pessoal", não a sigla', () => {

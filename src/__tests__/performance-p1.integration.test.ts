@@ -19,6 +19,7 @@ import { createRequire } from 'module';
 import type { Client } from 'pg';
 
 import {
+  acquireSuiteLock,
   cleanFixtures,
   connect,
   createExercise,
@@ -27,8 +28,12 @@ import {
   createUser,
   describeWithDb,
   hasTestDb,
+  releaseSuiteLock,
   runBackfill,
 } from './helpers/integrationDb';
+
+/** Namespace desta suíte — não colide com as fixtures das outras. */
+const TAG = 'itest-p1';
 
 const loadCjs = createRequire(__filename);
 
@@ -44,11 +49,14 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
   beforeAll(async () => {
     c = await connect();
-    await cleanFixtures(c);
+    // Enfileira contra a outra suíte de integração — as duas dividem o banco.
+    await acquireSuiteLock(c);
+    await cleanFixtures(c, TAG);
   });
 
   afterAll(async () => {
-    await cleanFixtures(c);
+    await cleanFixtures(c, TAG);
+    await releaseSuiteLock(c);
     await c.end();
     // Fecha o pool do app, senão o Jest não encerra.
     const pool = (await import('../config/database')).default;
@@ -110,8 +118,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
   describe('2 · backfill de workout_session_metrics', () => {
     it('agrega só séries realizadas e ignora sessão sem execução', async () => {
-      const userId = await createUser(c, 'bf-metrics');
-      const ex = await createExercise(c, 'Supino Backfill');
+      const userId = await createUser(c, TAG, 'bf-metrics');
+      const ex = await createExercise(c, TAG, 'Supino Backfill');
 
       const s1 = await createSessionRow(c, { userId, daysAgo: 10, sessionRpe: 7 });
       await createSetLog(c, { sessionId: s1, exerciseId: ex, name: 'Supino Backfill', setIndex: 1, reps: 10, loadKg: 70 });
@@ -152,15 +160,17 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     });
 
     it('é idempotente: reexecutar não duplica nem altera', async () => {
-      const before = await c.query(`SELECT count(*)::int AS n FROM workout_session_metrics`);
+      const before = await c.query(`SELECT count(*)::int AS n FROM workout_session_metrics
+         WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`${TAG}-%@test.local`]);
       await runBackfill(c);
-      const after = await c.query(`SELECT count(*)::int AS n FROM workout_session_metrics`);
+      const after = await c.query(`SELECT count(*)::int AS n FROM workout_session_metrics
+         WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`${TAG}-%@test.local`]);
       expect(after.rows[0].n).toBe(before.rows[0].n);
     });
 
     it('treino sem carga tem tonelagem NULL, não zero', async () => {
-      const userId = await createUser(c, 'bf-bodyweight');
-      const ex = await createExercise(c, 'Barra Fixa BF');
+      const userId = await createUser(c, TAG, 'bf-bodyweight');
+      const ex = await createExercise(c, TAG, 'Barra Fixa BF');
       const s = await createSessionRow(c, { userId, daysAgo: 5, sessionRpe: 8 });
       await createSetLog(c, { sessionId: s, exerciseId: ex, name: 'Barra Fixa BF', setIndex: 1, reps: 12, loadKg: null });
       await runBackfill(c);
@@ -174,8 +184,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
   describe('3 · backfill de user_pr_events', () => {
     it('emite evento só quando supera o melhor anterior, com previous_value', async () => {
-      const userId = await createUser(c, 'bf-pr');
-      const ex = await createExercise(c, 'Agacho PR');
+      const userId = await createUser(c, TAG, 'bf-pr');
+      const ex = await createExercise(c, TAG, 'Agacho PR');
 
       // 70 (estreia) → 72 (recorde) → 68 (regressão) → 80 (recorde)
       for (const [daysAgo, load] of [[30, 70], [20, 72], [10, 68], [5, 80]] as const) {
@@ -201,8 +211,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     });
 
     it('e1RM respeita a guarda de 12 repetições', async () => {
-      const userId = await createUser(c, 'bf-e1rm');
-      const ex = await createExercise(c, 'Rosca E1RM');
+      const userId = await createUser(c, TAG, 'bf-e1rm');
+      const ex = await createExercise(c, TAG, 'Rosca E1RM');
       const s = await createSessionRow(c, { userId, daysAgo: 4, sessionRpe: 7 });
       // 20 reps: fora da faixa em que a estimativa se sustenta
       await createSetLog(c, { sessionId: s, exerciseId: ex, name: 'Rosca E1RM', setIndex: 1, reps: 20, loadKg: 30 });
@@ -218,9 +228,9 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     });
 
     it('max_reps só existe para série SEM carga', async () => {
-      const userId = await createUser(c, 'bf-reps');
-      const comCarga = await createExercise(c, 'Com Carga');
-      const semCarga = await createExercise(c, 'Sem Carga');
+      const userId = await createUser(c, TAG, 'bf-reps');
+      const comCarga = await createExercise(c, TAG, 'Com Carga');
+      const semCarga = await createExercise(c, TAG, 'Sem Carga');
       const s = await createSessionRow(c, { userId, daysAgo: 3, sessionRpe: 6 });
       await createSetLog(c, { sessionId: s, exerciseId: comCarga, name: 'Com Carga', setIndex: 1, reps: 15, loadKg: 40 });
       await createSetLog(c, { sessionId: s, exerciseId: semCarga, name: 'Sem Carga', setIndex: 1, reps: 15, loadKg: null });
@@ -236,9 +246,11 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     });
 
     it('é idempotente: reexecutar não duplica evento', async () => {
-      const before = await c.query(`SELECT count(*)::int AS n FROM user_pr_events`);
+      const before = await c.query(`SELECT count(*)::int AS n FROM user_pr_events
+         WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`${TAG}-%@test.local`]);
       await runBackfill(c);
-      const after = await c.query(`SELECT count(*)::int AS n FROM user_pr_events`);
+      const after = await c.query(`SELECT count(*)::int AS n FROM user_pr_events
+         WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`${TAG}-%@test.local`]);
       expect(after.rows[0].n).toBe(before.rows[0].n);
     });
   });
@@ -248,8 +260,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
   describe('4 · rollback do createSession não deixa linha órfã', () => {
     it('falha no meio da transação desfaz sessão E métrica', async () => {
       const { createSession } = await import('../services/workoutSessionService');
-      const userId = await createUser(c, 'rollback');
-      const ex = await createExercise(c, 'Ex Rollback');
+      const userId = await createUser(c, TAG, 'rollback');
+      const ex = await createExercise(c, TAG, 'Ex Rollback');
 
       const count = async (table: string) => {
         const { rows } = await c.query(
@@ -275,8 +287,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
     it('sucesso grava sessão e métrica na MESMA transação', async () => {
       const { createSession } = await import('../services/workoutSessionService');
-      const userId = await createUser(c, 'writethrough');
-      const ex = await createExercise(c, 'Ex WT');
+      const userId = await createUser(c, TAG, 'writethrough');
+      const ex = await createExercise(c, TAG, 'Ex WT');
 
       const res = await createSession(userId, null, {
         source: 'free',
@@ -308,8 +320,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
     it('sessão sem série realizada não gera métrica (nem zero artificial)', async () => {
       const { createSession } = await import('../services/workoutSessionService');
-      const userId = await createUser(c, 'noexec');
-      const ex = await createExercise(c, 'Ex NoExec');
+      const userId = await createUser(c, TAG, 'noexec');
+      const ex = await createExercise(c, TAG, 'Ex NoExec');
       const res = await createSession(userId, null, {
         source: 'free',
         status: 'completed',
@@ -325,8 +337,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
   describe('5 · replay idempotente da mesma conclusão', () => {
     it('reenvio devolve a MESMA sessão e não duplica métrica', async () => {
       const { createSession } = await import('../services/workoutSessionService');
-      const userId = await createUser(c, 'replay');
-      const ex = await createExercise(c, 'Ex Replay');
+      const userId = await createUser(c, TAG, 'replay');
+      const ex = await createExercise(c, TAG, 'Ex Replay');
       const plan = await c.query(
         `INSERT INTO personal_workout_plans (personal_id, student_id, title, week_preset, payload_json)
          VALUES ($1, $1, 'Ficha Replay', '4', '[]'::jsonb) RETURNING id`,
@@ -365,7 +377,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
   describe('6 e 7 · UNION das três fontes de dia ativo', () => {
     it('conta as três fontes e não dobra o mesmo dia', async () => {
       const { countActiveDays } = await import('../modules/performance/performance.repository');
-      const userId = await createUser(c, 'union');
+      const userId = await createUser(c, TAG, 'union');
 
       // Dia A: presente nas TRÊS fontes ao mesmo tempo → deve contar 1
       await c.query(
@@ -396,7 +408,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
     it('o calendário marca o dia que só tem presença do personal', async () => {
       const { loadMonthCalendar } = await import('../modules/performance/performance.repository');
-      const userId = await createUser(c, 'cal-personal');
+      const userId = await createUser(c, TAG, 'cal-personal');
       await c.query(
         `INSERT INTO personal_session_logs (personal_id, student_id, status, session_at)
          VALUES ($1, $1, 'present', NOW() - INTERVAL '1 day')`, [userId]);
@@ -416,7 +428,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
   describe('8 · fuso: colunas timestamptz vs timestamp sem fuso', () => {
     it('treino às 22h (BRT) e 19h do dia seguinte são DOIS dias', async () => {
       const { countActiveDays } = await import('../modules/performance/performance.repository');
-      const userId = await createUser(c, 'tz-two-days');
+      const userId = await createUser(c, TAG, 'tz-two-days');
       // Em UTC o primeiro viraria o dia seguinte e os dois colidiriam em 1 dia.
       await createSessionRow(c, { userId, daysAgo: 4, atTime: '22:00' });
       await createSessionRow(c, { userId, daysAgo: 3, atTime: '19:00' });
@@ -425,7 +437,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
     it('a coluna SEM fuso resolve no mesmo dia que a coluna COM fuso', async () => {
       const { countActiveDays } = await import('../modules/performance/performance.repository');
-      const userId = await createUser(c, 'tz-naive');
+      const userId = await createUser(c, TAG, 'tz-naive');
 
       // MESMO instante em duas fontes de tipo diferente:
       //   user_workout_logs.completed_at → timestamp SEM fuso
@@ -449,7 +461,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
   describe('9 · keyset com performed_at idêntico', () => {
     it('percorre tudo sem repetir nem pular quando os instantes empatam', async () => {
       const { listSessionsPage, decodeSessionCursor } = await import('../services/workoutSessionService');
-      const userId = await createUser(c, 'keyset');
+      const userId = await createUser(c, TAG, 'keyset');
 
       // 7 sessões com o MESMO performed_at — o caso real do registro retroativo,
       // que ancora a data ao meio-dia UTC.
@@ -488,7 +500,7 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
     it('cursor ilegível cai na primeira página em vez de estourar', async () => {
       const { listSessionsPage, decodeSessionCursor } = await import('../services/workoutSessionService');
-      const userId = await createUser(c, 'keyset-bad');
+      const userId = await createUser(c, TAG, 'keyset-bad');
       await createSessionRow(c, { userId, daysAgo: 1 });
       const page = await listSessionsPage(userId, 5, decodeSessionCursor('lixo-invalido'));
       expect(page.sessions.length).toBe(1);
@@ -499,8 +511,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
   describe('10 · exclusão de exercício NÃO apaga o recorde do aluno', () => {
     it('SET NULL preserva a linha, o valor e o nome histórico', async () => {
-      const userId = await createUser(c, 'ex-delete');
-      const ex = await createExercise(c, 'Exercicio Que Sera Removido');
+      const userId = await createUser(c, TAG, 'ex-delete');
+      const ex = await createExercise(c, TAG, 'Exercicio Que Sera Removido');
 
       const s = await createSessionRow(c, { userId, daysAgo: 6, sessionRpe: 8 });
       await createSetLog(c, {
@@ -535,8 +547,8 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     it('o recorde órfão continua visível numa leitura sem JOIN obrigatório', async () => {
       // Contrato para a P2: LEFT JOIN (ou nenhum) — um INNER JOIN em `exercises`
       // sumiria com exatamente estas linhas.
-      const userId = await createUser(c, 'ex-delete-read');
-      const ex = await createExercise(c, 'Outro Removido');
+      const userId = await createUser(c, TAG, 'ex-delete-read');
+      const ex = await createExercise(c, TAG, 'Outro Removido');
       const s = await createSessionRow(c, { userId, daysAgo: 6, sessionRpe: 8 });
       await createSetLog(c, { sessionId: s, exerciseId: ex, name: 'Outro Removido', setIndex: 1, reps: 5, loadKg: 90 });
       await runBackfill(c);
@@ -563,9 +575,9 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     });
 
     it('dois exercícios excluídos NÃO colapsam num só (NULLS DISTINCT)', async () => {
-      const userId = await createUser(c, 'ex-delete-two');
-      const a = await createExercise(c, 'Removido A');
-      const b = await createExercise(c, 'Removido B');
+      const userId = await createUser(c, TAG, 'ex-delete-two');
+      const a = await createExercise(c, TAG, 'Removido A');
+      const b = await createExercise(c, TAG, 'Removido B');
       const s = await createSessionRow(c, { userId, daysAgo: 6, sessionRpe: 8 });
       // MESMO valor nos dois: se o índice único tratasse NULL como igual, um
       // dos recordes seria perdido no futuro.
@@ -585,10 +597,12 @@ describeWithDb('Performance P1 · integração com banco real', () => {
 
     it('reexecutar o backfill depois da exclusão não ressuscita nem duplica', async () => {
       const before = await c.query(
-        `SELECT count(*)::int AS n FROM user_pr_events WHERE exercise_id IS NULL`);
+        `SELECT count(*)::int AS n FROM user_pr_events WHERE exercise_id IS NULL
+           AND user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`${TAG}-%@test.local`]);
       await runBackfill(c);
       const after = await c.query(
-        `SELECT count(*)::int AS n FROM user_pr_events WHERE exercise_id IS NULL`);
+        `SELECT count(*)::int AS n FROM user_pr_events WHERE exercise_id IS NULL
+           AND user_id IN (SELECT id FROM users WHERE email LIKE $1)`, [`${TAG}-%@test.local`]);
       expect(after.rows[0].n).toBe(before.rows[0].n);
     });
   });

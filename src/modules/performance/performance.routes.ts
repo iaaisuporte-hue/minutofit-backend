@@ -13,7 +13,13 @@ import { authMiddleware } from '../../middleware/auth';
 import { requireProduct } from '../../middleware/productGate';
 import logger from '../../lib/logger';
 import { dayKey } from '../../utils/appDay';
-import { getPerformanceOverview, getTrainingCalendar } from './performance.service';
+import {
+  getPerformanceOverview,
+  getPrRecords,
+  getProgression,
+  getTrainingCalendar,
+} from './performance.service';
+import { PR_KINDS, type PrKind } from './pr.engine';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('app'));
@@ -57,6 +63,60 @@ router.get('/calendar', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, '[performance] GET /calendar error');
     return res.status(500).json({ success: false, error: 'Failed to load training calendar' });
+  }
+});
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Filtro de exercício. Entrada malformada é ignorada, não vira 500. */
+function parseExerciseId(raw: unknown): string | null {
+  return typeof raw === 'string' && UUID_RE.test(raw) ? raw : null;
+}
+
+function parseKind(raw: unknown): PrKind | null {
+  return typeof raw === 'string' && (PR_KINDS as readonly string[]).includes(raw)
+    ? (raw as PrKind)
+    : null;
+}
+
+function parseIntInRange(raw: unknown, fallback: number, min: number, max: number): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
+}
+
+// GET /api/performance/prs — recordes atuais + linha do tempo de conquistas.
+// Premium: sem a feature devolve 200 com `gated: true` e listas vazias, para a
+// tela mostrar o convite em vez de tratar erro. O corte é no BACKEND.
+router.get('/prs', async (req: Request, res: Response) => {
+  try {
+    const data = await getPrRecords(req.user!.id, {
+      exerciseId: parseExerciseId(req.query.exerciseId),
+      kind: parseKind(req.query.kind),
+      sinceDays: req.query.sinceDays === undefined
+        ? null
+        : parseIntInRange(req.query.sinceDays, 90, 1, 730),
+      limit: parseIntInRange(req.query.limit, 20, 1, 100),
+    });
+    return res.json({ success: true, data });
+  } catch (err) {
+    logger.error({ err }, '[performance] GET /prs error');
+    return res.status(500).json({ success: false, error: 'Failed to load personal records' });
+  }
+});
+
+// GET /api/performance/progression — série temporal por exercício.
+router.get('/progression', async (req: Request, res: Response) => {
+  try {
+    const data = await getProgression(
+      req.user!.id,
+      parseIntInRange(req.query.windowDays, 90, 30, 180),
+      parseExerciseId(req.query.exerciseId),
+    );
+    return res.json({ success: true, data });
+  } catch (err) {
+    logger.error({ err }, '[performance] GET /progression error');
+    return res.status(500).json({ success: false, error: 'Failed to load progression' });
   }
 });
 

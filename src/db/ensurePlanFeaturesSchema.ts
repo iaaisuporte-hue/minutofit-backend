@@ -12,6 +12,7 @@ const featureCatalog = [
   ['workout_history', 'Historico', 'Historico de treinos e atividades realizadas.'],
   ['profile', 'Perfil do Usuario', 'Dados do perfil e preferencias do usuario.'],
   ['settings', 'Configuracoes', 'Configuracoes da conta e preferencias gerais.'],
+  ['performance', 'Performance', 'Progressao por exercicio, recordes pessoais e evolucao de carga.'],
   ['reports', 'Relatorios', 'Relatorios e insights de desempenho.'],
   ['diet', 'Dieta', 'Recursos de alimentacao e planejamento nutricional.'],
   ['movement_lab', 'Lab de Movimento', 'Analise de execucao por camera (beta). Recurso pago — saiu do Free em ago/2026.'],

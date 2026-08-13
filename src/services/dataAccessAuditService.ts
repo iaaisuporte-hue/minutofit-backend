@@ -61,6 +61,12 @@ export type DataAccessEventType =
   // Módulo Performance (Spec 033) — UX do aluno sobre o próprio dado.
   | 'performance.opened'
   | 'performance.tab_viewed'
+  // Onda P2 — adoção de progressão e recordes.
+  | 'performance.progression_viewed'
+  | 'performance.exercise_selected'
+  | 'performance.prs_viewed'
+  | 'performance.pr_celebrated'
+  | 'performance.upgrade_cta_clicked'
   | 'identity.user_created'
   | 'identity.user_reused';
 

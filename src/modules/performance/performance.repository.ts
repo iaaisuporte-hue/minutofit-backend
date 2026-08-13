@@ -43,8 +43,12 @@
  * personal já conta assim. Qualquer número de frequência que divergisse desse
  * conjunto criaria dois "dias ativos" diferentes no mesmo produto.
  */
+import type { PoolClient } from 'pg';
+
 import pool from '../../config/database';
 import { APP_TIMEZONE, dayKey } from '../../utils/appDay';
+import { FORMULA_VERSION } from './performance.constants';
+import { bestKey, type CurrentBests, type PrDetection, type PrKind } from './pr.engine';
 import type { ActiveDay, ActiveDaySource } from './performance.types';
 
 /** Folga aplicada ao limite cru para nenhum fuso cortar um dia de fronteira. */
@@ -271,4 +275,276 @@ export async function loadMonthCalendar(
     setsDone: r.sets_done == null ? null : Number(r.sets_done),
     tonnageKg: r.tonnage_kg == null ? null : Number(r.tonnage_kg),
   }));
+}
+
+// ── Recordes (P2) ──────────────────────────────────────────────────────────
+
+/**
+ * Melhor valor já registrado por `(exercício, categoria)` para os exercícios
+ * informados. Uma query só — nada de laço por exercício.
+ *
+ * Linhas órfãs (`exercise_id IS NULL`, exercício removido do catálogo) nunca
+ * casam com `= ANY(...)` e por isso não interferem: o histórico do exercício
+ * apagado repousa, e um exercício novo com o mesmo nome começa do zero.
+ */
+export async function loadCurrentPrBests(
+  client: PoolClient,
+  userId: number,
+  exerciseIds: string[],
+): Promise<CurrentBests> {
+  const bests: CurrentBests = new Map();
+  if (exerciseIds.length === 0) return bests;
+
+  const { rows } = await client.query<{ exercise_id: string; kind: PrKind; best: string }>(
+    `SELECT exercise_id, kind, MAX(value) AS best
+       FROM user_pr_events
+      WHERE user_id = $1 AND exercise_id = ANY($2::uuid[])
+      GROUP BY exercise_id, kind`,
+    [userId, exerciseIds],
+  );
+  for (const r of rows) bests.set(bestKey(r.exercise_id, r.kind), Number(r.best));
+  return bests;
+}
+
+/**
+ * Serializa a detecção de recordes de UM usuário dentro da transação corrente.
+ *
+ * Sem isto, duas sessões do mesmo aluno processadas ao mesmo tempo leriam o
+ * mesmo "melhor atual" e ambas se achariam recorde: a segunda gravaria
+ * `previous_value` desatualizado, descrevendo uma progressão que não aconteceu
+ * (70 → 80 e 70 → 75, em vez de 70 → 75 → 80). O `UNIQUE` do banco impede a
+ * duplicata exata, mas não conserta a narrativa.
+ *
+ * Escolhi advisory lock transacional em vez de `SELECT ... FOR UPDATE` porque
+ * não há linha para travar quando o recorde é o primeiro do exercício — travar
+ * ausência exigiria bloqueio de faixa, que no Postgres significa nível de
+ * isolamento serializável e retry no chamador. O lock é liberado no
+ * COMMIT/ROLLBACK, é o mesmo mecanismo que a idempotência de conclusão já usa
+ * (`workout-session:`), e o escopo por usuário é estreito: sessões simultâneas
+ * do MESMO aluno são raras, e de alunos diferentes não se encontram.
+ */
+export async function lockPrDetection(client: PoolClient, userId: number): Promise<void> {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`pr-detect:${userId}`]);
+}
+
+/** Grava os recordes detectados. `ON CONFLICT` é rede de segurança, não a regra. */
+export async function insertPrEvents(
+  client: PoolClient,
+  userId: number,
+  sessionId: number,
+  achievedAt: Date | string,
+  detections: PrDetection[],
+): Promise<number> {
+  let inserted = 0;
+  for (const d of detections) {
+    const res = await client.query(
+      `INSERT INTO user_pr_events
+         (user_id, exercise_id, exercise_name, kind, value, reps, load_kg,
+          previous_value, is_first, session_id, achieved_at, formula_version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (user_id, exercise_id, kind, value) DO NOTHING`,
+      [
+        userId,
+        d.exerciseId,
+        d.exerciseName,
+        d.kind,
+        d.value,
+        d.reps,
+        d.loadKg,
+        d.previousValue,
+        d.isFirst,
+        sessionId,
+        achievedAt,
+        FORMULA_VERSION,
+      ],
+    );
+    inserted += res.rowCount ?? 0;
+  }
+  return inserted;
+}
+
+/** Uma linha de recorde, já no formato que o serviço entrega. */
+export interface PrRecordRow {
+  exerciseId: string | null;
+  exerciseName: string;
+  kind: PrKind;
+  value: number;
+  reps: number | null;
+  loadKg: number | null;
+  previousValue: number | null;
+  isFirst: boolean;
+  achievedAt: string;
+  sessionId: number | null;
+  /** false quando o exercício saiu do catálogo — o recorde continua valendo. */
+  exerciseInCatalog: boolean;
+}
+
+/**
+ * Recorde ATUAL de cada `(exercício, categoria)` — o topo do ledger.
+ *
+ * `DISTINCT ON` resolve em uma passada: ordena por valor decrescente dentro do
+ * grupo e fica com a primeira linha. Uma query, sem laço por exercício.
+ *
+ * O agrupamento é por `(exercise_id, exercise_name)` e não só por `exercise_id`:
+ * exercícios removidos ficam todos com `NULL`, e agrupar só pelo id fundiria
+ * recordes de exercícios diferentes num único bloco sem nome.
+ *
+ * `LEFT JOIN exercises` é contrato, não preferência: com `INNER JOIN` sumiriam
+ * exatamente os recordes órfãos — os que mais importam preservar, porque não há
+ * como reconstruí-los.
+ */
+export async function loadCurrentPrRecords(
+  userId: number,
+  opts: { exerciseId?: string | null; kind?: PrKind | null } = {},
+): Promise<PrRecordRow[]> {
+  const params: unknown[] = [userId];
+  let filters = '';
+  if (opts.exerciseId) {
+    params.push(opts.exerciseId);
+    filters += ` AND p.exercise_id = $${params.length}::uuid`;
+  }
+  if (opts.kind) {
+    params.push(opts.kind);
+    filters += ` AND p.kind = $${params.length}`;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (p.exercise_id, p.exercise_name, p.kind)
+            p.exercise_id, p.exercise_name, p.kind, p.value, p.reps, p.load_kg,
+            p.previous_value, p.is_first, p.achieved_at, p.session_id,
+            (e.id IS NOT NULL) AS exercise_in_catalog
+       FROM user_pr_events p
+       LEFT JOIN exercises e ON e.id = p.exercise_id
+      WHERE p.user_id = $1${filters}
+      ORDER BY p.exercise_id, p.exercise_name, p.kind, p.value DESC, p.achieved_at DESC`,
+    params,
+  );
+  return rows.map(mapPrRow);
+}
+
+/** Linha do tempo de conquistas, da mais recente para trás. */
+export async function loadRecentPrEvents(
+  userId: number,
+  limit: number,
+  opts: { sinceDays?: number | null } = {},
+): Promise<PrRecordRow[]> {
+  const params: unknown[] = [userId];
+  let sinceFilter = '';
+  if (opts.sinceDays != null) {
+    params.push(isoDaysAgo(opts.sinceDays));
+    sinceFilter = ` AND p.achieved_at >= $${params.length}::timestamptz`;
+  }
+  params.push(Math.min(100, Math.max(1, limit)));
+
+  const { rows } = await pool.query(
+    `SELECT p.exercise_id, p.exercise_name, p.kind, p.value, p.reps, p.load_kg,
+            p.previous_value, p.is_first, p.achieved_at, p.session_id,
+            (e.id IS NOT NULL) AS exercise_in_catalog
+       FROM user_pr_events p
+       LEFT JOIN exercises e ON e.id = p.exercise_id
+      WHERE p.user_id = $1${sinceFilter}
+      ORDER BY p.achieved_at DESC, p.id DESC
+      LIMIT $${params.length}`,
+    params,
+  );
+  return rows.map(mapPrRow);
+}
+
+function mapPrRow(r: Record<string, unknown>): PrRecordRow {
+  return {
+    exerciseId: (r.exercise_id as string | null) ?? null,
+    exerciseName: String(r.exercise_name),
+    kind: r.kind as PrKind,
+    value: Number(r.value),
+    reps: r.reps == null ? null : Number(r.reps),
+    loadKg: r.load_kg == null ? null : Number(r.load_kg),
+    previousValue: r.previous_value == null ? null : Number(r.previous_value),
+    isFirst: r.is_first === true,
+    achievedAt: new Date(r.achieved_at as string).toISOString(),
+    sessionId: r.session_id == null ? null : Number(r.session_id),
+    exerciseInCatalog: r.exercise_in_catalog === true,
+  };
+}
+
+/** Ponto diário da progressão de um exercício. */
+export interface ProgressionPoint {
+  date: string;
+  maxLoadKg: number | null;
+  bestE1rm: number | null;
+  tonnageKg: number | null;
+  topSetReps: number | null;
+}
+
+export interface ProgressionSeries {
+  exerciseId: string;
+  name: string;
+  points: ProgressionPoint[];
+}
+
+/**
+ * Série temporal por exercício, agregada POR DIA no fuso do aluno.
+ *
+ * Uma query para todos os exercícios da janela — o cliente escolhe qual exibir
+ * sem nova ida ao servidor, e não existe laço por exercício em lugar nenhum.
+ *
+ * Agrega no banco de propósito: mandar log de série cru para o navegador seria
+ * ordens de grandeza mais tráfego para desenhar exatamente a mesma linha, e o
+ * cálculo de e1RM precisa ser o mesmo dos recordes — backend é a autoridade.
+ *
+ * O e1RM usa a mesma fórmula (Epley, guarda de 1..12 repetições) do
+ * `e1rm.engine.ts` e do backfill. São três implementações da mesma regra por
+ * necessidade — TS puro, SQL de agregação e SQL de backfill — e o teste de
+ * integração compara as três sobre os mesmos dados.
+ */
+export async function loadProgressionSeries(
+  userId: number,
+  windowDays: number,
+  exerciseId?: string | null,
+): Promise<ProgressionSeries[]> {
+  const params: unknown[] = [userId, APP_TIMEZONE, isoDaysAgo(windowDays)];
+  let exerciseFilter = '';
+  if (exerciseId) {
+    params.push(exerciseId);
+    exerciseFilter = ` AND sl.exercise_id = $${params.length}::uuid`;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT sl.exercise_id,
+            MIN(sl.exercise_name) AS exercise_name,
+            ${SOURCE_DAY_EXPR.session}::text AS d,
+            MAX(sl.load_done_kg) FILTER (WHERE sl.load_done_kg > 0) AS max_load,
+            MAX(ROUND((sl.load_done_kg * (1 + sl.reps_done / 30.0)) * 2) / 2)
+              FILTER (WHERE sl.load_done_kg > 0 AND sl.reps_done BETWEEN 1 AND 12) AS best_e1rm,
+            SUM(sl.reps_done * sl.load_done_kg)
+              FILTER (WHERE sl.load_done_kg > 0 AND sl.reps_done IS NOT NULL) AS tonnage,
+            MAX(sl.reps_done) AS top_reps
+       FROM workout_set_logs sl
+       JOIN workout_sessions ws ON ws.id = sl.session_id
+      WHERE ws.user_id = $1
+        AND ws.status IN ('completed', 'partial')
+        AND ws.performed_at >= $3::timestamptz
+        AND sl.status = 'done'
+        AND sl.exercise_id IS NOT NULL${exerciseFilter}
+      GROUP BY sl.exercise_id, ${SOURCE_DAY_EXPR.session}
+      ORDER BY sl.exercise_id, d`,
+    params,
+  );
+
+  const byExercise = new Map<string, ProgressionSeries>();
+  for (const r of rows) {
+    const id = String(r.exercise_id);
+    let series = byExercise.get(id);
+    if (!series) {
+      series = { exerciseId: id, name: String(r.exercise_name), points: [] };
+      byExercise.set(id, series);
+    }
+    series.points.push({
+      date: String(r.d),
+      maxLoadKg: r.max_load == null ? null : Number(r.max_load),
+      bestE1rm: r.best_e1rm == null ? null : Number(r.best_e1rm),
+      tonnageKg: r.tonnage == null ? null : Number(r.tonnage),
+      topSetReps: r.top_reps == null ? null : Number(r.top_reps),
+    });
+  }
+  return Array.from(byExercise.values());
 }

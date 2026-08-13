@@ -7,6 +7,31 @@ import logger from '../lib/logger';
 import { computeSessionMetrics, resolveDurationMin } from '../modules/performance/sessionMetrics.engine';
 import { FORMULA_VERSION } from '../modules/performance/performance.constants';
 import type { MetricsSetInput } from '../modules/performance/performance.types';
+import {
+  buildPrCandidates,
+  detectPrs,
+  type PrKind,
+  type PrSetInput,
+} from '../modules/performance/pr.engine';
+import {
+  insertPrEvents,
+  loadCurrentPrBests,
+  lockPrDetection,
+} from '../modules/performance/performance.repository';
+
+/**
+ * Recorde detectado, no formato que a resposta do registro de treino devolve.
+ * Só o que a UI precisa para celebrar — nada de id de linha ou versão de fórmula.
+ */
+export interface PrDetectionResult {
+  exerciseId: string;
+  exerciseName: string;
+  kind: PrKind;
+  value: number;
+  previousValue: number | null;
+  /** Estreia da categoria: linha de base, não conquista. A UI não celebra. */
+  isFirst: boolean;
+}
 
 // Grupos musculares aceitos em user_workout_logs.muscle_groups (paridade com o
 // enum MuscleGroup da gamificação). Sanitizamos o que vem do cliente.
@@ -289,6 +314,9 @@ export async function createSession(userId: number, academyId: number | null, in
           streak: stats.rows[0] ? Number(stats.rows[0].current_streak ?? 0) : null,
           xp: stats.rows[0] ? Number(stats.rows[0].xp ?? 0) : null,
           duplicate: true,
+          // Replay não descobre recorde: a sessão original já detectou o dela.
+          prEvents: [] as PrDetectionResult[],
+          celebrate: false,
         };
       }
     }
@@ -416,13 +444,25 @@ export async function createSession(userId: number, academyId: number | null, in
     // métricas da sessão sem uma segunda leitura do banco. Métrica derivada de
     // valor pré-clamp divergiria da série persistida.
     const persistedSets: MetricsSetInput[] = [];
+    // O mesmo espelho, com o vínculo de exercício resolvido, para a detecção
+    // de recordes (P2). Séries sem exercício conhecido não entram: sem vínculo
+    // não há histórico contra o que comparar.
+    const persistedPrSets: PrSetInput[] = [];
 
     for (const r of rows) {
       const repsDone = clampReps(r.repsDone);
       const loadDoneKg = clampLoadKg(r.loadDoneKg);
       const setRpe = clampRpe(r.rpe);
       const setStatus: 'done' | 'skipped' = r.status === 'skipped' ? 'skipped' : 'done';
+      const resolvedExerciseId = knownUuid(r.exerciseId);
       persistedSets.push({ repsDone, loadDoneKg, rpe: setRpe, status: setStatus });
+      persistedPrSets.push({
+        exerciseId: resolvedExerciseId,
+        exerciseName: String(r.name ?? '').slice(0, 200) || '—',
+        repsDone,
+        loadDoneKg,
+        status: setStatus,
+      });
 
       const setLog = await client.query(
         `INSERT INTO workout_set_logs
@@ -433,7 +473,7 @@ export async function createSession(userId: number, academyId: number | null, in
          RETURNING id`,
         [
           sessionId,
-          knownUuid(r.exerciseId),
+          resolvedExerciseId,
           String(r.name ?? '').slice(0, 200) || '—',
           r.orderIndex ?? 0,
           r.setIndex ?? 1,
@@ -516,6 +556,44 @@ export async function createSession(userId: number, academyId: number | null, in
       }
     }
 
+    // ── Detecção de recordes (Spec 033, P2) ─────────────────────────────────
+    // Mesma transação da execução: um PR é consequência do treino, não um
+    // efeito colateral que pode faltar. Se a sessão entra, o recorde entra.
+    //
+    // Ordem importa: o advisory lock por usuário vem ANTES da leitura dos
+    // melhores atuais, senão duas sessões simultâneas do mesmo aluno leriam o
+    // mesmo histórico e a segunda gravaria `previous_value` desatualizado.
+    //
+    // Idempotência tem duas camadas. A primeira é o replay de conclusão, que
+    // retorna lá em cima sem chegar aqui. A segunda é a própria natureza do
+    // recorde: reenviar a mesma sessão produz candidatos idênticos, que não
+    // superam o recorde que eles mesmos criaram — `detectPrs` exige melhora
+    // ESTRITA. O `ON CONFLICT` do INSERT é a terceira, para o caso de corrida
+    // que escape do lock.
+    const prEvents: PrDetectionResult[] = [];
+    if (input.status === 'completed' || input.status === 'partial') {
+      const candidates = buildPrCandidates(persistedPrSets);
+      if (candidates.length > 0) {
+        await lockPrDetection(client, userId);
+        const exerciseIds = Array.from(new Set(candidates.map((c) => c.exerciseId)));
+        const bests = await loadCurrentPrBests(client, userId, exerciseIds);
+        const detections = detectPrs(candidates, bests);
+        if (detections.length > 0) {
+          await insertPrEvents(client, userId, sessionId, header.rows[0].performed_at, detections);
+          for (const d of detections) {
+            prEvents.push({
+              exerciseId: d.exerciseId,
+              exerciseName: d.exerciseName,
+              kind: d.kind,
+              value: d.value,
+              previousValue: d.previousValue,
+              isFirst: d.isFirst,
+            });
+          }
+        }
+      }
+    }
+
     // Write-through de gamificação (P0-1): log raso + XP/streak na MESMA
     // transação da execução rica. Só sessões efetivamente treinadas contam —
     // 'started'/'abandoned' não geram XP nem streak.
@@ -594,6 +672,11 @@ export async function createSession(userId: number, academyId: number | null, in
       streak,
       xp,
       duplicate: false,
+      prEvents,
+      // Recorde de sessão retroativa é real e fica gravado, mas não vira festa:
+      // celebrar um treino de três dias atrás como se fosse agora premia o
+      // registro tardio, não o esforço.
+      celebrate: !isRetroactive && prEvents.some((p) => !p.isFirst),
     };
   } catch (err) {
     await client.query('ROLLBACK');

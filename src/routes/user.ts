@@ -50,6 +50,11 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   // produzem — allow-list só aceita o que já existe de verdade.
   'performance.opened',
   'performance.tab_viewed',
+  'performance.progression_viewed',
+  'performance.exercise_selected',
+  'performance.prs_viewed',
+  'performance.pr_celebrated',
+  'performance.upgrade_cta_clicked',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

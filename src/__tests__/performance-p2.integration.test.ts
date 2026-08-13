@@ -20,6 +20,7 @@ import {
   describeWithDb,
   hasTestDb,
   releaseSuiteLock,
+  restorePerformanceSchema,
   runBackfill,
 } from './helpers/integrationDb';
 
@@ -40,6 +41,11 @@ describeWithDb('Performance P2 · integração com banco real', () => {
     c = await connect();
     // Enfileira contra a outra suíte de integração — as duas dividem o banco.
     await acquireSuiteLock(c);
+    // Precondição da suíte: o schema do módulo na versão corrente. Uma chamada,
+    // sem saber quais migrations existem — o helper descobre. Sem isto, a ordem
+    // das suítes passa a importar, e a que rodar depois de um round trip de
+    // migration encontra a tabela na forma de outra onda.
+    await restorePerformanceSchema(c);
     await cleanFixtures(c, TAG);
     // O catálogo de features é semeado no boot do app (`ensurePlanFeaturesSchema`).
     // Num banco de teste que subiu antes desta onda, a chave `performance` não

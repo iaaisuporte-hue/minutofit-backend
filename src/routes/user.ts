@@ -62,6 +62,10 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'performance.goal_viewed',
   'performance.goal_completed',
   'performance.goal_cancelled',
+  'personal.performance_opened',
+  'personal.performance_insight_opened',
+  'personal.performance_ai_summary_requested',
+  'personal.performance_ai_summary_shown',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

@@ -102,7 +102,18 @@ export interface PerformanceOverview {
   headline: string;
 }
 
-export async function getPerformanceOverview(userId: number): Promise<PerformanceOverview> {
+/**
+ * O núcleo do overview, SEM o gate comercial.
+ *
+ * Extraído na Onda P5 porque a visão do personal precisa exatamente destes
+ * números e não pode passar pelo gate do ALUNO: a feature `performance` é o que
+ * o aluno comprou, e o personal lê a carteira dele com base no consentimento e
+ * no próprio plano. Recalcular tudo num serviço paralelo seria a alternativa —
+ * e produziria dois scores para o mesmo aluno.
+ *
+ * Ninguém deve chamar isto direto numa rota: o gate mora nas funções acima.
+ */
+export async function computePerformanceCore(userId: number) {
   const [activeDays28, counters, plan] = await Promise.all([
     countActiveDays(userId, CONSISTENCY_WINDOW_DAYS),
     loadFreeSummaryCounters(userId, 30),
@@ -113,21 +124,64 @@ export async function getPerformanceOverview(userId: number): Promise<Performanc
   const weeklyTarget = weeklyTargetFromPreset(plan.weekPreset);
   const target = resolveConsistencyTarget(weeklyTarget, plan.daysSinceStarted);
   const consistencyPct = computeConsistencyPct(activeDays28, target);
-
-  // Score e carga são leitura interpretada: Premium. A consistência e o resumo
-  // continuam abertos — capturar sinal é Free, interpretar é o produto pago.
-  const premium = await hasPerformanceFeature(userId);
-  const { score, load } = premium
-    ? await resolveScoreAndLoad(userId, consistencyPct)
-    : { score: null, load: null };
+  const { score, load } = await resolveScoreAndLoad(userId, consistencyPct);
 
   return {
-    gated: !premium,
-    freeSummary: { sessions30d, activeDays28, currentStreak },
-    consistency: { pct: consistencyPct, activeDays28, targetPerWeek: weeklyTarget },
+    sessions30d,
+    activeDays28,
+    currentStreak,
+    weeklyTarget,
+    consistencyPct,
     score,
     load,
     headline: buildHeadline(score, consistencyPct),
+  };
+}
+
+export async function getPerformanceOverview(userId: number): Promise<PerformanceOverview> {
+  // Score e carga são leitura interpretada: Premium. A consistência e o resumo
+  // continuam abertos — capturar sinal é Free, interpretar é o produto pago.
+  const premium = await hasPerformanceFeature(userId);
+
+  if (!premium) {
+    const [activeDays28, counters, plan] = await Promise.all([
+      countActiveDays(userId, CONSISTENCY_WINDOW_DAYS),
+      loadFreeSummaryCounters(userId, 30),
+      loadActivePlanTarget(userId),
+    ]);
+    const weeklyTarget = weeklyTargetFromPreset(plan.weekPreset);
+    const target = resolveConsistencyTarget(weeklyTarget, plan.daysSinceStarted);
+    const consistencyPct = computeConsistencyPct(activeDays28, target);
+    return {
+      gated: true,
+      freeSummary: {
+        sessions30d: counters.sessionsInWindow,
+        activeDays28,
+        currentStreak: counters.currentStreak,
+      },
+      consistency: { pct: consistencyPct, activeDays28, targetPerWeek: weeklyTarget },
+      score: null,
+      load: null,
+      headline: buildHeadline(null, consistencyPct),
+    };
+  }
+
+  const core = await computePerformanceCore(userId);
+  return {
+    gated: false,
+    freeSummary: {
+      sessions30d: core.sessions30d,
+      activeDays28: core.activeDays28,
+      currentStreak: core.currentStreak,
+    },
+    consistency: {
+      pct: core.consistencyPct,
+      activeDays28: core.activeDays28,
+      targetPerWeek: core.weeklyTarget,
+    },
+    score: core.score,
+    load: core.load,
+    headline: core.headline,
   };
 }
 

@@ -21,6 +21,7 @@ import {
   describeWithDb,
   hasTestDb,
   releaseSuiteLock,
+  restorePerformanceSchema,
   runBackfill,
 } from './helpers/integrationDb';
 
@@ -37,6 +38,11 @@ describeWithDb('Performance P3 · Progress Score com banco real', () => {
   beforeAll(async () => {
     c = await connect();
     await acquireSuiteLock(c);
+    // Precondição da suíte: o schema do módulo na versão corrente. Uma chamada,
+    // sem saber quais migrations existem — o helper descobre. Sem isto, a ordem
+    // das suítes passa a importar, e a que rodar depois de um round trip de
+    // migration encontra a tabela na forma de outra onda.
+    await restorePerformanceSchema(c);
     await cleanFixtures(c, TAG);
     const { ensurePlanFeaturesSchema } = await import('../db/ensurePlanFeaturesSchema');
     await ensurePlanFeaturesSchema();

@@ -401,6 +401,74 @@ não pode reinterpretar em silêncio uma meta antiga.
 
 ---
 
+## v1 — Onda P5 (ago/2026)
+
+A P5 não introduz fórmula: ela LÊ o que as ondas anteriores calculam e acrescenta
+uma camada de leitura para o personal. `FORMULA_VERSION` continua **1**.
+
+### Rótulo canônico da meta
+
+`goalDisplayLabel(goal)` (em `goals.engine.ts`) é a única fonte do texto de uma
+meta. É **derivado, nunca persistido**: guardar a frase criaria uma segunda
+verdade que envelhece a cada renomeação de exercício. Aluno, personal e o resumo
+escrito consomem o mesmo campo `displayLabel` — na P4 esse texto era montado no
+frontend do aluno, e três cópias divergiriam no primeiro ajuste de redação.
+
+### Sinais determinísticos
+
+Regras em `insights.engine.ts`, limiares em `SIGNAL_RULES`. Cada sinal carrega
+`evidence` com os números que o dispararam — sem isso é opinião com aparência de
+dado.
+
+| tipo | regra | janela | severidade |
+|---|---|---|---|
+| `GOAL_ACHIEVED` | meta concluída na janela | 28 dias | positive |
+| `RECENT_PR` | ≥ 1 recorde real (não estreia) | 28 dias | positive |
+| `PROGRESSION_POSITIVE` | ≥ 2 exercícios comparáveis e ≥ 50% melhorando | 28d vs 28d | positive |
+| `SCORE_UP` / `SCORE_DOWN` | \|Δ score\| ≥ 5 vs. 28 dias atrás | 4 semanas | positive / attention |
+| `CONSISTENCY_DOWN` | semana anterior ≥ 3 dias E queda ≥ 2 | semana | attention |
+| `PROGRESSION_STALLED` | ≥ 56 dias sem recorde **E** ≥ 8 sessões no período | 56 dias | attention |
+| `GOAL_NEAR_COMPLETION` | meta ativa com progresso ≥ 80% e < 100% | agora | neutral |
+| `LOAD_UP` | faixa `above` (neutral) ou `spike` (attention) | 7d vs 28d | neutral / attention |
+| `LOAD_DOWN` | faixa `below` | 7d vs 28d | neutral |
+
+Detalhes que separam sinal de ruído:
+
+- **Estagnação exige treino acontecendo.** Sem a segunda condição, "parou de
+  evoluir" seria dito a quem parou de treinar — e mandaria o personal mexer no
+  programa quando o problema é presença.
+- **Queda de frequência exige uma base de onde cair** (semana anterior ≥ 3). Sair
+  de 2 para 0 é ausência de rotina, não queda de rotina; o motor de risco do
+  dashboard já cobre esse caso.
+- **Severidade tem três níveis** — `positive`, `neutral`, `attention`. Não existe
+  "crítico": vocabulário de emergência aplicado a uma semana com dois treinos
+  ensina o personal a ignorar o alerta quando algo importar de verdade.
+- **Nada de linguagem clínica**, e há teste que varre as descrições procurando por
+  ela.
+
+### Priorização
+
+1. Sinais que EXPLICAM outros suprimem o resumo: `SCORE_UP` sai quando
+   `PROGRESSION_POSITIVE`, `RECENT_PR` ou `GOAL_ACHIEVED` estão presentes;
+   `SCORE_DOWN` sai quando `CONSISTENCY_DOWN` ou `PROGRESSION_STALLED` estão.
+   Fica a informação mais específica, que é a acionável.
+2. Ordenação: `positive` → `attention` → `neutral`, com desempate por uma tabela
+   fixa de tipos — nada depende da ordem devolvida pelo SQL.
+3. Teto de **5** cartões.
+
+### Snapshot e síntese
+
+`GET /personal/students/:id/performance` devolve três blocos que não se misturam:
+`facts` (calculado), `signals` (determinístico) e o espaço da síntese. O texto em
+linguagem natural vem de outro endpoint e diz em `source` se foi escrito por IA
+ou montado a partir dos próprios dados.
+
+`snapshotHash` identifica o SIGNIFICADO dos fatos e é a chave do cache da
+síntese. `generatedAt` fica de fora do hash de propósito: incluí-lo faria o hash
+mudar a cada chamada, e o cache nunca acertaria.
+
+---
+
 ## Changelog
 
 | versão | data | mudança |
@@ -408,3 +476,4 @@ não pode reinterpretar em silêncio uma meta antiga.
 | 1 | ago/2026 | Versão inicial (Spec 033, Onda P1): tonelagem, carga interna sRPE, duração, e1RM Epley, recordes e consistência de frequência. |
 | 1 | ago/2026 | Onda P3 (Spec 033): ritmo de carga (faixa qualitativa) e Progress Score. Nenhuma fórmula da P1 mudou — versão mantida em 1, sem recomputo. |
 | 1 | ago/2026 | Onda P4 (Spec 033): metas. Nenhuma métrica nova — cada tipo lê medida existente. Versão mantida em 1, sem recomputo. |
+| 1 | ago/2026 | Onda P5 (Spec 033): visão do personal. Rótulo canônico da meta, sinais determinísticos e síntese opcional. Nenhuma fórmula nova; versão mantida em 1. |

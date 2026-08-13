@@ -73,6 +73,11 @@ import {
   type PersonalPlan,
 } from '../services/personalPlanService';
 import {
+  PersonalPerformanceError,
+  getStudentPerformanceSnapshot,
+} from '../modules/performance/personalPerformance.service';
+import { generatePerformanceInsight } from '../services/ai/performanceInsightAi';
+import {
   createSession,
   listSessions,
   type SessionStatus,
@@ -2255,5 +2260,100 @@ function defaultPolicy(personalId: number, studentId: number, academyId: number 
     maxSetReductionPct: 25, maxRestIncreasePct: 30, minIntensityPct: 70,
   };
 }
+
+/**
+ * GET /api/personal/students/:studentId/performance
+ *
+ * Snapshot de performance do aluno (Spec 033, P5). Leitura pura: não existe rota
+ * de escrita do personal sobre score, recorde ou meta — a P5 é camada de
+ * acompanhamento, e o histórico de performance pertence a quem treinou.
+ *
+ * A porta tem TRÊS trancas, e cada uma cobre o que a outra não vê:
+ * `roleCheckMiddleware` confirma o papel, `requireActiveConsent('workouts')`
+ * confirma a autorização do aluno para ESTE tipo de dado, e o serviço confirma o
+ * vínculo ativo. O consent sozinho não bastaria — ele valida permissão de dado,
+ * não relação, e um personal com consentimento antigo passaria por ele.
+ */
+router.get(
+  '/students/:studentId/performance',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('workouts'),
+  async (req: Request, res: Response) => {
+    const studentId = Number(req.params.studentId);
+    try {
+      const snapshot = await getStudentPerformanceSnapshot(req.user!.id, studentId);
+      void logDataAccessEvent({
+        actorId: req.user!.id,
+        subjectUserId: studentId,
+        eventType: 'personal.performance.read',
+        eventPayload: { signalCount: snapshot.signals.length },
+        ip: req.ip,
+      }).catch(() => {});
+      return res.json({ success: true, data: snapshot });
+    } catch (err) {
+      if (err instanceof PersonalPerformanceError) {
+        return res.status(err.status).json({ success: false, error: err.message, code: err.code });
+      }
+      logger.error({ err, studentId }, '[performance] GET /students/:id/performance error');
+      return res
+        .status(500)
+        .json({ success: false, error: 'Falha ao carregar a performance do aluno.' });
+    }
+  },
+);
+
+/**
+ * POST /api/personal/students/:studentId/performance/insight
+ *
+ * Síntese em linguagem natural do MESMO snapshot — recomputado aqui em vez de
+ * recebido no corpo, porque aceitar fatos do cliente permitiria a um personal
+ * pedir um resumo sobre números que ele mesmo escreveu.
+ *
+ * O gate de IA é do PLANO DO PERSONAL (`ai_enabled`), não do aluno: os dados
+ * acima são de quem ele treina, a síntese é a comodidade que o Pro paga.
+ *
+ * Falha de provedor não vira erro de rota: a resposta cai no texto
+ * determinístico e diz isso em `source`. A tela nunca fica sem conteúdo por
+ * causa de um modelo indisponível.
+ */
+router.post(
+  '/students/:studentId/performance/insight',
+  roleCheckMiddleware('personal'),
+  requireActiveConsent('workouts'),
+  async (req: Request, res: Response) => {
+    const studentId = Number(req.params.studentId);
+    try {
+      const planConfig = await getPersonalPlan(req.user!.id);
+      if (!planConfig.aiEnabled) {
+        return res
+          .status(403)
+          .json({ success: false, code: 'AI_NOT_ENABLED', upgradeRequired: 'pro' });
+      }
+
+      const snapshot = await getStudentPerformanceSnapshot(req.user!.id, studentId);
+      const summary = await generatePerformanceInsight(
+        req.user!.id,
+        studentId,
+        snapshot.facts,
+        snapshot.signals,
+        snapshot.snapshotHash,
+      );
+      void logDataAccessEvent({
+        actorId: req.user!.id,
+        subjectUserId: studentId,
+        eventType: 'personal.performance_insight.read',
+        eventPayload: { source: summary.source },
+        ip: req.ip,
+      }).catch(() => {});
+      return res.json({ success: true, data: summary });
+    } catch (err) {
+      if (err instanceof PersonalPerformanceError) {
+        return res.status(err.status).json({ success: false, error: err.message, code: err.code });
+      }
+      logger.error({ err, studentId }, '[performance] POST insight error');
+      return res.status(500).json({ success: false, error: 'Falha ao gerar o resumo.' });
+    }
+  },
+);
 
 export default router;

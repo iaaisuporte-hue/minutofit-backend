@@ -30,6 +30,9 @@ export type DataAccessEventType =
   | 'sport.post_checkin.created'
   | 'personal.sport.read'
   | 'personal.snapshot.read'
+  // Onda P5 — leitura de performance pelo personal.
+  | 'personal.performance.read'
+  | 'personal.performance_insight.read'
   | 'personal.ai_summary.read'
   | 'personal.dashboard.read'
   | 'nutri.plan.created'
@@ -76,6 +79,11 @@ export type DataAccessEventType =
   | 'performance.goal_viewed'
   | 'performance.goal_completed'
   | 'performance.goal_cancelled'
+  // Onda P5 — adoção da visão do personal.
+  | 'personal.performance_opened'
+  | 'personal.performance_insight_opened'
+  | 'personal.performance_ai_summary_requested'
+  | 'personal.performance_ai_summary_shown'
   | 'identity.user_created'
   | 'identity.user_reused';
 

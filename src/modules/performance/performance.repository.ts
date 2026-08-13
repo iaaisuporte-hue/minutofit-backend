@@ -896,6 +896,59 @@ export async function invalidateTodayScoreSnapshot(userId: number): Promise<void
  * Mede quanto da carga vem de duração medida e quanto vem do proxy por séries.
  * Sem números pessoais: só contagens agregadas.
  */
+/**
+ * Contadores de recorde e estagnação, numa consulta só (Onda P5).
+ *
+ * Três números que a tela do personal usa juntos e que viriam de três viagens ao
+ * banco se cada sinal buscasse o seu. Estreias (`is_first`) ficam de fora do
+ * contador de recentes: o primeiro registro de um exercício não supera nada, e
+ * contá-lo faria todo aluno novo aparecer "batendo recordes".
+ */
+export async function loadPrCounters(
+  userId: number,
+  recentDays: number,
+  stallDays: number,
+): Promise<{ recentPrCount: number; daysSinceLastPr: number | null; sessionsInStallWindow: number }> {
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM user_pr_events e
+         WHERE e.user_id = $1 AND e.is_first = false
+           AND e.achieved_at >= NOW() - ($2::int * INTERVAL '1 day')) AS recent_count,
+
+       (SELECT (EXTRACT(EPOCH FROM (NOW() - MAX(e.achieved_at))) / 86400)::int
+          FROM user_pr_events e
+         WHERE e.user_id = $1 AND e.is_first = false) AS days_since_last,
+
+       (SELECT COUNT(*)::int FROM workout_session_metrics m
+         WHERE m.user_id = $1
+           AND m.performed_at >= NOW() - ($3::int * INTERVAL '1 day')) AS sessions_stall`,
+    [userId, recentDays, stallDays],
+  );
+  const r = rows[0] ?? {};
+  return {
+    recentPrCount: Number(r.recent_count ?? 0),
+    daysSinceLastPr: r.days_since_last == null ? null : Number(r.days_since_last),
+    sessionsInStallWindow: Number(r.sessions_stall ?? 0),
+  };
+}
+
+/**
+ * Score de N dias atrás — o ponto de comparação do sinal de movimento.
+ *
+ * Pega o snapshot MAIS RECENTE até aquele dia, e não o do dia exato: o snapshot
+ * é gravado quando alguém abre a tela, então exigir a data cravada devolveria
+ * `null` para quem não entrou no app naquele dia.
+ */
+export async function loadScoreAsOf(userId: number, daysAgo: number): Promise<number | null> {
+  const { rows } = await pool.query<{ score: number | null }>(
+    `SELECT score FROM user_performance_snapshots
+      WHERE user_id = $1 AND snapshot_date <= (CURRENT_DATE - $2::int)
+      ORDER BY snapshot_date DESC LIMIT 1`,
+    [userId, daysAgo],
+  );
+  return rows[0]?.score ?? null;
+}
+
 export async function loadEffortMethodDistribution(
   windowDays: number,
 ): Promise<{ method: string; sessions: number }[]> {

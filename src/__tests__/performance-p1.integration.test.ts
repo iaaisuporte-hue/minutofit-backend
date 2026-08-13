@@ -29,6 +29,7 @@ import {
   describeWithDb,
   hasTestDb,
   releaseSuiteLock,
+  restorePerformanceSchema,
   runBackfill,
 } from './helpers/integrationDb';
 
@@ -51,6 +52,11 @@ describeWithDb('Performance P1 · integração com banco real', () => {
     c = await connect();
     // Enfileira contra a outra suíte de integração — as duas dividem o banco.
     await acquireSuiteLock(c);
+    // Precondição da suíte: o schema do módulo na versão corrente. Uma chamada,
+    // sem saber quais migrations existem — o helper descobre. Sem isto, a ordem
+    // das suítes passa a importar, e a que rodar depois de um round trip de
+    // migration encontra a tabela na forma de outra onda.
+    await restorePerformanceSchema(c);
     await cleanFixtures(c, TAG);
   });
 
@@ -104,6 +110,19 @@ describeWithDb('Performance P1 · integração com banco real', () => {
           'workout_session_metrics_load_pair_chk',
         ]),
       );
+
+      // O `up` da 1823 recria o schema de AGOSTO — sem as colunas que as ondas
+      // seguintes acrescentaram. Como `pgmigrations` continua dizendo que elas
+      // foram aplicadas, nada as reaplicaria, e a próxima suíte encontraria a
+      // tabela pela metade. Quem derrubou o schema o reconstrói inteiro, aqui,
+      // em vez de deixar a conta para uma suíte distante.
+      await restorePerformanceSchema(c);
+      const colunas = await c.query(
+        `SELECT count(*)::int AS n FROM information_schema.columns
+          WHERE table_name = 'user_performance_goals'
+            AND column_name IN ('baseline_value', 'best_value', 'target_reps', 'metric_version')`,
+      );
+      expect(colunas.rows[0].n).toBe(4);
     });
 
     it('up roda duas vezes seguidas sem erro (idempotente)', async () => {
@@ -111,6 +130,14 @@ describeWithDb('Performance P1 · integração com banco real', () => {
       const pgm = { db: { query: (sql: string, p?: unknown[]) => c.query(sql, p) } };
       await expect(migration.up(pgm)).resolves.not.toThrow();
       await expect(migration.up(pgm)).resolves.not.toThrow();
+      await restorePerformanceSchema(c);
+    });
+
+    it('TODAS as migrations do módulo são idempotentes, não só a primeira', async () => {
+      // O helper aplica a série inteira; rodar duas vezes prova que nenhuma
+      // delas depende de estado limpo para não explodir.
+      await expect(restorePerformanceSchema(c)).resolves.not.toThrow();
+      await expect(restorePerformanceSchema(c)).resolves.not.toThrow();
     });
   });
 

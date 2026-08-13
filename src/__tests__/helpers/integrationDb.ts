@@ -21,6 +21,9 @@
  */
 import { createRequire } from 'module';
 
+import fs from 'fs';
+import path from 'path';
+
 import { Client } from 'pg';
 
 /** Migrations são CommonJS; `createRequire` é o padrão já usado nos testes. */
@@ -155,17 +158,51 @@ export async function createSetLog(
 }
 
 /**
- * Reaplica a migration de metas (1825) sobre o banco de teste.
+ * Reconstrói o schema do módulo Performance aplicando TODAS as migrations dele,
+ * em ordem.
  *
- * Necessário porque a suíte da P1 exercita `down` + `up` da migration 1823, que
- * DERRUBA e recria `user_performance_goals` no desenho original — sem as colunas
- * que a P4 acrescentou. A tabela de migrations continua dizendo que a 1825 foi
- * aplicada, então nada a reaplica sozinho, e a suíte seguinte encontraria a
- * tabela pela metade. Reaplicar é seguro: a 1825 é idempotente por construção.
+ * ## O problema que isto resolve
+ *
+ * A suíte da P1 exercita `down` + `up` da migration 1823 para provar que a
+ * reversão é real. Mas a 1823 é a PRIMEIRA de uma série: seu `down` derruba as
+ * quatro tabelas e seu `up` as recria no desenho de agosto — sem nada do que as
+ * ondas seguintes acrescentaram. A tabela `pgmigrations` continua dizendo que a
+ * 1824 e a 1825 foram aplicadas, então nada as reaplica, e o banco fica num
+ * estado que não corresponde a nenhuma versão real do produto: schema da P1 com
+ * registro de migrations da P4.
+ *
+ * A primeira correção (Onda P4) foi cada suíte reaplicar manualmente a migration
+ * de que precisava. Isso funcionava e envelhecia mal — toda onda futura teria de
+ * lembrar de fazer o mesmo, e esquecer só apareceria como falha em outra suíte,
+ * longe da causa.
+ *
+ * ## A regra aqui
+ *
+ * O helper DESCOBRE as migrations do módulo pelo diretório e aplica em ordem de
+ * nome (que é ordem cronológica, por construção do `node-pg-migrate`). Uma
+ * migration nova do módulo entra sozinha, sem ninguém editar este arquivo.
+ *
+ * Só o `up` é chamado, e todas as migrations do módulo são idempotentes
+ * (`IF NOT EXISTS` / `DROP CONSTRAINT IF EXISTS` antes de `ADD`), então rodar
+ * sobre um banco já correto não faz nada.
+ *
+ * Nada disto altera comportamento de produção: lá as migrations rodam em ordem,
+ * uma vez, e ninguém chama `down` da 1823 no meio.
  */
-export async function runGoalsMigration(c: Client): Promise<void> {
-  const migration = loadCjs('../../../migrations/1825000000000_performance-goals.js');
-  await migration.up({ db: { query: (sql: string, params?: unknown[]) => c.query(sql, params) } });
+const PERFORMANCE_MIGRATIONS_DIR = path.join(__dirname, '../../../migrations');
+const FIRST_PERFORMANCE_MIGRATION = '1823000000000';
+
+export async function restorePerformanceSchema(c: Client): Promise<void> {
+  const pgm = { db: { query: (sql: string, params?: unknown[]) => c.query(sql, params) } };
+  const files = fs
+    .readdirSync(PERFORMANCE_MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.js') && f >= FIRST_PERFORMANCE_MIGRATION)
+    .sort();
+
+  for (const file of files) {
+    const migration = loadCjs(path.join(PERFORMANCE_MIGRATIONS_DIR, file));
+    await migration.up(pgm);
+  }
 }
 
 /** Reexecuta o backfill da migration 1823 sobre o banco de teste. */

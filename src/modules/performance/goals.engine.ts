@@ -257,3 +257,47 @@ export function progressTarget(kind: GoalKind, targetValue: number, targetReps: 
 export function progressUnit(kind: GoalKind): GoalUnit | 'reps' {
   return kind === 'exercise_reps_at_load' ? 'reps' : unitForKind(kind);
 }
+
+/**
+ * Rótulo canônico da meta (Onda P5).
+ *
+ * ## Por que isto vive no backend
+ *
+ * A P4 derivou este texto no frontend do aluno, e funcionava — até a P5 precisar
+ * do MESMO texto em dois outros lugares: a tela do personal e o insight. Três
+ * cópias da mesma regra divergem no primeiro ajuste, e a versão que o personal lê
+ * passaria a discordar da que o aluno vê. Pior no insight: um texto gerado a
+ * partir de uma descrição diferente da exibida faria o personal ler sobre uma
+ * meta que o aluno não reconhece.
+ *
+ * É DERIVADO, não persistido. Guardar a frase no banco criaria uma segunda
+ * verdade que envelhece: renomear um exercício ou ajustar a redação deixaria as
+ * linhas antigas contando a versão velha.
+ *
+ * O nome do exercício vem de `exercise_name`, a identidade histórica — por isso
+ * a meta continua legível depois que o exercício sai do catálogo.
+ */
+export function goalDisplayLabel(goal: {
+  kind: GoalKind;
+  exerciseName: string | null;
+  targetValue: number;
+  targetReps: number | null;
+}): string {
+  const kg = (n: number) => `${Number.isInteger(n) ? n : n.toFixed(1).replace('.', ',')} kg`;
+  const exercicio = goal.exerciseName ?? 'Exercício removido';
+
+  switch (goal.kind) {
+    case 'exercise_reps_at_load':
+      return `${exercicio}: ${kg(goal.targetValue)} × ${goal.targetReps} reps`;
+    case 'exercise_load':
+      return `${exercicio}: carga de ${kg(goal.targetValue)}`;
+    case 'exercise_e1rm':
+      return `${exercicio}: 1RM estimado de ${kg(goal.targetValue)}`;
+    case 'weekly_frequency':
+      return `${goal.targetValue} treinos por semana`;
+    case 'monthly_frequency':
+      return `${goal.targetValue} treinos no mês`;
+    case 'streak':
+      return `${goal.targetValue} dias seguidos de treino`;
+  }
+}

@@ -28,6 +28,7 @@ import {
   GOAL_METRIC_VERSION,
   MAX_ACTIVE_GOALS,
   computeGoalProgress,
+  goalDisplayLabel,
   isExerciseKind,
   isGoalAlreadyMet,
   isMonotonicKind,
@@ -128,6 +129,8 @@ export interface GoalDto {
   id: string;
   kind: GoalKind;
   status: GoalStatus;
+  /** Texto canônico da meta. Derivado — aluno, personal e insight leem o mesmo. */
+  displayLabel: string;
   exerciseId: string | null;
   exerciseName: string | null;
   /** Alvo bruto. Em `exercise_reps_at_load` é a CARGA; o alvo de reps vai à parte. */
@@ -174,6 +177,12 @@ async function toDto(
     id: goal.id,
     kind: goal.kind,
     status: goal.status,
+    displayLabel: goalDisplayLabel({
+      kind: goal.kind,
+      exerciseName: goal.exercise_name,
+      targetValue: Number(goal.target_value),
+      targetReps: goal.target_reps,
+    }),
     exerciseId: goal.exercise_id,
     exerciseName: goal.exercise_name,
     targetValue: Number(goal.target_value),
@@ -213,7 +222,21 @@ export async function getGoalsForUser(userId: number): Promise<GoalsResponse> {
   if (!(await hasPerformanceFeature(userId))) {
     return { gated: true, goals: [], activeCount: 0, maxActive: MAX_ACTIVE_GOALS };
   }
+  return getGoalsForUserUnrestricted(userId);
+}
 
+/**
+ * As metas do aluno SEM o gate comercial dele (Onda P5).
+ *
+ * O personal lê a carteira dele com base em vínculo e consentimento, não na
+ * assinatura do aluno. Se o gate do aluno valesse aqui, o personal veria a aba
+ * de metas vazia justamente para quem não assina Premium — e concluiria que o
+ * aluno não tem metas, em vez de que não pode vê-las.
+ *
+ * Nenhuma rota do ALUNO deve chamar esta função: o gate dele mora em
+ * `getGoalsForUser`.
+ */
+export async function getGoalsForUserUnrestricted(userId: number): Promise<GoalsResponse> {
   const today = dayKey();
   await expireOverdueGoals(userId, today);
 

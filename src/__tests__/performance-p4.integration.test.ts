@@ -21,7 +21,7 @@ import {
   describeWithDb,
   hasTestDb,
   releaseSuiteLock,
-  runGoalsMigration,
+  restorePerformanceSchema,
 } from './helpers/integrationDb';
 
 if (hasTestDb) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -37,8 +37,12 @@ describeWithDb('Performance P4 · Metas com banco real', () => {
   beforeAll(async () => {
     c = await connect();
     await acquireSuiteLock(c);
+    // Precondição da suíte: o schema do módulo na versão corrente. Uma chamada,
+    // sem saber quais migrations existem — o helper descobre. Sem isto, a ordem
+    // das suítes passa a importar, e a que rodar depois de um round trip de
+    // migration encontra a tabela na forma de outra onda.
+    await restorePerformanceSchema(c);
     await cleanFixtures(c, TAG);
-    await runGoalsMigration(c);
     const { ensurePlanFeaturesSchema } = await import('../db/ensurePlanFeaturesSchema');
     await ensurePlanFeaturesSchema();
   });

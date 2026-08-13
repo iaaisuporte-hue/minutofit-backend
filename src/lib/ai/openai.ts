@@ -55,6 +55,8 @@ export const TOKEN_BUDGET = {
   WORKOUT_PLAN: 3000,
   /** Resumo do aluno para o personal: síntese de evolução, sono e aderência. */
   STUDENT_SUMMARY: 600,
+  /** Síntese de performance para o personal (Spec 033, P5). */
+  PERFORMANCE_INSIGHT: 600,
 } as const;
 
 // ---------------------------------------------------------------------------

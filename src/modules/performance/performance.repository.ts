@@ -1,0 +1,550 @@
+/**
+ * Acesso a dados do módulo Performance (Spec 033).
+ *
+ * ## O dia é o do ALUNO, não o do servidor
+ *
+ * O repositório do metabolismo usa `date_trunc('day', ts)`, que resolve no fuso
+ * da sessão do Postgres (UTC na Render). Aqui isso não serve: um treino às 22h
+ * de segunda em Brasília cairia na terça e o calendário mostraria o dia errado —
+ * exatamente o defeito que `utils/appDay.ts` foi criado para corrigir.
+ *
+ * Por isso toda conversão passa por `(ts AT TIME ZONE $tz)::date`. Como essa
+ * expressão não é sargable, cada query leva TAMBÉM um limite cru no timestamp
+ * (`ts >= $rawSince`), com um dia de folga para cobrir qualquer offset: o índice
+ * faz o range scan e o filtro exato do fuso trabalha só sobre o que sobrou.
+ *
+ * ## A armadilha do `timestamp` sem fuso
+ *
+ * As três fontes NÃO têm o mesmo tipo de coluna:
+ *
+ *   workout_sessions.performed_at    → timestamptz
+ *   personal_session_logs.session_at → timestamptz
+ *   user_workout_logs.completed_at   → timestamp SEM fuso  ← a exceção
+ *
+ * E `AT TIME ZONE` faz coisas OPOSTAS nos dois casos. Num `timestamptz` ele
+ * converte o instante para a hora local do fuso pedido (o que queremos). Num
+ * `timestamp` naive ele faz o inverso: interpreta o valor COMO SE já fosse
+ * daquele fuso e devolve o instante UTC correspondente — empurrando a data três
+ * horas para a FRENTE em vez de para trás.
+ *
+ * Na prática, o mesmo treino às 21h de Brasília era contado em dois dias
+ * diferentes conforme a fonte, e o mesmo dia aparecia duas vezes no UNION —
+ * inflando os dias ativos e o calendário. Por isso a coluna naive leva
+ * `AT TIME ZONE 'UTC'` antes (ela é gravada em UTC por `CURRENT_TIMESTAMP` num
+ * servidor UTC), promovendo-a a timestamptz, e só então a conversão para o fuso
+ * do aluno. Ver `SOURCE_DAY_EXPR` abaixo — não inline essa expressão.
+ *
+ * ## As três fontes de "treinou nesse dia"
+ *
+ * `user_workout_logs` (log raso da gamificação), `workout_sessions` (execução
+ * rica) e `personal_session_logs` (presença registrada pelo personal, Spec 009).
+ * Contar só as duas primeiras faria o aluno acompanhado presencialmente parecer
+ * ausente — foi por isso que a Spec 009 estabeleceu o UNION, e o dashboard do
+ * personal já conta assim. Qualquer número de frequência que divergisse desse
+ * conjunto criaria dois "dias ativos" diferentes no mesmo produto.
+ */
+import type { PoolClient } from 'pg';
+
+import pool from '../../config/database';
+import { APP_TIMEZONE, dayKey } from '../../utils/appDay';
+import { FORMULA_VERSION } from './performance.constants';
+import { bestKey, type CurrentBests, type PrDetection, type PrKind } from './pr.engine';
+import type { ActiveDay, ActiveDaySource } from './performance.types';
+
+/** Folga aplicada ao limite cru para nenhum fuso cortar um dia de fronteira. */
+const RAW_BOUND_SLACK_DAYS = 1;
+
+/**
+ * Dia do aluno a partir de uma coluna `timestamptz`.
+ * `$2` é sempre o fuso do app nas queries deste arquivo.
+ */
+const dayFromTz = (col: string): string => `(${col} AT TIME ZONE $2)::date`;
+
+/**
+ * Dia do aluno a partir de uma coluna `timestamp` SEM fuso.
+ * O `AT TIME ZONE 'UTC'` extra é obrigatório — ver a armadilha no topo.
+ */
+const dayFromNaive = (col: string): string => `(${col} AT TIME ZONE 'UTC' AT TIME ZONE $2)::date`;
+
+/** Expressão do dia para cada fonte, já com o tipo certo de cada coluna. */
+const SOURCE_DAY_EXPR = {
+  workoutLog: dayFromNaive('uwl.completed_at'),
+  session: dayFromTz('ws.performed_at'),
+  personalLog: dayFromTz('psl.session_at'),
+  metrics: dayFromTz('m.performed_at'),
+} as const;
+
+function isoDaysAgo(days: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString();
+}
+
+/**
+ * Dias distintos com atividade na janela, no fuso do aluno.
+ * Um mesmo dia presente nas três fontes conta UMA vez (UNION, não UNION ALL).
+ */
+export async function countActiveDays(userId: number, windowDays: number): Promise<number> {
+  const startKey = dayKey(new Date(Date.now() - (windowDays - 1) * 86_400_000));
+  const rawSince = isoDaysAgo(windowDays + RAW_BOUND_SLACK_DAYS);
+
+  const { rows } = await pool.query<{ n: number }>(
+    `SELECT COUNT(DISTINCT d)::int AS n FROM (
+       SELECT ${SOURCE_DAY_EXPR.workoutLog} AS d
+         FROM user_workout_logs uwl
+        WHERE uwl.user_id = $1
+          AND uwl.completed_at >= ($3::timestamptz AT TIME ZONE 'UTC')
+          AND ${SOURCE_DAY_EXPR.workoutLog} >= $4::date
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.session}
+         FROM workout_sessions ws
+        WHERE ws.user_id = $1
+          AND ws.status IN ('completed', 'partial')
+          AND ws.performed_at >= $3::timestamptz
+          AND ${SOURCE_DAY_EXPR.session} >= $4::date
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.personalLog}
+         FROM personal_session_logs psl
+        WHERE psl.student_id = $1
+          AND psl.status IN ('present', 'partial')
+          AND psl.session_at >= $3::timestamptz
+          AND ${SOURCE_DAY_EXPR.personalLog} >= $4::date
+     ) t`,
+    [userId, APP_TIMEZONE, rawSince, startKey],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Prescrição vigente do aluno: o preset semanal da ficha ATIVA, e há quantos
+ * dias o aluno está sob prescrição de forma geral.
+ *
+ * As duas coisas vêm de linhas diferentes de propósito.
+ *
+ * O preset tem que ser o da ficha ativa — é o que o personal prescreve hoje.
+ * Mas a "idade" NÃO pode ser a dessa mesma linha: cada revisão de ficha cria uma
+ * linha nova, e usar `created_at` dela zeraria o tempo de prescrição a cada
+ * revisão. O efeito seria absurdo — o denominador dos 28 dias encolheria para o
+ * de uma semana enquanto o numerador continua varrendo os 28 dias inteiros, e a
+ * consistência saltaria para 100% no dia em que o personal revisou a ficha, sem
+ * o aluno ter mudado nada. Revisar ficha é justamente o que o produto pede que
+ * o personal faça com frequência.
+ *
+ * Por isso a idade sai da PRIMEIRA ficha que o aluno já teve (inclusive
+ * abandonadas): é o marco de "desde quando existe prescrição para cobrar".
+ * Mesmo espírito do `daysSinceAssigned` do `resolveMonthlyTarget`, que também
+ * mede vínculo e não documento.
+ */
+export async function loadActivePlanTarget(
+  userId: number,
+): Promise<{ weekPreset: string | null; daysSinceStarted: number | null }> {
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT week_preset
+          FROM personal_workout_plans
+         WHERE student_id = $1 AND abandoned_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1) AS week_preset,
+       (SELECT (EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 86400)::int
+          FROM personal_workout_plans
+         WHERE student_id = $1) AS days_since`,
+    [userId],
+  );
+  return {
+    weekPreset: rows[0]?.week_preset ?? null,
+    daysSinceStarted: rows[0]?.days_since ?? null,
+  };
+}
+
+/**
+ * Sessões executadas na janela + sequência atual, numa ida só ao banco.
+ *
+ * As duas contas são baratas e independentes, mas cada `pool.query` ocupa uma
+ * conexão, e o pool usa o default do `pg` (10). O overview é a tela de abertura
+ * da Evolução: com uma query por métrica, poucas aberturas simultâneas já
+ * enfileiravam requisição. Agrupar o que não depende de nada mantém o fan-out
+ * do endpoint em duas conexões.
+ *
+ * A janela de sessões é contada em dias do ALUNO, para não descolar do
+ * `activeDays28`, que é por dia do aluno — dois números vizinhos no mesmo
+ * resumo não podem ter definições diferentes de "dia".
+ */
+export async function loadFreeSummaryCounters(
+  userId: number,
+  windowDays: number,
+): Promise<{ sessionsInWindow: number; currentStreak: number }> {
+  const startKey = dayKey(new Date(Date.now() - (windowDays - 1) * 86_400_000));
+  const rawSince = isoDaysAgo(windowDays + RAW_BOUND_SLACK_DAYS);
+
+  const { rows } = await pool.query<{ sessions: number; streak: number }>(
+    `SELECT
+       (SELECT COUNT(*)::int
+          FROM workout_sessions ws
+         WHERE ws.user_id = $1
+           AND ws.status IN ('completed', 'partial')
+           AND ws.performed_at >= $3::timestamptz
+           AND ${SOURCE_DAY_EXPR.session} >= $4::date) AS sessions,
+       (SELECT COALESCE(current_streak, 0)::int
+          FROM user_gamification_stats
+         WHERE user_id = $1) AS streak`,
+    [userId, APP_TIMEZONE, rawSince, startKey],
+  );
+  return {
+    sessionsInWindow: rows[0]?.sessions ?? 0,
+    currentStreak: rows[0]?.streak ?? 0,
+  };
+}
+
+/**
+ * Calendário de um mês: um registro por dia com atividade, com as fontes que o
+ * comprovam e as métricas do dia quando houver sessão executada.
+ *
+ * Só devolve dias ATIVOS — a grade completa do mês é montada no cliente, que já
+ * sabe quantos dias o mês tem. Trafegar 30 linhas vazias seria desperdício.
+ */
+export async function loadMonthCalendar(
+  userId: number,
+  year: number,
+  month: number,
+): Promise<ActiveDay[]> {
+  const first = `${year}-${String(month).padStart(2, '0')}-01`;
+
+  const { rows } = await pool.query<{
+    d: string;
+    sources: ActiveDaySource[];
+    sets_done: string | null;
+    tonnage_kg: string | null;
+  }>(
+    `WITH bounds AS (
+       SELECT $3::date AS first_day, ($3::date + INTERVAL '1 month')::date AS next_month
+     ),
+     days AS (
+       SELECT ${SOURCE_DAY_EXPR.workoutLog} AS d, 'log'::text AS src
+         FROM user_workout_logs uwl, bounds b
+        WHERE uwl.user_id = $1
+          AND uwl.completed_at >= (b.first_day - INTERVAL '2 days')
+          AND uwl.completed_at < (b.next_month + INTERVAL '2 days')
+          AND ${SOURCE_DAY_EXPR.workoutLog} >= b.first_day
+          AND ${SOURCE_DAY_EXPR.workoutLog} < b.next_month
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.session}, 'session'
+         FROM workout_sessions ws, bounds b
+        WHERE ws.user_id = $1
+          AND ws.status IN ('completed', 'partial')
+          AND ws.performed_at >= (b.first_day - INTERVAL '2 days')
+          AND ws.performed_at < (b.next_month + INTERVAL '2 days')
+          AND ${SOURCE_DAY_EXPR.session} >= b.first_day
+          AND ${SOURCE_DAY_EXPR.session} < b.next_month
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.personalLog}, 'personal'
+         FROM personal_session_logs psl, bounds b
+        WHERE psl.student_id = $1
+          AND psl.status IN ('present', 'partial')
+          AND psl.session_at >= (b.first_day - INTERVAL '2 days')
+          AND psl.session_at < (b.next_month + INTERVAL '2 days')
+          AND ${SOURCE_DAY_EXPR.personalLog} >= b.first_day
+          AND ${SOURCE_DAY_EXPR.personalLog} < b.next_month
+     ),
+     metrics AS (
+       SELECT ${SOURCE_DAY_EXPR.metrics} AS d,
+              SUM(m.sets_done)::int AS sets_done,
+              SUM(m.tonnage_kg) AS tonnage_kg
+         FROM workout_session_metrics m, bounds b
+        WHERE m.user_id = $1
+          AND m.performed_at >= (b.first_day - INTERVAL '2 days')
+          AND m.performed_at < (b.next_month + INTERVAL '2 days')
+          AND ${SOURCE_DAY_EXPR.metrics} >= b.first_day
+          AND ${SOURCE_DAY_EXPR.metrics} < b.next_month
+        GROUP BY 1
+     )
+     SELECT d.d::text AS d,
+            ARRAY_AGG(DISTINCT d.src) AS sources,
+            MAX(mt.sets_done)::text AS sets_done,
+            MAX(mt.tonnage_kg)::text AS tonnage_kg
+       FROM days d
+       LEFT JOIN metrics mt ON mt.d = d.d
+      GROUP BY d.d
+      ORDER BY d.d`,
+    [userId, APP_TIMEZONE, first],
+  );
+
+  return rows.map((r) => ({
+    date: r.d,
+    active: true,
+    sources: r.sources ?? [],
+    setsDone: r.sets_done == null ? null : Number(r.sets_done),
+    tonnageKg: r.tonnage_kg == null ? null : Number(r.tonnage_kg),
+  }));
+}
+
+// ── Recordes (P2) ──────────────────────────────────────────────────────────
+
+/**
+ * Melhor valor já registrado por `(exercício, categoria)` para os exercícios
+ * informados. Uma query só — nada de laço por exercício.
+ *
+ * Linhas órfãs (`exercise_id IS NULL`, exercício removido do catálogo) nunca
+ * casam com `= ANY(...)` e por isso não interferem: o histórico do exercício
+ * apagado repousa, e um exercício novo com o mesmo nome começa do zero.
+ */
+export async function loadCurrentPrBests(
+  client: PoolClient,
+  userId: number,
+  exerciseIds: string[],
+): Promise<CurrentBests> {
+  const bests: CurrentBests = new Map();
+  if (exerciseIds.length === 0) return bests;
+
+  const { rows } = await client.query<{ exercise_id: string; kind: PrKind; best: string }>(
+    `SELECT exercise_id, kind, MAX(value) AS best
+       FROM user_pr_events
+      WHERE user_id = $1 AND exercise_id = ANY($2::uuid[])
+      GROUP BY exercise_id, kind`,
+    [userId, exerciseIds],
+  );
+  for (const r of rows) bests.set(bestKey(r.exercise_id, r.kind), Number(r.best));
+  return bests;
+}
+
+/**
+ * Serializa a detecção de recordes de UM usuário dentro da transação corrente.
+ *
+ * Sem isto, duas sessões do mesmo aluno processadas ao mesmo tempo leriam o
+ * mesmo "melhor atual" e ambas se achariam recorde: a segunda gravaria
+ * `previous_value` desatualizado, descrevendo uma progressão que não aconteceu
+ * (70 → 80 e 70 → 75, em vez de 70 → 75 → 80). O `UNIQUE` do banco impede a
+ * duplicata exata, mas não conserta a narrativa.
+ *
+ * Escolhi advisory lock transacional em vez de `SELECT ... FOR UPDATE` porque
+ * não há linha para travar quando o recorde é o primeiro do exercício — travar
+ * ausência exigiria bloqueio de faixa, que no Postgres significa nível de
+ * isolamento serializável e retry no chamador. O lock é liberado no
+ * COMMIT/ROLLBACK, é o mesmo mecanismo que a idempotência de conclusão já usa
+ * (`workout-session:`), e o escopo por usuário é estreito: sessões simultâneas
+ * do MESMO aluno são raras, e de alunos diferentes não se encontram.
+ */
+export async function lockPrDetection(client: PoolClient, userId: number): Promise<void> {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`pr-detect:${userId}`]);
+}
+
+/** Grava os recordes detectados. `ON CONFLICT` é rede de segurança, não a regra. */
+export async function insertPrEvents(
+  client: PoolClient,
+  userId: number,
+  sessionId: number,
+  achievedAt: Date | string,
+  detections: PrDetection[],
+): Promise<number> {
+  let inserted = 0;
+  for (const d of detections) {
+    const res = await client.query(
+      `INSERT INTO user_pr_events
+         (user_id, exercise_id, exercise_name, kind, value, reps, load_kg,
+          previous_value, is_first, session_id, achieved_at, formula_version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       ON CONFLICT (user_id, exercise_id, kind, value) DO NOTHING`,
+      [
+        userId,
+        d.exerciseId,
+        d.exerciseName,
+        d.kind,
+        d.value,
+        d.reps,
+        d.loadKg,
+        d.previousValue,
+        d.isFirst,
+        sessionId,
+        achievedAt,
+        FORMULA_VERSION,
+      ],
+    );
+    inserted += res.rowCount ?? 0;
+  }
+  return inserted;
+}
+
+/** Uma linha de recorde, já no formato que o serviço entrega. */
+export interface PrRecordRow {
+  exerciseId: string | null;
+  exerciseName: string;
+  kind: PrKind;
+  value: number;
+  reps: number | null;
+  loadKg: number | null;
+  previousValue: number | null;
+  isFirst: boolean;
+  achievedAt: string;
+  sessionId: number | null;
+  /** false quando o exercício saiu do catálogo — o recorde continua valendo. */
+  exerciseInCatalog: boolean;
+}
+
+/**
+ * Recorde ATUAL de cada `(exercício, categoria)` — o topo do ledger.
+ *
+ * `DISTINCT ON` resolve em uma passada: ordena por valor decrescente dentro do
+ * grupo e fica com a primeira linha. Uma query, sem laço por exercício.
+ *
+ * O agrupamento é por `(exercise_id, exercise_name)` e não só por `exercise_id`:
+ * exercícios removidos ficam todos com `NULL`, e agrupar só pelo id fundiria
+ * recordes de exercícios diferentes num único bloco sem nome.
+ *
+ * `LEFT JOIN exercises` é contrato, não preferência: com `INNER JOIN` sumiriam
+ * exatamente os recordes órfãos — os que mais importam preservar, porque não há
+ * como reconstruí-los.
+ */
+export async function loadCurrentPrRecords(
+  userId: number,
+  opts: { exerciseId?: string | null; kind?: PrKind | null } = {},
+): Promise<PrRecordRow[]> {
+  const params: unknown[] = [userId];
+  let filters = '';
+  if (opts.exerciseId) {
+    params.push(opts.exerciseId);
+    filters += ` AND p.exercise_id = $${params.length}::uuid`;
+  }
+  if (opts.kind) {
+    params.push(opts.kind);
+    filters += ` AND p.kind = $${params.length}`;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT DISTINCT ON (p.exercise_id, p.exercise_name, p.kind)
+            p.exercise_id, p.exercise_name, p.kind, p.value, p.reps, p.load_kg,
+            p.previous_value, p.is_first, p.achieved_at, p.session_id,
+            (e.id IS NOT NULL) AS exercise_in_catalog
+       FROM user_pr_events p
+       LEFT JOIN exercises e ON e.id = p.exercise_id
+      WHERE p.user_id = $1${filters}
+      ORDER BY p.exercise_id, p.exercise_name, p.kind, p.value DESC, p.achieved_at DESC`,
+    params,
+  );
+  return rows.map(mapPrRow);
+}
+
+/** Linha do tempo de conquistas, da mais recente para trás. */
+export async function loadRecentPrEvents(
+  userId: number,
+  limit: number,
+  opts: { sinceDays?: number | null } = {},
+): Promise<PrRecordRow[]> {
+  const params: unknown[] = [userId];
+  let sinceFilter = '';
+  if (opts.sinceDays != null) {
+    params.push(isoDaysAgo(opts.sinceDays));
+    sinceFilter = ` AND p.achieved_at >= $${params.length}::timestamptz`;
+  }
+  params.push(Math.min(100, Math.max(1, limit)));
+
+  const { rows } = await pool.query(
+    `SELECT p.exercise_id, p.exercise_name, p.kind, p.value, p.reps, p.load_kg,
+            p.previous_value, p.is_first, p.achieved_at, p.session_id,
+            (e.id IS NOT NULL) AS exercise_in_catalog
+       FROM user_pr_events p
+       LEFT JOIN exercises e ON e.id = p.exercise_id
+      WHERE p.user_id = $1${sinceFilter}
+      ORDER BY p.achieved_at DESC, p.id DESC
+      LIMIT $${params.length}`,
+    params,
+  );
+  return rows.map(mapPrRow);
+}
+
+function mapPrRow(r: Record<string, unknown>): PrRecordRow {
+  return {
+    exerciseId: (r.exercise_id as string | null) ?? null,
+    exerciseName: String(r.exercise_name),
+    kind: r.kind as PrKind,
+    value: Number(r.value),
+    reps: r.reps == null ? null : Number(r.reps),
+    loadKg: r.load_kg == null ? null : Number(r.load_kg),
+    previousValue: r.previous_value == null ? null : Number(r.previous_value),
+    isFirst: r.is_first === true,
+    achievedAt: new Date(r.achieved_at as string).toISOString(),
+    sessionId: r.session_id == null ? null : Number(r.session_id),
+    exerciseInCatalog: r.exercise_in_catalog === true,
+  };
+}
+
+/** Ponto diário da progressão de um exercício. */
+export interface ProgressionPoint {
+  date: string;
+  maxLoadKg: number | null;
+  bestE1rm: number | null;
+  tonnageKg: number | null;
+  topSetReps: number | null;
+}
+
+export interface ProgressionSeries {
+  exerciseId: string;
+  name: string;
+  points: ProgressionPoint[];
+}
+
+/**
+ * Série temporal por exercício, agregada POR DIA no fuso do aluno.
+ *
+ * Uma query para todos os exercícios da janela — o cliente escolhe qual exibir
+ * sem nova ida ao servidor, e não existe laço por exercício em lugar nenhum.
+ *
+ * Agrega no banco de propósito: mandar log de série cru para o navegador seria
+ * ordens de grandeza mais tráfego para desenhar exatamente a mesma linha, e o
+ * cálculo de e1RM precisa ser o mesmo dos recordes — backend é a autoridade.
+ *
+ * O e1RM usa a mesma fórmula (Epley, guarda de 1..12 repetições) do
+ * `e1rm.engine.ts` e do backfill. São três implementações da mesma regra por
+ * necessidade — TS puro, SQL de agregação e SQL de backfill — e o teste de
+ * integração compara as três sobre os mesmos dados.
+ */
+export async function loadProgressionSeries(
+  userId: number,
+  windowDays: number,
+  exerciseId?: string | null,
+): Promise<ProgressionSeries[]> {
+  const params: unknown[] = [userId, APP_TIMEZONE, isoDaysAgo(windowDays)];
+  let exerciseFilter = '';
+  if (exerciseId) {
+    params.push(exerciseId);
+    exerciseFilter = ` AND sl.exercise_id = $${params.length}::uuid`;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT sl.exercise_id,
+            MIN(sl.exercise_name) AS exercise_name,
+            ${SOURCE_DAY_EXPR.session}::text AS d,
+            MAX(sl.load_done_kg) FILTER (WHERE sl.load_done_kg > 0) AS max_load,
+            MAX(ROUND((sl.load_done_kg * (1 + sl.reps_done / 30.0)) * 2) / 2)
+              FILTER (WHERE sl.load_done_kg > 0 AND sl.reps_done BETWEEN 1 AND 12) AS best_e1rm,
+            SUM(sl.reps_done * sl.load_done_kg)
+              FILTER (WHERE sl.load_done_kg > 0 AND sl.reps_done IS NOT NULL) AS tonnage,
+            MAX(sl.reps_done) AS top_reps
+       FROM workout_set_logs sl
+       JOIN workout_sessions ws ON ws.id = sl.session_id
+      WHERE ws.user_id = $1
+        AND ws.status IN ('completed', 'partial')
+        AND ws.performed_at >= $3::timestamptz
+        AND sl.status = 'done'
+        AND sl.exercise_id IS NOT NULL${exerciseFilter}
+      GROUP BY sl.exercise_id, ${SOURCE_DAY_EXPR.session}
+      ORDER BY sl.exercise_id, d`,
+    params,
+  );
+
+  const byExercise = new Map<string, ProgressionSeries>();
+  for (const r of rows) {
+    const id = String(r.exercise_id);
+    let series = byExercise.get(id);
+    if (!series) {
+      series = { exerciseId: id, name: String(r.exercise_name), points: [] };
+      byExercise.set(id, series);
+    }
+    series.points.push({
+      date: String(r.d),
+      maxLoadKg: r.max_load == null ? null : Number(r.max_load),
+      bestE1rm: r.best_e1rm == null ? null : Number(r.best_e1rm),
+      tonnageKg: r.tonnage == null ? null : Number(r.tonnage),
+      topSetReps: r.top_reps == null ? null : Number(r.top_reps),
+    });
+  }
+  return Array.from(byExercise.values());
+}

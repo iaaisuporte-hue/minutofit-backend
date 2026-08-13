@@ -4,6 +4,34 @@ import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { applyGamificationCheckinTx, invalidateAfterCheckin, type MuscleGroup } from './gamificationService';
 import { dayKey, APP_TIMEZONE } from '../utils/appDay';
 import logger from '../lib/logger';
+import { computeSessionMetrics, resolveDurationMin } from '../modules/performance/sessionMetrics.engine';
+import { FORMULA_VERSION } from '../modules/performance/performance.constants';
+import type { MetricsSetInput } from '../modules/performance/performance.types';
+import {
+  buildPrCandidates,
+  detectPrs,
+  type PrKind,
+  type PrSetInput,
+} from '../modules/performance/pr.engine';
+import {
+  insertPrEvents,
+  loadCurrentPrBests,
+  lockPrDetection,
+} from '../modules/performance/performance.repository';
+
+/**
+ * Recorde detectado, no formato que a resposta do registro de treino devolve.
+ * Só o que a UI precisa para celebrar — nada de id de linha ou versão de fórmula.
+ */
+export interface PrDetectionResult {
+  exerciseId: string;
+  exerciseName: string;
+  kind: PrKind;
+  value: number;
+  previousValue: number | null;
+  /** Estreia da categoria: linha de base, não conquista. A UI não celebra. */
+  isFirst: boolean;
+}
 
 // Grupos musculares aceitos em user_workout_logs.muscle_groups (paridade com o
 // enum MuscleGroup da gamificação). Sanitizamos o que vem do cliente.
@@ -286,6 +314,9 @@ export async function createSession(userId: number, academyId: number | null, in
           streak: stats.rows[0] ? Number(stats.rows[0].current_streak ?? 0) : null,
           xp: stats.rows[0] ? Number(stats.rows[0].xp ?? 0) : null,
           duplicate: true,
+          // Replay não descobre recorde: a sessão original já detectou o dela.
+          prEvents: [] as PrDetectionResult[],
+          celebrate: false,
         };
       }
     }
@@ -409,7 +440,30 @@ export async function createSession(userId: number, academyId: number | null, in
       return id && knownExerciseIds.has(id) ? id : null;
     };
 
+    // Espelho do que foi REALMENTE gravado (já sanitizado) — alimenta as
+    // métricas da sessão sem uma segunda leitura do banco. Métrica derivada de
+    // valor pré-clamp divergiria da série persistida.
+    const persistedSets: MetricsSetInput[] = [];
+    // O mesmo espelho, com o vínculo de exercício resolvido, para a detecção
+    // de recordes (P2). Séries sem exercício conhecido não entram: sem vínculo
+    // não há histórico contra o que comparar.
+    const persistedPrSets: PrSetInput[] = [];
+
     for (const r of rows) {
+      const repsDone = clampReps(r.repsDone);
+      const loadDoneKg = clampLoadKg(r.loadDoneKg);
+      const setRpe = clampRpe(r.rpe);
+      const setStatus: 'done' | 'skipped' = r.status === 'skipped' ? 'skipped' : 'done';
+      const resolvedExerciseId = knownUuid(r.exerciseId);
+      persistedSets.push({ repsDone, loadDoneKg, rpe: setRpe, status: setStatus });
+      persistedPrSets.push({
+        exerciseId: resolvedExerciseId,
+        exerciseName: String(r.name ?? '').slice(0, 200) || '—',
+        repsDone,
+        loadDoneKg,
+        status: setStatus,
+      });
+
       const setLog = await client.query(
         `INSERT INTO workout_set_logs
            (session_id, exercise_id, exercise_name, order_index, set_index,
@@ -419,21 +473,21 @@ export async function createSession(userId: number, academyId: number | null, in
          RETURNING id`,
         [
           sessionId,
-          knownUuid(r.exerciseId),
+          resolvedExerciseId,
           String(r.name ?? '').slice(0, 200) || '—',
           r.orderIndex ?? 0,
           r.setIndex ?? 1,
           r.plannedReps ?? null,
-          clampReps(r.repsDone),
+          repsDone,
           clampLoadKg(r.plannedLoadKg),
-          clampLoadKg(r.loadDoneKg),
+          loadDoneKg,
           clampRestSeconds(r.plannedRestS),
           clampRestSeconds(r.restDoneS),
-          clampRpe(r.rpe),
+          setRpe,
           r.discomfort ? String(r.discomfort).slice(0, 280) : null,
           knownUuid(r.substitutedFromExerciseId),
           r.substitutionReason ? String(r.substitutionReason).slice(0, 280) : null,
-          r.status === 'skipped' ? 'skipped' : 'done',
+          setStatus,
         ],
       );
 
@@ -454,6 +508,89 @@ export async function createSession(userId: number, academyId: number | null, in
             sanitizeConfidence(c.confidence),
           ],
         );
+      }
+    }
+
+    // ── Métricas da sessão (Spec 033, P1) ───────────────────────────────────
+    // Mesma transação da execução, pelo mesmo motivo do write-through de
+    // gamificação: métrica que pode faltar é métrica em que não se confia. Se a
+    // sessão entra, a métrica entra; se a transação cai, não sobra linha órfã.
+    //
+    // Só sessões efetivamente treinadas — 'started'/'abandoned' não descrevem
+    // execução. `computeSessionMetrics` devolve null quando nenhuma série foi
+    // realizada, e aí nenhuma linha é criada: métrica zerada seria zero
+    // artificial contaminando qualquer média futura.
+    if (input.status === 'completed' || input.status === 'partial') {
+      const metrics = computeSessionMetrics(persistedSets, {
+        sessionRpe: clampRpe(input.sessionRpe),
+        // Neste ramo o status é completed/partial, então `ended_at` foi gravado
+        // como `performedAt` (ver INSERT do cabeçalho) — as duas pontas são as
+        // mesmas que estão no banco.
+        durationMin: resolveDurationMin(
+          header.rows[0].started_at ? new Date(header.rows[0].started_at) : null,
+          performedAt,
+          isRetroactive,
+        ),
+      });
+      if (metrics) {
+        await client.query(
+          `INSERT INTO workout_session_metrics
+             (session_id, user_id, performed_at, sets_done, reps_total, tonnage_kg,
+              duration_min, srpe, effort_load, effort_load_method, formula_version)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           ON CONFLICT (session_id) DO NOTHING`,
+          [
+            sessionId,
+            userId,
+            header.rows[0].performed_at,
+            metrics.setsDone,
+            metrics.repsTotal,
+            metrics.tonnageKg,
+            metrics.durationMin,
+            metrics.srpe,
+            metrics.effortLoad,
+            metrics.effortLoadMethod,
+            FORMULA_VERSION,
+          ],
+        );
+      }
+    }
+
+    // ── Detecção de recordes (Spec 033, P2) ─────────────────────────────────
+    // Mesma transação da execução: um PR é consequência do treino, não um
+    // efeito colateral que pode faltar. Se a sessão entra, o recorde entra.
+    //
+    // Ordem importa: o advisory lock por usuário vem ANTES da leitura dos
+    // melhores atuais, senão duas sessões simultâneas do mesmo aluno leriam o
+    // mesmo histórico e a segunda gravaria `previous_value` desatualizado.
+    //
+    // Idempotência tem duas camadas. A primeira é o replay de conclusão, que
+    // retorna lá em cima sem chegar aqui. A segunda é a própria natureza do
+    // recorde: reenviar a mesma sessão produz candidatos idênticos, que não
+    // superam o recorde que eles mesmos criaram — `detectPrs` exige melhora
+    // ESTRITA. O `ON CONFLICT` do INSERT é a terceira, para o caso de corrida
+    // que escape do lock.
+    const prEvents: PrDetectionResult[] = [];
+    if (input.status === 'completed' || input.status === 'partial') {
+      const candidates = buildPrCandidates(persistedPrSets);
+      if (candidates.length > 0) {
+        await lockPrDetection(client, userId);
+        const exerciseIds = Array.from(new Set(candidates.map((c) => c.exerciseId)));
+        const bests = await loadCurrentPrBests(client, userId, exerciseIds);
+        const detections = detectPrs(candidates, bests);
+        if (detections.length > 0) {
+          await insertPrEvents(client, userId, sessionId, header.rows[0].performed_at, detections);
+          for (const d of detections) {
+            prEvents.push({
+              exerciseId: d.exerciseId,
+              exerciseName: d.exerciseName,
+              kind: d.kind,
+              value: d.value,
+              previousValue: d.previousValue,
+              isFirst: d.isFirst,
+            });
+          }
+        }
       }
     }
 
@@ -535,6 +672,11 @@ export async function createSession(userId: number, academyId: number | null, in
       streak,
       xp,
       duplicate: false,
+      prEvents,
+      // Recorde de sessão retroativa é real e fica gravado, mas não vira festa:
+      // celebrar um treino de três dias atrás como se fosse agora premia o
+      // registro tardio, não o esforço.
+      celebrate: !isRetroactive && prEvents.some((p) => !p.isFirst),
     };
   } catch (err) {
     await client.query('ROLLBACK');
@@ -558,30 +700,134 @@ export async function listSessions(userId: number, limit = 50) {
   return rows;
 }
 
-/** Estatísticas de execução (Spec 010 V1.1): frequência + progressão de carga. */
+/** Cursor keyset: instante + id, o par que ordena de forma determinística. */
+export interface SessionCursor {
+  performedAt: string;
+  id: number;
+}
+
+/**
+ * Serializa o cursor como `<ISO>_<id>`.
+ *
+ * O id é indispensável: `performed_at` NÃO é único — o registro retroativo
+ * ancora a data ao meio-dia UTC, então duas sessões retroativas do mesmo dia têm
+ * o MESMO instante. Paginar só por timestamp puralaria ou repetiria essas
+ * sessões na fronteira entre páginas.
+ */
+export function encodeSessionCursor(performedAt: string | Date, id: number): string {
+  const iso = performedAt instanceof Date ? performedAt.toISOString() : new Date(performedAt).toISOString();
+  return `${iso}_${id}`;
+}
+
+/** Decodifica o cursor. `null` para qualquer entrada malformada — nunca lança. */
+export function decodeSessionCursor(raw: unknown): SessionCursor | null {
+  if (typeof raw !== 'string') return null;
+  const sep = raw.lastIndexOf('_');
+  if (sep <= 0) return null;
+  const iso = raw.slice(0, sep);
+  const id = Number(raw.slice(sep + 1));
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const ts = new Date(iso);
+  if (Number.isNaN(ts.getTime())) return null;
+  return { performedAt: ts.toISOString(), id };
+}
+
+/**
+ * Página do histórico por keyset (Spec 033, P1).
+ *
+ * Substitui o offset/limite simples porque o Histórico virou aba de primeira
+ * classe e o teto de 200 do `listSessions` trava um aluno com mais de um ano de
+ * treino. Keyset também não sofre o deslocamento clássico do OFFSET: uma sessão
+ * registrada entre duas páginas não faz a próxima repetir ou pular linha.
+ *
+ * Ordenação `(performed_at DESC, id DESC)` — o par é único, então a ordem é
+ * total e o cursor é sempre reencontrável.
+ */
+export async function listSessionsPage(
+  userId: number,
+  limit: number,
+  before: SessionCursor | null,
+): Promise<{ sessions: Record<string, unknown>[]; nextCursor: string | null }> {
+  const safeLimit = Math.min(100, Math.max(1, limit));
+  const params: unknown[] = [userId];
+  let keysetClause = '';
+  if (before) {
+    // Tupla comparada como tupla: pega tudo estritamente "depois" do cursor na
+    // ordenação decrescente, incluindo empates de instante com id menor.
+    params.push(before.performedAt, before.id);
+    keysetClause = ` AND (ws.performed_at, ws.id) < ($2::timestamptz, $3::int)`;
+  }
+  params.push(safeLimit + 1); // +1 sonda se existe próxima página
+
+  const { rows } = await pool.query(
+    `SELECT ws.id, ws.source, ws.plan_id, ws.day_index, ws.readiness_level, ws.status,
+            ws.session_rpe, ws.title, ws.started_at, ws.ended_at, ws.performed_at,
+            ws.is_retroactive,
+            (SELECT COUNT(*) FROM workout_set_logs sl
+              WHERE sl.session_id = ws.id AND sl.status = 'done') AS sets_done
+       FROM workout_sessions ws
+      WHERE ws.user_id = $1${keysetClause}
+      ORDER BY ws.performed_at DESC, ws.id DESC
+      LIMIT $${params.length}`,
+    params,
+  );
+
+  const hasMore = rows.length > safeLimit;
+  const sessions = hasMore ? rows.slice(0, safeLimit) : rows;
+  const last = sessions[sessions.length - 1];
+  return {
+    sessions,
+    nextCursor: hasMore && last ? encodeSessionCursor(last.performed_at, Number(last.id)) : null,
+  };
+}
+
+/**
+ * Estatísticas de execução (Spec 010 V1.1): frequência + progressão de carga.
+ *
+ * Duas correções da Spec 033 (P1) aqui:
+ *
+ * 1. Datas saem de `performed_at`, não de `started_at`. `performed_at` é a data
+ *    canônica da execução desde a migration 1813 — é ela que a aderência, o
+ *    histórico e o dashboard do personal já usam. Hoje os dois valores coincidem
+ *    porque o serviço grava `started_at = performed_at`, então a correção não
+ *    muda número nenhum; ela impede que estas contas divirjam do resto do
+ *    produto no dia em que existir um "iniciar treino" de verdade.
+ *
+ * 2. O dia e a semana são os do ALUNO, não os do servidor. `date_trunc` e
+ *    `::date` resolvem no fuso da sessão do Postgres (UTC na Render), então o
+ *    treino das 21h30 de domingo (BRT) caía na segunda — e na SEMANA seguinte,
+ *    zerando o contador "esta semana" de quem acabou de treinar. É a mesma
+ *    classe de defeito que `utils/appDay.ts` foi criado para corrigir.
+ */
 export async function getWorkoutStats(userId: number) {
   const freq = await pool.query(
     `SELECT
        COUNT(*)::int AS total,
-       COUNT(*) FILTER (WHERE started_at >= date_trunc('week', now()))::int AS this_week,
-       COUNT(*) FILTER (WHERE started_at >= now() - interval '30 days')::int AS last_30d
+       COUNT(*) FILTER (
+         WHERE (performed_at AT TIME ZONE $2)::date
+               >= date_trunc('week', (now() AT TIME ZONE $2))::date
+       )::int AS this_week,
+       COUNT(*) FILTER (
+         WHERE (performed_at AT TIME ZONE $2)::date
+               > ((now() AT TIME ZONE $2)::date - 30)
+       )::int AS last_30d
      FROM workout_sessions
      WHERE user_id = $1 AND status IN ('completed', 'partial')`,
-    [userId],
+    [userId, APP_TIMEZONE],
   );
 
   // Progressão de carga por exercício: MAX(carga) por dia, só onde há carga.
   const prog = await pool.query(
     `SELECT sl.exercise_id,
             MIN(sl.exercise_name) AS exercise_name,
-            ws.started_at::date AS d,
+            (ws.performed_at AT TIME ZONE $2)::date AS d,
             MAX(sl.load_done_kg) AS max_load
        FROM workout_set_logs sl
        JOIN workout_sessions ws ON ws.id = sl.session_id
       WHERE ws.user_id = $1 AND sl.load_done_kg IS NOT NULL AND sl.exercise_id IS NOT NULL
-      GROUP BY sl.exercise_id, ws.started_at::date
+      GROUP BY sl.exercise_id, (ws.performed_at AT TIME ZONE $2)::date
       ORDER BY sl.exercise_id, d`,
-    [userId],
+    [userId, APP_TIMEZONE],
   );
 
   const byExercise = new Map<string, { exerciseId: string; name: string; points: { date: string; maxLoadKg: number }[] }>();

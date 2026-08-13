@@ -29,6 +29,7 @@ import studentTeamRoutes from './routes/studentTeam';
 import professionalNetworkRoutes from './routes/professionalNetwork';
 import sportRoutes from './routes/sport';
 import trainingRoutes from './routes/training';
+import performanceRoutes from './modules/performance/performance.routes';
 import waitlistRoutes from './routes/waitlist';
 import { tenantResolverMiddleware } from './middleware/tenantResolver';
 import { sanitize5xxResponses } from './middleware/sanitize5xx';
@@ -423,6 +424,9 @@ app.use('/api/student', studentTeamRoutes);
 app.use('/api/professional', professionalNetworkRoutes);
 app.use('/api/sport', sportRoutes);
 app.use('/api/training', trainingRoutes);
+// Interpretação da execução (Spec 033). Prefixo próprio: /training é a camada
+// de execução, /performance é o que ela significa.
+app.use('/api/performance', performanceRoutes);
 // Público (pré-auth) — captura de interesse B2C; sem tenant, sem auth.
 app.use('/api/waitlist', waitlistRoutes);
 

@@ -13,3 +13,6 @@ yarn-error.log*
 *.swp
 *.swo
 .env.production
+
+# Sondas de verificação em banco local (não versionadas — ver testes de integração)
+.probe/

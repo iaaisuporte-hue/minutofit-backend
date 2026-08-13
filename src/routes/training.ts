@@ -12,7 +12,14 @@ import { DEFAULT_POLICY } from '../modules/training/adaptive/types';
 import pool from '../config/database';
 import logger from '../lib/logger';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
-import { createSession, listSessions, getSession, getWorkoutStats } from '../services/workoutSessionService';
+import {
+  createSession,
+  listSessions,
+  listSessionsPage,
+  decodeSessionCursor,
+  getSession,
+  getWorkoutStats,
+} from '../services/workoutSessionService';
 import { dayKey } from '../utils/appDay';
 import { registerNumericParams } from '../middleware/numericParam';
 import { parseLimit } from '../utils/parseId';
@@ -273,13 +280,33 @@ router.post('/sessions', requirePhysicalActivityClearance(), retroOnly(retroFeat
 });
 
 // GET /api/training/sessions — histórico do aluno
+//
+// Dois formatos de resposta, por compatibilidade (Spec 033, P1):
+//
+//   sem `cursor`  → `data: [...]` (array cru), exatamente como sempre foi
+//   com `cursor`  → `data: { sessions: [...], nextCursor }`
+//
+// Manter o array quando o parâmetro não vem é o que permite trocar a paginação
+// sem coordenar deploy com o app: o cliente antigo continua funcionando, o novo
+// pede `cursor=first` e recebe o envelope. `cursor=first` (em vez de omitir)
+// é o opt-in explícito da primeira página do modo keyset.
 router.get('/sessions', async (req: Request, res: Response) => {
   try {
     // `?limit=' OR '1'='1` virava NaN e chegava ao LIMIT $n → 500
     // (QA 02/ago/2026, P2-7). Entrada inválida agora cai no default.
     const limit = parseLimit(req.query.limit, 50);
-    const rows = await listSessions(req.user!.id, limit);
-    return res.json({ success: true, data: rows });
+    const rawCursor = req.query.cursor;
+
+    if (rawCursor === undefined) {
+      const rows = await listSessions(req.user!.id, limit);
+      return res.json({ success: true, data: rows });
+    }
+
+    // Cursor ilegível cai na primeira página em vez de 500: histórico é leitura,
+    // e um link velho ou truncado deve mostrar o começo, não quebrar a aba.
+    const before = rawCursor === 'first' ? null : decodeSessionCursor(rawCursor);
+    const page = await listSessionsPage(req.user!.id, limit, before);
+    return res.json({ success: true, data: page });
   } catch (err: any) {
     logger.error({ err }, '[training] GET /sessions error');
     return res.status(500).json({ success: false, error: 'Failed to list sessions' });

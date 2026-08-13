@@ -5,6 +5,7 @@ import logger from '../lib/logger';
 import { CURRENT_TERMS_VERSION } from '../config/legal';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../utils/jwt';
 import { assertStrongPassword } from '../utils/passwordPolicy';
+import { assertAdultBirthDate } from '../utils/birthDate';
 import { ensureProfessionalCode } from '../utils/professionalCode';
 import { getUserProducts } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
@@ -208,6 +209,8 @@ export async function registerUser(
     acceptedTerms: boolean;
     /** IP de origem do aceite (evidência LGPD). */
     acceptedTermsIp?: string;
+    /** 'YYYY-MM-DD'. Obrigatória: o cadastro é 18+ (ver utils/birthDate.ts). */
+    birthDate: string;
   }
 ): Promise<{ user: User; accessToken: string; refreshToken: string }> {
   const email = data.email.toLowerCase().trim();
@@ -233,6 +236,9 @@ export async function registerUser(
     err.code = 'TERMS_NOT_ACCEPTED';
     throw err;
   }
+
+  // 18+ verificado no servidor — o campo no formulário é conveniência, não regra.
+  const birthDate = assertAdultBirthDate(data.birthDate);
 
   if (data.healthFlags) {
     validateHealthFlags(data.healthFlags);
@@ -295,9 +301,10 @@ export async function registerUser(
     `UPDATE users
         SET accepted_terms_at = NOW(),
             terms_version = $2,
-            accepted_terms_ip = $3
+            accepted_terms_ip = $3,
+            birth_date = $4::date
       WHERE id = $1`,
-    [identity.user.id, CURRENT_TERMS_VERSION, data.acceptedTermsIp ?? null]
+    [identity.user.id, CURRENT_TERMS_VERSION, data.acceptedTermsIp ?? null, birthDate]
   );
 
   const refreshed = await pool.query(
@@ -354,6 +361,8 @@ export async function registerPersonalUser(
     acceptedTerms: boolean;
     /** IP de origem do aceite (evidência LGPD). */
     acceptedTermsIp?: string;
+    /** 'YYYY-MM-DD'. Obrigatória: o cadastro é 18+ (ver utils/birthDate.ts). */
+    birthDate: string;
   }
 ): Promise<{ user: User; accessToken: string; refreshToken: string }> {
   const email = data.email.toLowerCase().trim();
@@ -376,6 +385,9 @@ export async function registerPersonalUser(
     err.code = 'TERMS_NOT_ACCEPTED';
     throw err;
   }
+
+  // 18+ verificado no servidor — o campo no formulário é conveniência, não regra.
+  const birthDate = assertAdultBirthDate(data.birthDate);
 
   // Mesma regra do signup de aluno: dedup só por email, sem merge por CPF/telefone.
   let identity;
@@ -412,6 +424,7 @@ export async function registerPersonalUser(
             accepted_terms_at = NOW(),
             terms_version     = $3,
             accepted_terms_ip = $4,
+            birth_date        = $5::date,
             updated_at        = NOW()
       WHERE id = $1`,
     [
@@ -419,6 +432,7 @@ export async function registerPersonalUser(
       data.registryCode ? String(data.registryCode).trim() : '',
       CURRENT_TERMS_VERSION,
       data.acceptedTermsIp ?? null,
+      birthDate,
     ]
   );
 

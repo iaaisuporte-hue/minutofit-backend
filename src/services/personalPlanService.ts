@@ -2,7 +2,7 @@ import pool from '../config/database';
 import axios from 'axios';
 import logger from '../lib/logger';
 import { describeHttpError } from '../lib/httpError';
-import { getPreapprovalStatus } from './mercadoPagoService';
+import { cancelPreapproval, getPreapprovalStatus } from './mercadoPagoService';
 
 const MP_API = 'https://api.mercadopago.com';
 const MP_TOKEN = () => process.env.MERCADOPAGO_ACCESS_TOKEN || process.env.MERCADO_PAGO_ACCESS_TOKEN || '';
@@ -59,8 +59,17 @@ export async function getPersonalPlan(personalId: number): Promise<PersonalPlanC
   const status = row.status as PersonalPlanStatus;
 
   // Gating só honra o plano pago quando a assinatura está ativa (ou em trial).
-  // Checkout 'pending' (ainda não pagou) ou 'cancelled'/'expired' = trata como Free.
-  if (status !== 'active' && status !== 'trial') {
+  // Checkout 'pending' (ainda não pagou) e 'expired' = trata como Free.
+  //
+  // 'cancelled' é o caso especial (Spec 032): significa "não renova", não "acabou
+  // agora". Quem paga no dia 1º e cancela no dia 5 pagou o mês inteiro — cortar
+  // na hora seria vender 30 dias e entregar 5. O acesso corre até
+  // `current_period_end`, e o bloco abaixo é quem efetivamente rebaixa.
+  if (status !== 'active' && status !== 'trial' && status !== 'cancelled') {
+    return FREE_DEFAULT;
+  }
+  // Cancelada sem data de fim (cancelamento antes do primeiro pagamento) → Free.
+  if (status === 'cancelled' && !row.current_period_end) {
     return FREE_DEFAULT;
   }
 
@@ -192,6 +201,96 @@ export async function createPlatformCheckout(
   }
 }
 
+/**
+ * Cancela a assinatura da plataforma a pedido do próprio personal (Spec 032).
+ *
+ * O site sempre prometeu "cancele pelo painel" e não havia rota — só dava para
+ * cancelar entrando no Mercado Pago. O Decreto 11.034/2022 exige que cancelar
+ * seja tão fácil quanto contratar, e a contratação é self-serve aqui dentro.
+ *
+ * ORDEM IMPORTA: o gateway primeiro, o banco depois. Marcar local antes de o MP
+ * confirmar deixaria o personal sem plano E com a recorrência viva — cobrado por
+ * algo que ele não tem mais.
+ *
+ * Não rebaixa para Free na hora: `status='cancelled'` significa "não renova" e o
+ * acesso corre até `current_period_end` (ver getPersonalPlan).
+ */
+export async function cancelPlatformSubscription(
+  personalId: number
+): Promise<PersonalPlanConfig> {
+  const r = await pool.query(
+    `SELECT plan, status, mp_preapproval_id, current_period_end
+       FROM personal_platform_subscriptions
+      WHERE personal_id = $1`,
+    [personalId]
+  );
+
+  if ((r.rowCount ?? 0) === 0 || r.rows[0].plan === 'free') {
+    const e = new Error('Você não tem uma assinatura paga para cancelar.');
+    (e as any).code = 'NO_ACTIVE_SUBSCRIPTION';
+    throw e;
+  }
+
+  const row = r.rows[0];
+  if (row.status === 'cancelled') {
+    const e = new Error('Esta assinatura já foi cancelada.');
+    (e as any).code = 'ALREADY_CANCELLED';
+    throw e;
+  }
+
+  if (row.mp_preapproval_id) {
+    if (!MP_TOKEN()) {
+      const e = new Error('Cancelamento indisponível no momento. Tente novamente em instantes.');
+      (e as any).code = 'PAYMENTS_UNAVAILABLE';
+      throw e;
+    }
+    try {
+      await cancelPreapproval(String(row.mp_preapproval_id));
+    } catch (err) {
+      logger.error(
+        { err: describeHttpError(err), personalId },
+        '[personalPlan] falha ao cancelar pre-approval no MP'
+      );
+      const e = new Error(
+        'Não conseguimos falar com o processador de pagamento. Nada foi alterado — tente de novo.'
+      );
+      (e as any).code = 'GATEWAY_ERROR';
+      throw e;
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE personal_platform_subscriptions
+          SET status = 'cancelled', updated_at = NOW()
+        WHERE personal_id = $1`,
+      [personalId]
+    );
+    // Auditoria: distingue o cancelamento pedido no painel do que chega por
+    // webhook. mp_event_id nulo — não é evento do gateway, é ação do usuário.
+    await client.query(
+      `INSERT INTO personal_platform_billing_events
+         (personal_id, mp_preapproval_id, mp_event_id, event_type, mp_status, payload)
+       VALUES ($1, $2, NULL, 'cancel_requested', 'cancelled', $3::jsonb)`,
+      [
+        personalId,
+        row.mp_preapproval_id ?? null,
+        JSON.stringify({ requestedBy: 'personal', personalId }),
+      ]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  return getPersonalPlan(personalId);
+}
+
 /** Mapeia o status cru do MP para a ação que aplicamos (e o tipo de evento). */
 function actionForMpStatus(mpStatus: string): 'activated' | 'cancelled' | 'ignored_paused' | 'ignored' {
   if (mpStatus === 'authorized') return 'activated';
@@ -256,12 +355,15 @@ export async function handlePlatformPreapprovalWebhook(
           [personalId, defaults.studentLimit, defaults.aiEnabled, periodEnd]
         );
       } else if (action === 'cancelled') {
+        // Spec 032 — não rebaixa na hora nem apaga `current_period_end`: marca
+        // "não renova" e deixa o acesso correr até o fim do período já pago.
+        // `getPersonalPlan` expira sozinho depois disso (com a tolerância de 3
+        // dias), então não é preciso cron para concluir o rebaixamento.
         await client.query(
           `UPDATE personal_platform_subscriptions SET
-             plan = 'free', status = 'cancelled', student_limit = $2,
-             ai_enabled = $3, current_period_end = NULL, updated_at = NOW()
+             status = 'cancelled', updated_at = NOW()
            WHERE personal_id = $1`,
-          [personalId, PLAN_DEFAULTS.free.studentLimit, PLAN_DEFAULTS.free.aiEnabled]
+          [personalId]
         );
       }
       // 'ignored' / 'ignored_paused': sem mudança de estado (só auditado).

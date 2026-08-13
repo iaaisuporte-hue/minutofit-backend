@@ -69,6 +69,7 @@ import {
   checkStudentLimitGate,
   getPersonalPlan,
   createPlatformCheckout,
+  cancelPlatformSubscription,
   type PersonalPlan,
 } from '../services/personalPlanService';
 import {
@@ -217,6 +218,34 @@ router.post('/plan/checkout', roleCheckMiddleware('personal'), async (req: Reque
       return res.status(503).json({ success: false, error: 'Pagamento indisponível no momento' });
     }
     return res.status(500).json({ success: false, error: error.message || 'Falha ao iniciar checkout' });
+  }
+});
+
+// Cancelamento self-serve (Spec 032). O site sempre prometeu "cancele pelo
+// painel" e não havia rota; o Decreto 11.034/2022 exige que cancelar seja tão
+// simples quanto contratar. O acesso segue até o fim do período já pago.
+router.post('/plan/cancel', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
+  try {
+    const config = await cancelPlatformSubscription(req.user!.id);
+    return res.json({
+      success: true,
+      data: { ...config, accessUntil: config.currentPeriodEnd },
+    });
+  } catch (error: any) {
+    const code = error?.code;
+    if (code === 'NO_ACTIVE_SUBSCRIPTION') {
+      return res.status(404).json({ success: false, code, error: error.message });
+    }
+    if (code === 'ALREADY_CANCELLED') {
+      return res.status(409).json({ success: false, code, error: error.message });
+    }
+    if (code === 'GATEWAY_ERROR') {
+      return res.status(502).json({ success: false, code, error: error.message });
+    }
+    if (code === 'PAYMENTS_UNAVAILABLE') {
+      return res.status(503).json({ success: false, code, error: error.message });
+    }
+    return res.status(500).json({ success: false, error: 'Falha ao cancelar assinatura' });
   }
 });
 

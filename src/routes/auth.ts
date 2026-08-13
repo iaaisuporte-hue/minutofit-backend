@@ -15,6 +15,7 @@ import { getUserProducts, getUserProductsWithMeta } from '../db/ensureProductsSc
 import { findOrCreateUserFromContext, verifyUserPassword } from '../services/userIdentityService';
 import { grantMembership } from '../services/membershipService';
 import { checkStudentLimitGate } from '../services/personalPlanService';
+import { assertAdultBirthDate } from '../utils/birthDate';
 import {
   grantConsents,
   DIRECT_INVITE_SCOPES_PERSONAL,
@@ -199,6 +200,7 @@ router.post('/register', registerRateLimit, async (req: Request, res: Response) 
       healthFlags,
       acceptedTerms,
       acceptedTermsIp: req.ip,
+      birthDate: req.body.birthDate,
     });
 
     res.status(201).json({
@@ -225,7 +227,11 @@ router.post('/register', registerRateLimit, async (req: Request, res: Response) 
     res.status(status).json({
       success: false,
       error: message,
-      ...(status === 409 && code ? { code } : {}),
+      // UNDERAGE/INVALID_BIRTH_DATE viajam no 400 para o formulário destacar o
+      // campo certo; os demais 400 seguem sem código, como antes.
+      ...((status === 409 && code) || code === 'UNDERAGE' || code === 'INVALID_BIRTH_DATE'
+        ? { code }
+        : {}),
     });
   }
 });
@@ -292,6 +298,7 @@ router.post('/register-personal', registerRateLimit, async (req: Request, res: R
       registryCode: registryCode || undefined,
       acceptedTerms,
       acceptedTermsIp: req.ip,
+      birthDate: req.body.birthDate,
     });
 
     res.status(201).json({
@@ -312,7 +319,11 @@ router.post('/register-personal', registerRateLimit, async (req: Request, res: R
     res.status(status).json({
       success: false,
       error: message,
-      ...(status === 409 && code ? { code } : {}),
+      // UNDERAGE/INVALID_BIRTH_DATE viajam no 400 para o formulário destacar o
+      // campo certo; os demais 400 seguem sem código, como antes.
+      ...((status === 409 && code) || code === 'UNDERAGE' || code === 'INVALID_BIRTH_DATE'
+        ? { code }
+        : {}),
     });
   }
 });
@@ -1158,6 +1169,13 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
       return res.status(400).json({ success: false, error: 'Senha obrigatória.' });
     }
 
+    // 18+ também aqui: este endpoint cria conta. Sem esta checagem, o convite
+    // seria um caminho lateral em volta do age gate do cadastro público — e a
+    // cláusula de idade mínima dos Termos deixaria de ser verdadeira.
+    // Validado ANTES de findOrCreateUserFromContext: recusar depois deixaria
+    // uma conta de menor de idade já criada.
+    const inviteBirthDate = assertAdultBirthDate(req.body.birthDate);
+
     // Find or create user — deduplicates by email / CPF / phone
     const { user: identityUser, isNew } = await findOrCreateUserFromContext({
       email: finalEmail,
@@ -1211,6 +1229,12 @@ router.post('/direct-invite/:token/accept', async (req: Request, res: Response) 
         [identityUser.id]
       );
     }
+
+    // COALESCE: não sobrescreve a data de quem já tinha conta.
+    await pool.query(
+      `UPDATE users SET birth_date = COALESCE(birth_date, $2::date) WHERE id = $1`,
+      [identityUser.id, inviteBirthDate]
+    );
 
     // Create personal-student assignment (academy_id = NULL → autonomous personal)
     await pool.query(
@@ -1316,6 +1340,9 @@ router.post('/direct-invite-nutri/:token/accept', async (req: Request, res: Resp
       return res.status(400).json({ success: false, error: 'Nome, e-mail e senha são obrigatórios.' });
     }
 
+    // 18+ — mesma regra do convite do personal (ver comentário lá).
+    const inviteBirthDate = assertAdultBirthDate(req.body.birthDate);
+
     const { user: identityUser, isNew } = await findOrCreateUserFromContext({
       email: finalEmail,
       name: finalName,
@@ -1363,6 +1390,11 @@ router.post('/direct-invite-nutri/:token/accept', async (req: Request, res: Resp
         [identityUser.id]
       );
     }
+
+    await pool.query(
+      `UPDATE users SET birth_date = COALESCE(birth_date, $2::date) WHERE id = $1`,
+      [identityUser.id, inviteBirthDate]
+    );
 
     // Create nutri-patient assignment
     await pool.query(

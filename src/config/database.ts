@@ -64,10 +64,87 @@ function resolvePgSsl(): false | { rejectUnauthorized: boolean } {
   return { rejectUnauthorized: strict };
 }
 
+/**
+ * Limites do pool — explícitos, não default.
+ *
+ * ## Por que isto existe
+ *
+ * Sem `connectionTimeoutMillis`, o `pg` espera por uma conexão
+ * INDEFINIDAMENTE. Saturação deixa de ser um erro (que aparece no log, vira
+ * 503 e é investigável) e vira um travamento silencioso: a requisição fica
+ * pendurada até o cliente desistir, e nenhuma métrica acusa a causa.
+ *
+ * ## De onde saem os números
+ *
+ * O `max` é dimensionado a partir do orçamento do Postgres, não de um chute:
+ *
+ * - `max_connections` do Postgres gerenciado: **100** (padrão do Render e do
+ *   compose local — confirmado em `SHOW max_connections`).
+ * - `superuser_reserved_connections`: **3** — indisponíveis para a aplicação.
+ * - Sobram ~97 para TODOS os consumidores, que hoje são: a(s) instância(s)
+ *   web, os dois cron jobs (`cron:daily` e `cron:six-hourly`, processos
+ *   próprios), migrations no boot de cada deploy (que roda em paralelo com a
+ *   instância antiga durante o rollover) e o acesso administrativo — psql,
+ *   backup, painel do provedor.
+ *
+ * Com `max = 20`, três instâncias web simultâneas mais um deploy em rollover
+ * chegam a ~80, deixando folga real para cron e administração. Subir para 40
+ * ou 50 pareceria "mais capacidade" e na prática entregaria o oposto: duas
+ * instâncias esgotariam o servidor, e o erro apareceria como `too many
+ * connections` — do lado do Postgres, afetando inclusive quem tenta
+ * investigar.
+ *
+ * `PG_POOL_MAX` permite ajustar sem deploy quando a topologia mudar (mais
+ * instâncias → menor por instância).
+ */
+const POOL_MAX = Number(process.env.PG_POOL_MAX) || 20;
+
+/**
+ * Tempo máximo esperando por uma conexão livre.
+ *
+ * 10s é maior que qualquer query saudável deste backend (as mais pesadas são
+ * agregações de dashboard, na casa de centenas de ms) e menor que o timeout
+ * típico de um cliente HTTP. Quem espera mais que isso não está lento: está
+ * numa fila que não vai andar, e falhar rápido devolve a conexão ao próximo em
+ * vez de acumular espera.
+ */
+const POOL_CONNECTION_TIMEOUT_MS = Number(process.env.PG_POOL_CONNECTION_TIMEOUT_MS) || 10_000;
+
+/**
+ * Quanto uma conexão ociosa fica aberta.
+ *
+ * 30s devolve capacidade ao servidor nos vales de tráfego sem causar
+ * reconexão constante no uso normal — e o backend dorme de madrugada, então
+ * segurar 20 conexões ociosas a noite inteira é desperdício puro.
+ */
+const POOL_IDLE_TIMEOUT_MS = Number(process.env.PG_POOL_IDLE_TIMEOUT_MS) || 30_000;
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: resolvePgSsl(),
+  max: POOL_MAX,
+  connectionTimeoutMillis: POOL_CONNECTION_TIMEOUT_MS,
+  idleTimeoutMillis: POOL_IDLE_TIMEOUT_MS,
 });
+
+logger.info(
+  {
+    max: POOL_MAX,
+    connectionTimeoutMs: POOL_CONNECTION_TIMEOUT_MS,
+    idleTimeoutMs: POOL_IDLE_TIMEOUT_MS,
+  },
+  '[db] pool configurado',
+);
+
+/** Números do pool para health check e diagnóstico de saturação. */
+export function poolStats() {
+  return {
+    max: POOL_MAX,
+    total: pool.totalCount,
+    idle: pool.idleCount,
+    waiting: pool.waitingCount,
+  };
+}
 
 pool.on('error', (err: any) => {
   logger.error({ err }, 'Unexpected error on idle client');

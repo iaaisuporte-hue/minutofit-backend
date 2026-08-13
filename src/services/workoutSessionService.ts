@@ -217,6 +217,25 @@ function sanitizeConfidence(v: unknown): string | null {
 
 export async function createSession(userId: number, academyId: number | null, input: CreateSessionInput) {
   const client = await pool.connect();
+  /** Resultado da transação, lido DEPOIS que a conexão volta ao pool. */
+  let fechado: {
+    shouldInvalidate: boolean;
+    resposta: {
+      id: number;
+      startedAt: Date;
+      performedAt: Date;
+      isRetroactive: boolean;
+      countedForStreak: boolean;
+      setCount: number;
+      streak: number | null;
+      xp: number | null;
+      duplicate: false;
+      prEvents: PrDetectionResult[];
+      celebrate: boolean;
+    };
+  } | null = null;
+  /** `performedAt` precisa sobreviver ao escopo do `try` para os hooks. */
+  let performedAtParaHooks: Date = new Date();
   try {
     // Retroativo (Spec 024): data real vs hoje, em dias de calendário. diffDays:
     // 0 = hoje (fluxo normal); 1..3 = retro; <0 = futuro; >3 = fora da janela.
@@ -230,6 +249,7 @@ export async function createSession(userId: number, academyId: number | null, in
     // ao meio-dia UTC pela rota, então toISOString() a devolve intacta.
     const now = new Date();
     const performedAt = input.performedAt ?? now;
+    performedAtParaHooks = performedAt;
     const performedKey = input.performedAt
       ? performedAt.toISOString().slice(0, 10)
       : dayKey(now);
@@ -672,65 +692,97 @@ export async function createSession(userId: number, academyId: number | null, in
 
     await client.query('COMMIT');
 
-    // Invalidações fora da transação (nunca dentro do COMMIT).
-    if (shouldInvalidate) invalidateAfterCheckin(userId);
-
-    // Metas só podem ser avaliadas AQUI, depois do COMMIT: elas leem
-    // `workout_set_logs` e `user_pr_events`, que só existem para outra conexão
-    // depois que esta transação fecha. Avaliar antes leria o estado anterior ao
-    // treino — o aluno bateria os 100 kg e a meta de 100 kg continuaria aberta
-    // até o treino seguinte.
-    //
-    // A avaliação tem transação própria e engole os próprios erros: o treino já
-    // está gravado, e nenhuma falha de leitura derivada pode desfazer isso. Se
-    // algo falhar, o próximo `GET /goals` reavalia.
-    const goalsAchieved = await evaluateGoalsAfterSession(userId, performedAt);
-
-    // Marcos, mesma forma e mesmas garantias (Spec 034, C1): transação própria,
-    // espaço de advisory lock próprio (3), erro engolido com log. Se falhar, a
-    // aba Marcos reavalia na próxima leitura — o treino nunca cai por causa da
-    // recompensa.
-    // O `.catch` é cinto E suspensório: o serviço já engole os próprios erros,
-    // mas quem tem a perder aqui é o TREINO — se um dia um caminho novo
-    // escapar da defesa interna, o aluno receberia 500 numa sessão que já está
-    // gravada e commitada. A garantia mora no chamador porque é dele o risco.
-    const milestonesUnlocked = await evaluateMilestones(userId).catch((err) => {
-      logger.warn({ err, userId }, '[training] avaliação de marcos falhou após a sessão');
-      return [] as MilestoneAward[];
-    });
-
-    // Desafios em curso (Spec 034, C2), mesma forma: transação própria, espaço
-    // de advisory lock próprio (4) e erro que não derruba o treino. Também há
-    // recuperação por leitura — abrir o desafio reavalia —, então perder esta
-    // passagem atrasa a conclusão, nunca a perde.
-    await evaluateChallengesAfterSession(userId).catch((err) => {
-      logger.warn({ err, userId }, '[training] avaliação de desafios falhou após a sessão');
-    });
-
-    return {
-      id: sessionId,
-      startedAt: header.rows[0].started_at,
-      performedAt: header.rows[0].performed_at,
-      isRetroactive,
-      countedForStreak,
-      setCount: rows.length,
-      streak,
-      xp,
-      duplicate: false,
-      prEvents,
-      // Recorde de sessão retroativa é real e fica gravado, mas não vira festa:
-      // celebrar um treino de três dias atrás como se fosse agora premia o
-      // registro tardio, não o esforço.
-      celebrate: !isRetroactive && prEvents.some((p) => !p.isFirst),
-      goalsAchieved,
-      milestonesUnlocked,
+    // A transação acabou aqui. O que vem depois é ACESSÓRIO e roda FORA deste
+    // bloco, com a conexão já devolvida ao pool — ver o comentário do
+    // `finally` logo abaixo.
+    fechado = {
+      shouldInvalidate,
+      resposta: {
+        id: sessionId,
+        startedAt: header.rows[0].started_at,
+        performedAt: header.rows[0].performed_at,
+        isRetroactive,
+        countedForStreak,
+        setCount: rows.length,
+        streak,
+        xp,
+        duplicate: false,
+        prEvents,
+        // Recorde de sessão retroativa é real e fica gravado, mas não vira
+        // festa: celebrar um treino de três dias atrás como se fosse agora
+        // premia o registro tardio, não o esforço.
+        celebrate: !isRetroactive && prEvents.some((p) => !p.isFirst),
+      },
     };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
   } finally {
+    // A conexão volta ao pool ANTES das avaliações acessórias.
+    //
+    // Antes elas rodavam dentro deste `try`, e o `release()` só acontecia
+    // depois delas: cada POST de treino segurava uma conexão E pedia outra
+    // (metas, marcos e desafios abrem transação própria). Com o pool no
+    // default, requisições simultâneas suficientes prendiam todas as conexões
+    // em transações JÁ COMMITADAS enquanto esperavam por mais uma — o
+    // auto-deadlock clássico de pool, que sem timeout vira travamento em vez
+    // de erro.
+    //
+    // Tirar os hooks daqui torna a garantia ESTRUTURAL: não existe caminho em
+    // que eles rodem com a conexão da transação na mão, porque eles estão
+    // fora do escopo dela.
     client.release();
   }
+
+  // Guarda impossível na prática: ou o `try` retornou cedo (replay), ou
+  // atribuiu `fechado`, ou lançou. Existe para o TypeScript e para o dia em
+  // que alguém adicionar um caminho novo lá dentro.
+  if (!fechado) throw new Error('createSession: transação encerrada sem resultado');
+
+  /* ---------------------------------------------------------------- *
+   * Pós-COMMIT — conexão já liberada, cada hook abre a sua
+   * ---------------------------------------------------------------- */
+
+  // Invalidações fora da transação (nunca dentro do COMMIT).
+  if (fechado.shouldInvalidate) invalidateAfterCheckin(userId);
+
+  // Metas só podem ser avaliadas AQUI, depois do COMMIT: elas leem
+  // `workout_set_logs` e `user_pr_events`, que só existem para outra conexão
+  // depois que esta transação fecha. Avaliar antes leria o estado anterior ao
+  // treino — o aluno bateria os 100 kg e a meta de 100 kg continuaria aberta
+  // até o treino seguinte.
+  //
+  // Os três `.catch` abaixo são a mesma lei: o treino JÁ ESTÁ COMMITADO, e
+  // nenhuma falha de trabalho derivado pode virar 500 numa sessão gravada.
+  // Cada serviço já engole os próprios erros; o catch aqui cobre o que
+  // escapar — inclusive a falha de OBTER CONEXÃO, que é o modo de falha que
+  // este hardening endereça. Todos têm recuperação por leitura.
+  const goalsAchieved = await evaluateGoalsAfterSession(userId, performedAtParaHooks).catch(
+    (err) => {
+      logger.warn(
+        { err, userId, hook: 'goals' },
+        '[training] avaliação pós-COMMIT falhou — treino preservado',
+      );
+      return [] as GoalAchievement[];
+    },
+  );
+
+  const milestonesUnlocked = await evaluateMilestones(userId).catch((err) => {
+    logger.warn(
+      { err, userId, hook: 'milestones' },
+      '[training] avaliação pós-COMMIT falhou — treino preservado',
+    );
+    return [] as MilestoneAward[];
+  });
+
+  await evaluateChallengesAfterSession(userId).catch((err) => {
+    logger.warn(
+      { err, userId, hook: 'challenges' },
+      '[training] avaliação pós-COMMIT falhou — treino preservado',
+    );
+  });
+
+  return { ...fechado.resposta, goalsAchieved, milestonesUnlocked };
 }
 
 export async function listSessions(userId: number, limit = 50) {

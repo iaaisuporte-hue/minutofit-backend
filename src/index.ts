@@ -34,7 +34,7 @@ import communityRoutes from './modules/community/community.routes';
 import waitlistRoutes from './routes/waitlist';
 import { tenantResolverMiddleware } from './middleware/tenantResolver';
 import { sanitize5xxResponses } from './middleware/sanitize5xx';
-import pool from './config/database';
+import pool, { poolStats } from './config/database';
 import { runBootChain } from './db/bootChain';
 
 // --- DB schema boot chain (fully sequential, deterministic order) ---
@@ -273,6 +273,13 @@ app.get('/api/health', async (_req, res) => {
     healthy = false;
   }
 
+  // Saturação do pool. Informativo, nunca fatal: fila cheia é um momento, não
+  // um serviço fora do ar. Mas sem este número, "o app está lento" e "o app
+  // está sem conexão" são indistinguíveis de fora — e a segunda hipótese é a
+  // que tem conserto imediato (subir `PG_POOL_MAX` ou reduzir instâncias).
+  const pStats = poolStats();
+  checks.db_pool = pStats.waiting > 0 ? 'unset' : 'ok';
+
   // Critical secrets
   checks.jwt_secret = process.env.JWT_SECRET ? 'ok' : 'fail';
   checks.jwt_refresh_secret = process.env.JWT_REFRESH_SECRET ? 'ok' : 'fail';
@@ -340,6 +347,9 @@ app.get('/api/health', async (_req, res) => {
     meta: {
       sha: process.env.BUILD_SHA ?? process.env.GIT_SHA ?? 'unknown',
       migration: lastMigration,
+      // Números crus do pool: é o que transforma "está lento" em um
+      // diagnóstico. `waiting > 0` de forma sustentada = saturação.
+      pool: pStats,
     },
     timestamp: new Date().toISOString(),
   });

@@ -305,9 +305,106 @@ antigos **nunca** são recomputados: são fotografias do que se sabia naquele di
 
 ---
 
+## v1 — Onda P4 (ago/2026)
+
+Metas não introduzem métrica nova: cada tipo LÊ uma medida que já existia. É
+proposital — se a meta medisse por conta própria, o produto teria dois números
+com o mesmo nome, que é exatamente o defeito encontrado entre "aderência" e
+"consistência" num QA anterior.
+
+### De onde vem cada medição
+
+| tipo | o que mede | fonte |
+|---|---|---|
+| `exercise_load` | maior carga em uma série | `user_pr_events` (`max_load`) |
+| `exercise_e1rm` | melhor 1RM estimado | `user_pr_events` (`best_e1rm`) |
+| `exercise_reps_at_load` | mais repetições em séries com carga ≥ alvo | `workout_set_logs` |
+| `weekly_frequency` | dias ativos na semana ISO corrente | UNION das 3 fontes |
+| `monthly_frequency` | dias ativos no mês de calendário | UNION das 3 fontes |
+| `streak` | sequência corrente | `user_gamification_stats` |
+
+A UNION é a mesma da aba Consistência (`user_workout_logs` ∪ `workout_sessions`
+∪ `personal_session_logs`): um dia registrado só pelo personal conta para a meta
+tanto quanto conta no calendário.
+
+**Volume e Progress Score não viraram tipos de meta** — não estão previstos na
+Spec 033. Volume ainda por cima não é comparável entre exercícios, e uma meta de
+score seria uma meta sobre um número que já é resumo de outros.
+
+### Baseline
+
+Medido pelo servidor **na criação**, com a MESMA função que medirá o progresso
+depois. Dois caminhos diferentes para o mesmo número fariam a meta nascer com
+progresso não-zero por diferença de método.
+
+Nunca é digitado pelo aluno. Quando não há medição (exercício nunca treinado), o
+baseline é `NULL` — não zero. `NULL` significa "não sabemos ainda"; zero seria a
+afirmação de que ele levanta zero.
+
+### Progresso
+
+```
+observado = monotônica ? max(best_value, medição atual) : medição atual
+de        = baseline ?? 0
+progresso = clamp((observado − de) ÷ (alvo − de), 0, 1)
+```
+
+Medir a partir do baseline, e não de zero: quem sai de 90 kg rumo a 100 já teria
+90% de barra na fórmula ingênua, antes de levantar nada de novo.
+
+Bordas, todas com teste: `alvo = baseline` e `alvo < baseline` devolvem resposta
+binária em vez de dividir por zero; ausência de medição devolve `null`, nunca 0;
+`NaN` e `Infinity` na entrada saem como `null`. **Nenhum desses valores chega à
+API.**
+
+### Monotônicas × cíclicas
+
+| tipo | referência | por quê |
+|---|---|---|
+| `exercise_load`, `exercise_e1rm`, `exercise_reps_at_load`, `streak` | `best_value` | quem levantou 95 kg não "desaprendeu" ao treinar leve na semana seguinte |
+| `weekly_frequency`, `monthly_frequency` | valor do período | a semana ZERA na segunda; guardar o melhor mostraria 4/4 para sempre |
+
+A **conclusão** é monotônica nos dois casos: cumprir a semana de 4 treinos é um
+fato, e a semana seguinte não o desfaz.
+
+### Meta de dois alvos
+
+`exercise_reps_at_load` ("30 kg × 12 reps") é o único tipo com dois números. A
+**carga é filtro**, as **repetições são o eixo** do progresso. Por isso 35 kg × 8
+não cumpre a meta, ainda que o e1RM seja superior: a meta pedia repetições
+naquela carga.
+
+### Ciclo de vida
+
+`active` → `achieved` | `abandoned` | `expired`. Estado final é final: meta
+concluída não volta a ativa porque a performance caiu depois, e meta abandonada
+não ressuscita sozinha.
+
+- **Conclusão** é avaliada **depois do COMMIT** da sessão — antes disso as
+  séries e os recordes que ela lê ainda não existem para outra conexão.
+- **Idempotência**: `UPDATE ... WHERE status = 'active'`. Reprocessar encontra a
+  meta já concluída, não atualiza linha e não repete evento.
+- **Concorrência**: `pg_advisory_xact_lock(2, user_id)` serializa a avaliação do
+  mesmo aluno; duas sessões simultâneas produzem uma conclusão só.
+- **Expiração** é lazy, na leitura, com `due_on < hoje` — a meta que vence hoje
+  vale o dia inteiro. Sem cron.
+
+### Meta que já nasceria cumprida
+
+Recusada (`422 GOAL_ALREADY_MET`). Uma meta criada abaixo do melhor atual é um
+troféu retroativo que ninguém perseguiu.
+
+### Versionamento
+
+`metric_version` é gravado em cada meta (hoje `1`). Uma mudança futura de fórmula
+não pode reinterpretar em silêncio uma meta antiga.
+
+---
+
 ## Changelog
 
 | versão | data | mudança |
 |---|---|---|
 | 1 | ago/2026 | Versão inicial (Spec 033, Onda P1): tonelagem, carga interna sRPE, duração, e1RM Epley, recordes e consistência de frequência. |
 | 1 | ago/2026 | Onda P3 (Spec 033): ritmo de carga (faixa qualitativa) e Progress Score. Nenhuma fórmula da P1 mudou — versão mantida em 1, sem recomputo. |
+| 1 | ago/2026 | Onda P4 (Spec 033): metas. Nenhuma métrica nova — cada tipo lê medida existente. Versão mantida em 1, sem recomputo. |

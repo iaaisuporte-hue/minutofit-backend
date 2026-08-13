@@ -154,6 +154,20 @@ export async function createSetLog(
   );
 }
 
+/**
+ * Reaplica a migration de metas (1825) sobre o banco de teste.
+ *
+ * Necessário porque a suíte da P1 exercita `down` + `up` da migration 1823, que
+ * DERRUBA e recria `user_performance_goals` no desenho original — sem as colunas
+ * que a P4 acrescentou. A tabela de migrations continua dizendo que a 1825 foi
+ * aplicada, então nada a reaplica sozinho, e a suíte seguinte encontraria a
+ * tabela pela metade. Reaplicar é seguro: a 1825 é idempotente por construção.
+ */
+export async function runGoalsMigration(c: Client): Promise<void> {
+  const migration = loadCjs('../../../migrations/1825000000000_performance-goals.js');
+  await migration.up({ db: { query: (sql: string, params?: unknown[]) => c.query(sql, params) } });
+}
+
 /** Reexecuta o backfill da migration 1823 sobre o banco de teste. */
 export async function runBackfill(c: Client): Promise<void> {
   const migration = loadCjs('../../../migrations/1823000000000_performance-foundation.js');

@@ -24,6 +24,7 @@ import {
   type ScoreFactor,
 } from './progress.engine';
 import { LOAD_BAND_LABEL, computeLoadReading } from './trainingLoad.engine';
+import { countGoalsAchievedSince } from './goals.repository';
 import { computeConsistencyPct, resolveConsistencyTarget } from './consistency.engine';
 import {
   countActiveDays,
@@ -144,9 +145,12 @@ async function resolveScoreAndLoad(
   userId: number,
   consistencyPct: number | null,
 ): Promise<{ score: ProgressScoreBlock | null; load: TrainingLoadBlock | null }> {
-  const [agg, keyExercises] = await Promise.all([
+  const [agg, keyExercises, goalsAchieved] = await Promise.all([
     loadScoreAggregates(userId, SCORE_WINDOW_DAYS),
     loadKeyExerciseProgression(userId, SCORE_WINDOW_DAYS),
+    // Onda P4. A janela é a MESMA do score (28 dias): uma meta concluída há
+    // dois meses não pode continuar somando pontos hoje.
+    countGoalsAchievedSince(userId, SCORE_WINDOW_DAYS),
   ]);
 
   const inputs = {
@@ -158,8 +162,7 @@ async function resolveScoreAndLoad(
     tonnageCurrent: agg.tonnageCurrent,
     tonnagePrevious: agg.tonnagePrevious,
     prCount: agg.prCount,
-    // Metas chegam na Onda P4; até lá o fator soma 0 e não aparece.
-    goalsAchieved: 0,
+    goalsAchieved,
   };
 
   const result = computeProgressScore(inputs);
@@ -273,7 +276,7 @@ export async function getTrainingCalendar(
  * spec): a tela Free renderiza o convite sem tratar erro, e o cliente antigo
  * não quebra. O BACKEND é a autoridade — a lista vem vazia, não escondida.
  */
-async function hasPerformanceFeature(userId: number): Promise<boolean> {
+export async function hasPerformanceFeature(userId: number): Promise<boolean> {
   const { features } = await getFeatureMapForUser(userId);
   return features[PERFORMANCE_FEATURE_KEY] === true;
 }

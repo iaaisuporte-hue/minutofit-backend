@@ -2,6 +2,10 @@ import pool from '../config/database';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { applyGamificationCheckinTx, invalidateAfterCheckin, type MuscleGroup } from './gamificationService';
+import {
+  evaluateGoalsAfterSession,
+  type GoalAchievement,
+} from '../modules/performance/goals.service';
 import { dayKey, APP_TIMEZONE } from '../utils/appDay';
 import logger from '../lib/logger';
 import { computeSessionMetrics, resolveDurationMin } from '../modules/performance/sessionMetrics.engine';
@@ -317,6 +321,11 @@ export async function createSession(userId: number, academyId: number | null, in
           // Replay não descobre recorde: a sessão original já detectou o dela.
           prEvents: [] as PrDetectionResult[],
           celebrate: false,
+          // Nem meta: a avaliação da sessão original já concluiu o que havia
+          // para concluir, e `markGoalAchieved` só afeta meta `active`. Repetir
+          // aqui não mudaria o banco — só produziria uma segunda celebração na
+          // tela para uma conquista que já foi comemorada.
+          goalsAchieved: [] as GoalAchievement[],
         };
       }
     }
@@ -662,6 +671,17 @@ export async function createSession(userId: number, academyId: number | null, in
     // Invalidações fora da transação (nunca dentro do COMMIT).
     if (shouldInvalidate) invalidateAfterCheckin(userId);
 
+    // Metas só podem ser avaliadas AQUI, depois do COMMIT: elas leem
+    // `workout_set_logs` e `user_pr_events`, que só existem para outra conexão
+    // depois que esta transação fecha. Avaliar antes leria o estado anterior ao
+    // treino — o aluno bateria os 100 kg e a meta de 100 kg continuaria aberta
+    // até o treino seguinte.
+    //
+    // A avaliação tem transação própria e engole os próprios erros: o treino já
+    // está gravado, e nenhuma falha de leitura derivada pode desfazer isso. Se
+    // algo falhar, o próximo `GET /goals` reavalia.
+    const goalsAchieved = await evaluateGoalsAfterSession(userId, performedAt);
+
     return {
       id: sessionId,
       startedAt: header.rows[0].started_at,
@@ -677,6 +697,7 @@ export async function createSession(userId: number, academyId: number | null, in
       // celebrar um treino de três dias atrás como se fosse agora premia o
       // registro tardio, não o esforço.
       celebrate: !isRetroactive && prEvents.some((p) => !p.isFirst),
+      goalsAchieved,
     };
   } catch (err) {
     await client.query('ROLLBACK');

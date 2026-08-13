@@ -71,6 +71,11 @@ export type DataAccessEventType =
   | 'performance.score_viewed'
   | 'performance.score_component_opened'
   | 'performance.score_history_viewed'
+  // Onda P4 — adoção das metas.
+  | 'performance.goal_created'
+  | 'performance.goal_viewed'
+  | 'performance.goal_completed'
+  | 'performance.goal_cancelled'
   | 'identity.user_created'
   | 'identity.user_reused';
 

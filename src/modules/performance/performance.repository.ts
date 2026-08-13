@@ -120,6 +120,83 @@ export async function countActiveDays(userId: number, windowDays: number): Promi
 }
 
 /**
+ * Dias ativos DENTRO de um período fechado (Onda P4).
+ *
+ * Gêmea de `countActiveDays`, com a mesma UNION das três fontes — o que muda é
+ * a fronteira: aqui o período tem início E fim, porque metas de frequência
+ * medem semana ou mês de calendário, não "os últimos N dias". Uma meta de "4
+ * treinos por semana" avaliada por janela deslizante nunca zeraria na segunda,
+ * e o aluno veria a semana passada empurrando a atual.
+ *
+ * Reaproveitar a UNION não é economia de linhas: é a garantia de que a meta e a
+ * aba Consistência concordam sobre o que é um dia treinado. Duas definições
+ * criariam um produto onde a meta diz 3 e o calendário mostra 4.
+ */
+export async function countActiveDaysBetween(
+  userId: number,
+  fromDay: string,
+  toDay: string,
+): Promise<number> {
+  const rawSince = `${fromDay}T00:00:00Z`;
+
+  const { rows } = await pool.query<{ n: number }>(
+    `SELECT COUNT(DISTINCT d)::int AS n FROM (
+       SELECT ${SOURCE_DAY_EXPR.workoutLog} AS d
+         FROM user_workout_logs uwl
+        WHERE uwl.user_id = $1
+          AND uwl.completed_at >= ($3::timestamptz AT TIME ZONE 'UTC') - INTERVAL '2 days'
+          AND ${SOURCE_DAY_EXPR.workoutLog} BETWEEN $4::date AND $5::date
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.session}
+         FROM workout_sessions ws
+        WHERE ws.user_id = $1
+          AND ws.status IN ('completed', 'partial')
+          AND ws.performed_at >= $3::timestamptz - INTERVAL '2 days'
+          AND ${SOURCE_DAY_EXPR.session} BETWEEN $4::date AND $5::date
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.personalLog}
+         FROM personal_session_logs psl
+        WHERE psl.student_id = $1
+          AND psl.status IN ('present', 'partial')
+          AND psl.session_at >= $3::timestamptz - INTERVAL '2 days'
+          AND ${SOURCE_DAY_EXPR.personalLog} BETWEEN $4::date AND $5::date
+     ) t`,
+    [userId, APP_TIMEZONE, rawSince, fromDay, toDay],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Melhor série já feita no exercício, com carga mínima exigida.
+ *
+ * Serve a meta "30 kg × 12 reps", que é o único tipo com dois alvos: a query
+ * filtra as séries que bateram a CARGA e devolve o maior número de repetições
+ * entre elas. É por isso que 35 kg × 8 não cumpre a meta — 8 nunca chega a 12,
+ * por mais que o e1RM seja superior. A meta pedia repetições naquela carga, e
+ * essa é literalmente a pergunta que a query faz.
+ */
+export async function loadBestRepsAtLoad(
+  userId: number,
+  exerciseId: string,
+  minLoadKg: number,
+): Promise<number | null> {
+  const { rows } = await pool.query<{ best: number | null }>(
+    `SELECT MAX(sl.reps_done)::int AS best
+       FROM workout_set_logs sl
+       JOIN workout_sessions ws ON ws.id = sl.session_id
+      WHERE ws.user_id = $1
+        AND ws.status IN ('completed', 'partial')
+        AND sl.exercise_id = $2::uuid
+        AND sl.status = 'done'
+        AND sl.reps_done IS NOT NULL
+        AND sl.load_done_kg IS NOT NULL
+        AND sl.load_done_kg >= $3::numeric`,
+    [userId, exerciseId, minLoadKg],
+  );
+  return rows[0]?.best ?? null;
+}
+
+/**
  * Prescrição vigente do aluno: o preset semanal da ficha ATIVA, e há quantos
  * dias o aluno está sob prescrição de forma geral.
  *

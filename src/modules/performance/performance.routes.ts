@@ -1,8 +1,8 @@
 /**
  * Rotas do módulo Performance (Spec 033, Onda P1).
  *
- * Escopo desta onda: overview (consistência) e calendário. Progressão, recordes,
- * metas e insight do personal são P2–P5 e não têm rota aqui ainda.
+ * Escopo até aqui: overview, calendário, progressão, recordes, score e metas.
+ * O insight do personal é P5 e não tem rota aqui ainda.
  *
  * Isolamento: todo dado é do titular. O `userId` sai SEMPRE do JWT
  * (`req.user!.id`) e nunca de params ou body — não há superfície de IDOR porque
@@ -21,6 +21,14 @@ import {
   getTrainingCalendar,
 } from './performance.service';
 import { PR_KINDS, type PrKind } from './pr.engine';
+import { GOAL_KINDS, type GoalKind } from './goals.engine';
+import {
+  GoalError,
+  abandonGoalForUser,
+  createGoal,
+  getGoalDetail,
+  getGoalsForUser,
+} from './goals.service';
 
 const router = Router();
 router.use(authMiddleware, requireProduct('app'));
@@ -130,6 +138,99 @@ router.get('/score/history', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, '[performance] GET /score/history error');
     return res.status(500).json({ success: false, error: 'Failed to load score history' });
+  }
+});
+
+/**
+ * Erro de meta → resposta HTTP.
+ *
+ * Cada `GoalError` carrega o próprio status e um código estável; o cliente
+ * decide o que dizer a partir do código, não da frase. Qualquer outra exceção
+ * vira 500 sem detalhe — mensagem crua de Postgres na tela do aluno já foi
+ * achado de QA neste repo.
+ */
+function sendGoalError(res: Response, err: unknown, where: string) {
+  if (err instanceof GoalError) {
+    return res.status(err.status).json({ success: false, error: err.message, code: err.code });
+  }
+  logger.error({ err }, `[performance] ${where} error`);
+  return res.status(500).json({ success: false, error: 'Failed to process goal' });
+}
+
+/** O id vem da URL como texto e só é aceito se for inteiro positivo. */
+function parseGoalId(raw: unknown): string | null {
+  return typeof raw === 'string' && /^[1-9]\d{0,18}$/.test(raw) ? raw : null;
+}
+
+// GET /api/performance/goals — metas do aluno. Premium; Free recebe `gated`.
+router.get('/goals', async (req: Request, res: Response) => {
+  try {
+    const data = await getGoalsForUser(req.user!.id);
+    return res.json({ success: true, data });
+  } catch (err) {
+    return sendGoalError(res, err, 'GET /goals');
+  }
+});
+
+// GET /api/performance/goals/:id — detalhe. 404 quando não é do requisitante.
+router.get('/goals/:id', async (req: Request, res: Response) => {
+  const id = parseGoalId(req.params.id);
+  if (!id) return res.status(404).json({ success: false, error: 'Meta não encontrada.' });
+  try {
+    const data = await getGoalDetail(req.user!.id, id);
+    return res.json({ success: true, data });
+  } catch (err) {
+    return sendGoalError(res, err, 'GET /goals/:id');
+  }
+});
+
+/**
+ * POST /api/performance/goals
+ *
+ * Body: `{ kind, exerciseId?, targetValue, targetReps?, dueOn? }`. Nada mais é
+ * lido — em especial, o cliente NÃO envia baseline, unidade nem status: os três
+ * são derivados no servidor, e aceitá-los do cliente permitiria uma meta que
+ * nasce a 90% de progresso.
+ */
+router.post('/goals', async (req: Request, res: Response) => {
+  const kind = req.body?.kind;
+  if (typeof kind !== 'string' || !GOAL_KINDS.includes(kind as GoalKind)) {
+    return res.status(400).json({ success: false, error: 'Tipo de meta inválido.', code: 'INVALID_KIND' });
+  }
+  try {
+    const data = await createGoal(req.user!.id, {
+      kind: kind as GoalKind,
+      exerciseId: typeof req.body?.exerciseId === 'string' ? req.body.exerciseId : null,
+      targetValue: Number(req.body?.targetValue),
+      targetReps: req.body?.targetReps == null ? null : Number(req.body.targetReps),
+      dueOn: typeof req.body?.dueOn === 'string' && req.body.dueOn ? req.body.dueOn : null,
+    });
+    return res.status(201).json({ success: true, data });
+  } catch (err) {
+    return sendGoalError(res, err, 'POST /goals');
+  }
+});
+
+/**
+ * PATCH /api/performance/goals/:id — só `active → abandoned`.
+ *
+ * Abandonar preserva a linha (`status = 'abandoned'`), não apaga: a meta que o
+ * aluno desistiu faz parte da história dele, e some da lista ativa sem sumir do
+ * histórico. Não existe rota de exclusão física, de propósito.
+ */
+router.patch('/goals/:id', async (req: Request, res: Response) => {
+  const id = parseGoalId(req.params.id);
+  if (!id) return res.status(404).json({ success: false, error: 'Meta não encontrada.' });
+  if (req.body?.status !== 'abandoned') {
+    return res
+      .status(400)
+      .json({ success: false, error: 'Só é possível abandonar uma meta.', code: 'INVALID_TRANSITION' });
+  }
+  try {
+    const data = await abandonGoalForUser(req.user!.id, id);
+    return res.json({ success: true, data });
+  } catch (err) {
+    return sendGoalError(res, err, 'PATCH /goals/:id');
   }
 });
 

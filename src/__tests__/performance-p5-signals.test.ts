@@ -6,6 +6,9 @@
  * dispara. Testar só a presença provaria que o código roda, não que a regra
  * está certa — e a regra é o produto aqui.
  */
+import fs from 'fs';
+import path from 'path';
+
 import {
   SIGNAL_RULES,
   buildSignals,
@@ -288,8 +291,6 @@ describe('linguagem', () => {
  * exatamente no dia em que alguém apaga a linha.
  */
 describe('rotas da P5 exigem consent, e não só vínculo', () => {
-  const fs = require('fs') as typeof import('fs');
-  const path = require('path') as typeof import('path');
   const source = fs.readFileSync(path.join(__dirname, '../routes/personal.ts'), 'utf8');
 
   /** Janela do fonte a partir da declaração da rota. */

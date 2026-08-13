@@ -145,6 +145,26 @@ describeWithDb('Exclusão de conta · a cascata limpa tudo', () => {
       [studentId, personalId, planId],
     );
 
+    // Spec 034 (C0/C1): ledger de XP e marcos também são dado do titular.
+    await c.query(
+      `INSERT INTO user_gamification_stats (user_id, xp, current_streak)
+       VALUES ($1, 40, 2) ON CONFLICT (user_id) DO NOTHING`,
+      [studentId],
+    );
+    await c.query(
+      // A chave vai como parâmetro próprio: reusar `$1` como int e como texto
+      // na mesma query faz o Postgres recusar por tipo inconsistente — a mesma
+      // armadilha que quebrou `transitionStatus` no QA do Personal.
+      `INSERT INTO xp_events (user_id, kind, amount, event_key, awarded_on)
+       VALUES ($1, 'workout_session', 30, $2, CURRENT_DATE)`,
+      [studentId, `delete-test-session:${studentId}`],
+    );
+    await c.query(
+      `INSERT INTO user_milestones (user_id, code, unlocked_at, evidence_json)
+       VALUES ($1, 'first_workout', NOW(), jsonb_build_object('sessionId', $2::int))`,
+      [studentId, sessionId],
+    );
+
     return { personalId, studentId, planId, sessionId };
   }
 
@@ -175,12 +195,29 @@ describeWithDb('Exclusão de conta · a cascata limpa tudo', () => {
       consents: await contar(`SELECT COUNT(*)::int n FROM user_data_consents WHERE user_id=$1`, [studentId]),
       vinculos: await contar(`SELECT COUNT(*)::int n FROM personal_student_assignments WHERE student_id=$1`, [studentId]),
       adaptacoes: await contar(`SELECT COUNT(*)::int n FROM workout_adaptation_log WHERE student_id=$1`, [studentId]),
+      xp: await contar(`SELECT COUNT(*)::int n FROM xp_events WHERE user_id=$1`, [studentId]),
+      marcos: await contar(`SELECT COUNT(*)::int n FROM user_milestones WHERE user_id=$1`, [studentId]),
     };
 
     expect(sobras).toEqual({
       ficha: 0, dias: 0, sessoes: 0, series: 0, metricas: 0, recordes: 0,
       metas: 0, checkins: 0, consents: 0, vinculos: 0, adaptacoes: 0,
+      xp: 0, marcos: 0,
     });
+  });
+
+  it('o export LGPD entrega o extrato de XP e os marcos do titular', async () => {
+    // A lição de 02/ago/2026: obrigação legal que ninguém exerce em teste é
+    // obrigação que quebra em produção. Toda tabela nova do titular entra aqui.
+    const { exportUserData } = await import('../services/accountDeletionService');
+    const { studentId } = await montarAlunoCompleto();
+
+    const dump = (await exportUserData(studentId)) as {
+      community?: { xpEvents?: unknown[]; milestones?: unknown[] };
+    };
+
+    expect(dump.community?.xpEvents?.length).toBeGreaterThan(0);
+    expect(dump.community?.milestones?.length).toBeGreaterThan(0);
   });
 
   it('nenhuma ficha fica com student_id NULL — era o defeito encontrado', async () => {

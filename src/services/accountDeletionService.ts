@@ -147,7 +147,7 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
     `SELECT id, name, email, role, phone, fitness_goal, experience_level, height_cm, weight_kg, created_at
        FROM users WHERE id = $1`, [userId]);
 
-  const [workoutSessions, dailyCheckins, metabolicCheckins, nutritionPlans, adherence, mealCheckins, consents, messages, photos, sport, sessionMetrics, prEvents, perfGoals, perfSnapshots] =
+  const [workoutSessions, dailyCheckins, metabolicCheckins, nutritionPlans, adherence, mealCheckins, consents, messages, photos, sport, sessionMetrics, prEvents, perfGoals, perfSnapshots, xpEvents, milestones] =
     await Promise.all([
       section('workout_sessions', `SELECT * FROM workout_sessions WHERE user_id = $1 ORDER BY id`, [userId]),
       section('daily_checkins', `SELECT * FROM user_daily_checkins WHERE user_id = $1 ORDER BY id`, [userId]),
@@ -165,6 +165,10 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
       section('performance_pr_events', `SELECT * FROM user_pr_events WHERE user_id = $1 ORDER BY achieved_at`, [userId]),
       section('performance_goals', `SELECT * FROM user_performance_goals WHERE user_id = $1 ORDER BY id`, [userId]),
       section('performance_snapshots', `SELECT * FROM user_performance_snapshots WHERE user_id = $1 ORDER BY snapshot_date`, [userId]),
+      // Spec 034. O extrato de XP e os marcos seguem a mesma regra: o aluno
+      // pediu a própria cópia, e "derivado" não deixa de ser dele.
+      section('xp_events', `SELECT * FROM xp_events WHERE user_id = $1 ORDER BY id`, [userId]),
+      section('milestones', `SELECT * FROM user_milestones WHERE user_id = $1 ORDER BY unlocked_at`, [userId]),
     ]);
 
   // URLs de leitura assinadas curtas para as fotos (não expor storage_key cru).
@@ -196,6 +200,10 @@ export async function exportUserData(userId: number): Promise<Record<string, unk
       prEvents,
       goals: perfGoals,
       snapshots: perfSnapshots,
+    },
+    community: {
+      xpEvents,
+      milestones,
     },
   };
 }

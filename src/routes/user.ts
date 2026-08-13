@@ -66,6 +66,7 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'personal.performance_insight_opened',
   'personal.performance_ai_summary_requested',
   'personal.performance_ai_summary_shown',
+  'community.milestone_share_changed',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

@@ -40,3 +40,39 @@ export function dayKeyDiff(fromKey: string, toKey: string): number {
   };
   return Math.round((ms(toKey) - ms(fromKey)) / 86_400_000);
 }
+
+/**
+ * Um dia de calendário (`YYYY-MM-DD`) vira um INSTANTE ao meio-dia do fuso do
+ * aluno.
+ *
+ * Existe porque `'2026-08-13'::timestamptz` no Postgres é meia-noite **UTC** —
+ * que em São Paulo é 21h do dia 12. Um marco conquistado hoje apareceria
+ * carimbado ontem, num registro que o produto vende como auditável, e a
+ * ordenação por data misturaria o marco de hoje com a sessão de ontem à noite.
+ *
+ * O meio-dia é escolha deliberada: qualquer erro de uma hora (horário de verão,
+ * mudança de regra de fuso) continua caindo no mesmo dia de calendário. Meia-
+ * noite não teria essa folga.
+ */
+export function dayKeyToInstant(day: string, timeZone: string = APP_TIMEZONE): Date {
+  const utcNoon = Date.parse(`${day}T12:00:00Z`);
+  if (Number.isNaN(utcNoon)) return new Date(NaN);
+
+  // O deslocamento sai do Intl, nunca do fuso do PROCESSO: em produção o
+  // servidor roda em UTC e a máquina do desenvolvedor não, e uma conta que
+  // dependesse disso daria resultados diferentes nos dois lugares — o tipo de
+  // defeito que só aparece depois do deploy.
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date(utcNoon));
+
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  const asIfUtc = Date.UTC(
+    get('year'), get('month') - 1, get('day'),
+    get('hour') % 24, get('minute'), get('second'),
+  );
+  return new Date(utcNoon + (utcNoon - asIfUtc));
+}

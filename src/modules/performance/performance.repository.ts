@@ -167,6 +167,123 @@ export async function countActiveDaysBetween(
 }
 
 /**
+ * Os DIAS em si, não a contagem (Spec 034, C1).
+ *
+ * Os marcos precisam da forma da presença — onde estão os buracos, quais
+ * semanas fecharam, quando começou a pausa —, e isso não cabe num inteiro. A
+ * UNION é a mesma de `countActiveDays`: reusar a expressão é o que garante que
+ * um marco de "semana completa" e a aba Consistência nunca discordem sobre o
+ * que é um dia treinado.
+ */
+export async function listActiveDays(
+  userId: number,
+  fromDay: string,
+  toDay: string,
+): Promise<string[]> {
+  const rawSince = `${fromDay}T00:00:00Z`;
+
+  const { rows } = await pool.query<{ d: string }>(
+    // `to_char` em vez de confiar no driver: o `pg` desserializa DATE como
+    // objeto Date, e formatá-lo no JS reintroduz fuso numa string que é, por
+    // definição, um dia de calendário sem hora.
+    `SELECT to_char(d, 'YYYY-MM-DD') AS d FROM (SELECT DISTINCT d FROM (
+       SELECT ${SOURCE_DAY_EXPR.workoutLog} AS d
+         FROM user_workout_logs uwl
+        WHERE uwl.user_id = $1
+          AND uwl.completed_at >= ($3::timestamptz AT TIME ZONE 'UTC') - INTERVAL '2 days'
+          AND ${SOURCE_DAY_EXPR.workoutLog} BETWEEN $4::date AND $5::date
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.session}
+         FROM workout_sessions ws
+        WHERE ws.user_id = $1
+          AND ws.status IN ('completed', 'partial')
+          AND ws.performed_at >= $3::timestamptz - INTERVAL '2 days'
+          AND ${SOURCE_DAY_EXPR.session} BETWEEN $4::date AND $5::date
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.personalLog}
+         FROM personal_session_logs psl
+        WHERE psl.student_id = $1
+          AND psl.status IN ('present', 'partial')
+          AND psl.session_at >= $3::timestamptz - INTERVAL '2 days'
+          AND ${SOURCE_DAY_EXPR.personalLog} BETWEEN $4::date AND $5::date
+     ) t) u
+     ORDER BY d`,
+    [userId, APP_TIMEZONE, rawSince, fromDay, toDay],
+  );
+  return rows.map((r) => r.d);
+}
+
+/**
+ * Último dia treinado ANTES de uma data (Spec 034, C1).
+ *
+ * Existe por causa do marco de retomada: uma pausa de 21 dias pode ter começado
+ * fora da janela de avaliação, e sem esta âncora o primeiro treino da janela
+ * pareceria não ter passado nenhum. Sem limite inferior de propósito — a
+ * pergunta é "quando foi a última vez". O teto de um ano existe para a query
+ * não varrer o histórico inteiro nas três tabelas a cada leitura: uma pausa
+ * maior que isso é indistinguível de uma pausa de um ano para o marco.
+ */
+export async function findLastActiveDayBefore(
+  userId: number,
+  day: string,
+  lookbackDays = 365,
+): Promise<string | null> {
+  const { rows } = await pool.query<{ d: string | null }>(
+    `SELECT to_char(MAX(d), 'YYYY-MM-DD') AS d FROM (
+       SELECT ${SOURCE_DAY_EXPR.workoutLog} AS d
+         FROM user_workout_logs uwl
+        WHERE uwl.user_id = $1
+          AND ${SOURCE_DAY_EXPR.workoutLog} < $3::date
+          AND ${SOURCE_DAY_EXPR.workoutLog} >= $3::date - $4::int
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.session}
+         FROM workout_sessions ws
+        WHERE ws.user_id = $1
+          AND ws.status IN ('completed', 'partial')
+          AND ${SOURCE_DAY_EXPR.session} < $3::date
+          AND ${SOURCE_DAY_EXPR.session} >= $3::date - $4::int
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.personalLog}
+         FROM personal_session_logs psl
+        WHERE psl.student_id = $1
+          AND psl.status IN ('present', 'partial')
+          AND ${SOURCE_DAY_EXPR.personalLog} < $3::date
+          AND ${SOURCE_DAY_EXPR.personalLog} >= $3::date - $4::int
+     ) t`,
+    [userId, APP_TIMEZONE, day, lookbackDays],
+  );
+  return rows[0]?.d ?? null;
+}
+
+/**
+ * PRIMEIRO dia com treino, de todos os tempos (Spec 034, C1).
+ *
+ * Usa a mesma UNION das três fontes. Sem isto, o marco de primeiro treino
+ * olharia só `workout_sessions` enquanto os marcos de semana olham a união — e
+ * o aluno acompanhado presencialmente (Spec 009, a cunha de entrada do produto)
+ * ganharia "primeira semana completa" continuando sem "primeiro treino". A
+ * conquista avançada apareceria antes da inicial.
+ */
+export async function findFirstActiveDay(userId: number): Promise<string | null> {
+  const { rows } = await pool.query<{ d: string | null }>(
+    `SELECT to_char(MIN(d), 'YYYY-MM-DD') AS d FROM (
+       SELECT ${SOURCE_DAY_EXPR.workoutLog} AS d
+         FROM user_workout_logs uwl WHERE uwl.user_id = $1
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.session}
+         FROM workout_sessions ws
+        WHERE ws.user_id = $1 AND ws.status IN ('completed', 'partial')
+       UNION
+       SELECT ${SOURCE_DAY_EXPR.personalLog}
+         FROM personal_session_logs psl
+        WHERE psl.student_id = $1 AND psl.status IN ('present', 'partial')
+     ) t`,
+    [userId, APP_TIMEZONE],
+  );
+  return rows[0]?.d ?? null;
+}
+
+/**
  * Melhor série já feita no exercício, com carga mínima exigida.
  *
  * Serve a meta "30 kg × 12 reps", que é o único tipo com dois alvos: a query
@@ -218,7 +335,7 @@ export async function loadBestRepsAtLoad(
  */
 export async function loadActivePlanTarget(
   userId: number,
-): Promise<{ weekPreset: string | null; daysSinceStarted: number | null }> {
+): Promise<{ weekPreset: string | null; daysSinceStarted: number | null; activeSince: string | null }> {
   const { rows } = await pool.query(
     `SELECT
        (SELECT week_preset
@@ -226,14 +343,24 @@ export async function loadActivePlanTarget(
          WHERE student_id = $1 AND abandoned_at IS NULL
          ORDER BY created_at DESC
          LIMIT 1) AS week_preset,
+       -- Desde quando a ficha ATIVA vale (Spec 034, C1). Sem isso, o alvo de
+       -- hoje seria aplicado a meses de passado: trocar a ficha de 5x para 3x
+       -- concederia marcos retroativos sob um alvo que nunca vigorou naquelas
+       -- semanas — evidência internamente coerente e factualmente errada.
+       (SELECT to_char((created_at AT TIME ZONE $2)::date, 'YYYY-MM-DD')
+          FROM personal_workout_plans
+         WHERE student_id = $1 AND abandoned_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1) AS active_since,
        (SELECT (EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 86400)::int
           FROM personal_workout_plans
          WHERE student_id = $1) AS days_since`,
-    [userId],
+    [userId, APP_TIMEZONE],
   );
   return {
     weekPreset: rows[0]?.week_preset ?? null,
     daysSinceStarted: rows[0]?.days_since ?? null,
+    activeSince: rows[0]?.active_since ?? null,
   };
 }
 

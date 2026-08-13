@@ -43,6 +43,15 @@ interface XpRule {
   amount: number;
   /** Máximo de créditos deste tipo por dia do aluno. `null` = sem teto por tipo. */
   perDay: number | null;
+  /**
+   * Evento único na vida (marco, desafio): ou paga inteiro, ou não paga.
+   *
+   * Sem isto, um marco que desbloqueia num dia com 5 de folga receberia 5 dos
+   * 10 XP e gravaria a chave — e como a chave é única, ele ficaria pago pela
+   * metade para sempre. Recusar hoje deixa a repescagem do dia seguinte
+   * funcionar, que é o que a documentação do módulo promete.
+   */
+  allOrNothing?: boolean;
 }
 
 /**
@@ -62,8 +71,8 @@ export const XP_RULES: Readonly<Record<XpKind, XpRule>> = Object.freeze({
   activity: Object.freeze({ amount: 20, perDay: 1 }),
   weekly_goal: Object.freeze({ amount: 20, perDay: 1 }),
   pr: Object.freeze({ amount: 15, perDay: 2 }),
-  challenge_completed: Object.freeze({ amount: 50, perDay: null }),
-  milestone: Object.freeze({ amount: 10, perDay: null }),
+  challenge_completed: Object.freeze({ amount: 50, perDay: null, allOrNothing: true }),
+  milestone: Object.freeze({ amount: 10, perDay: null, allOrNothing: true }),
 });
 
 /**
@@ -79,6 +88,7 @@ export function resolveAwardAmount(
   if (rule.perDay != null && kindCountToday >= rule.perDay) return 0;
   const remaining = XP_DAILY_CAP - totalAwardedToday;
   if (remaining <= 0) return 0;
+  if (rule.allOrNothing) return remaining >= rule.amount ? rule.amount : 0;
   return Math.min(rule.amount, remaining);
 }
 

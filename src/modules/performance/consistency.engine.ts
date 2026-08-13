@@ -65,3 +65,23 @@ export function computeConsistencyPct(activeDays: number, target: number | null)
   const pct = Math.round((activeDays / target) * 100);
   return Math.min(100, Math.max(0, pct));
 }
+
+/**
+ * Fração da frequência prevista que caracteriza "semana dentro do plano".
+ *
+ * Mora AQUI, e não no módulo de marcos, porque é a régua semanal do produto:
+ * qualquer superfície que precise dizer "essa semana valeu" tem que usar a
+ * mesma. Duas réguas produziriam a aba Consistência e o marco discordando sobre
+ * a mesma semana — o defeito recorrente deste repositório.
+ */
+export const WEEK_WITHIN_PLAN_RATIO = 0.8;
+
+/**
+ * Dias de treino que fazem a semana contar como cumprida.
+ *
+ * Fração real, sem arredondar para baixo: com 3 previstos, 2 dias são 67% e não
+ * chegam a 80%. Arredondar afrouxaria a regra em silêncio.
+ */
+export function weekWithinPlanThreshold(weeklyTarget: number): number {
+  return weeklyTarget * WEEK_WITHIN_PLAN_RATIO;
+}

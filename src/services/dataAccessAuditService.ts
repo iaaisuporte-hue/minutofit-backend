@@ -79,6 +79,10 @@ export type DataAccessEventType =
   | 'performance.goal_viewed'
   | 'performance.goal_completed'
   | 'performance.goal_cancelled'
+  // Spec 034 C1. Só a mudança de compartilhamento entra: é a única ação de UX
+  // que o aluno executa sobre um marco. O desbloqueio é servidor e já vira log
+  // — a allow-list não recebe evento que ninguém emite.
+  | 'community.milestone_share_changed'
   // Onda P5 — adoção da visão do personal.
   | 'personal.performance_opened'
   | 'personal.performance_insight_opened'

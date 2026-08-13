@@ -69,7 +69,22 @@ describe('resolveAwardAmount — a aritmética do teto', () => {
 
   it('tipos sem teto próprio ainda respeitam o teto do dia', () => {
     expect(resolveAwardAmount('challenge_completed', 5, 0)).toBe(50);
-    expect(resolveAwardAmount('challenge_completed', 5, 55)).toBe(5);
+  });
+
+  it('evento único na vida paga inteiro ou não paga — nunca pela metade', () => {
+    // Marco e desafio são pagos uma vez só, e a chave no ledger é única: pagar
+    // 5 dos 10 gravaria a chave e deixaria o marco pago pela metade PARA
+    // SEMPRE, porque a repescagem nunca mais o encontraria. Recusar hoje deixa
+    // o dia seguinte pagar o valor cheio.
+    expect(resolveAwardAmount('milestone', 0, 55)).toBe(0);
+    expect(resolveAwardAmount('milestone', 0, 50)).toBe(10);
+    expect(resolveAwardAmount('challenge_completed', 0, 55)).toBe(0);
+  });
+
+  it('eventos recorrentes seguem cortando o excedente', () => {
+    // A regra de tudo-ou-nada vale só para o que acontece uma vez: um recorde
+    // parcial não trava nada, porque outros recordes virão.
+    expect(resolveAwardAmount('pr', 0, 50)).toBe(10);
   });
 });
 

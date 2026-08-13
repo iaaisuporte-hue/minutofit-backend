@@ -2,6 +2,7 @@ import pool from '../config/database';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
 import { applyGamificationCheckinTx, invalidateAfterCheckin, type MuscleGroup } from './gamificationService';
+import { evaluateMilestones, type MilestoneAward } from '../modules/community/milestones.service';
 import {
   evaluateGoalsAfterSession,
   type GoalAchievement,
@@ -325,6 +326,9 @@ export async function createSession(userId: number, academyId: number | null, in
           // aqui não mudaria o banco — só produziria uma segunda celebração na
           // tela para uma conquista que já foi comemorada.
           goalsAchieved: [] as GoalAchievement[],
+          // Idem marcos: o replay não conquista nada novo, e o UNIQUE já
+          // recusaria a segunda linha — devolver vazio evita a segunda festa.
+          milestonesUnlocked: [] as MilestoneAward[],
         };
       }
     }
@@ -681,6 +685,19 @@ export async function createSession(userId: number, academyId: number | null, in
     // algo falhar, o próximo `GET /goals` reavalia.
     const goalsAchieved = await evaluateGoalsAfterSession(userId, performedAt);
 
+    // Marcos, mesma forma e mesmas garantias (Spec 034, C1): transação própria,
+    // espaço de advisory lock próprio (3), erro engolido com log. Se falhar, a
+    // aba Marcos reavalia na próxima leitura — o treino nunca cai por causa da
+    // recompensa.
+    // O `.catch` é cinto E suspensório: o serviço já engole os próprios erros,
+    // mas quem tem a perder aqui é o TREINO — se um dia um caminho novo
+    // escapar da defesa interna, o aluno receberia 500 numa sessão que já está
+    // gravada e commitada. A garantia mora no chamador porque é dele o risco.
+    const milestonesUnlocked = await evaluateMilestones(userId).catch((err) => {
+      logger.warn({ err, userId }, '[training] avaliação de marcos falhou após a sessão');
+      return [] as MilestoneAward[];
+    });
+
     return {
       id: sessionId,
       startedAt: header.rows[0].started_at,
@@ -697,6 +714,7 @@ export async function createSession(userId: number, academyId: number | null, in
       // registro tardio, não o esforço.
       celebrate: !isRetroactive && prEvents.some((p) => !p.isFirst),
       goalsAchieved,
+      milestonesUnlocked,
     };
   } catch (err) {
     await client.query('ROLLBACK');

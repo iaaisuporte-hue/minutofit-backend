@@ -101,8 +101,6 @@ router.post(
         }
       }
 
-      const xp = Number(req.body.xp || 0);
-
       if (source === 'workout' && !req.body.workout) {
         return res.status(400).json({ success: false, error: 'Workout payload required' });
       }
@@ -147,7 +145,9 @@ router.post(
         userId: req.user!.id,
         academyId: req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null,
         source,
-        xp: source === 'wellbeing' ? 0 : xp,
+        // `xp` do corpo é IGNORADO desde a Onda C0 (Spec 034): o valor sai do
+        // ledger no servidor. Clientes antigos ainda mandam o campo — não é
+        // erro, é só dado que ninguém lê.
         workout: req.body.workout,
         activity: req.body.activity,
         signals,

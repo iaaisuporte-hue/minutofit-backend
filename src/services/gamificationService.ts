@@ -1,5 +1,6 @@
 import type { PoolClient } from 'pg';
 import pool from '../config/database';
+import { awardXpTx } from './xpLedgerService';
 import { invalidateMetabolismSnapshot } from '../modules/metabolism/metabolic.service';
 import { invalidatePersonalDashboardForStudent } from './personalDashboardService';
 import { invalidateTodayScoreSnapshot } from '../modules/performance/performance.repository';
@@ -39,7 +40,15 @@ export type RecordCheckinInput = {
   userId: number;
   academyId?: number | null;
   source: CheckinSource;
-  xp: number;
+  /**
+   * Id da sessão rica, quando o check-in nasce de POST /training/sessions.
+   * Vira a chave de idempotência do XP (`session:{id}`); sem ele, o dia inteiro
+   * é a chave (`workout-day:{userId}:{dia}`).
+   *
+   * O campo `xp` foi REMOVIDO na Onda C0 (Spec 034): valor de XP não viaja mais
+   * em requisição nenhuma — quem decide é `xpLedgerService`, no servidor.
+   */
+  sessionId?: number | null;
   /**
    * Dia do check-in (YYYY-MM-DD). Default = hoje. Registro retroativo (Spec 024)
    * passa a data real do treino para creditar streak/XP no dia correto.
@@ -153,7 +162,6 @@ export async function applyGamificationCheckinTx(
 ): Promise<{ hadRow: boolean; academyId: number | null }> {
   const academyId = input.academyId ?? null;
   const dateKey = input.dateKey ?? todayDateKey();
-  const xpEarned = Math.max(0, Number(input.xp || 0));
 
   {
     await client.query(
@@ -212,7 +220,27 @@ export async function applyGamificationCheckinTx(
     const sourceForRow: CheckinSource =
       input.source === 'wellbeing' ? 'wellbeing' : input.source;
 
-    const xpForThisEvent = input.source === 'wellbeing' ? 0 : xpEarned;
+    // O valor sai do LEDGER, nunca do input (Spec 034, C0). A chave natural do
+    // fato torna o crédito idempotente, e o ledger aplica cap por tipo e por
+    // dia. Wellbeing segue valendo 0 — é sinal de estado, não conquista.
+    let xpForThisEvent = 0;
+    if (input.source === 'workout') {
+      xpForThisEvent = await awardXpTx(client, {
+        userId: input.userId,
+        kind: 'workout_session',
+        eventKey: input.sessionId != null
+          ? `session:${input.sessionId}`
+          : `workout-day:${input.userId}:${dateKey}`,
+        dateKey,
+      });
+    } else if (input.source === 'activity') {
+      xpForThisEvent = await awardXpTx(client, {
+        userId: input.userId,
+        kind: 'activity',
+        eventKey: `activity-day:${input.userId}:${dateKey}`,
+        dateKey,
+      });
+    }
 
     await client.query(
       `INSERT INTO user_daily_checkins (

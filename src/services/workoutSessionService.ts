@@ -42,7 +42,6 @@ export interface PrDetectionResult {
 const VALID_MUSCLE_GROUPS = new Set<MuscleGroup>([
   'chest', 'back', 'legs', 'shoulders', 'arms', 'core', 'full_body', 'cardio', 'mobility',
 ]);
-const WORKOUT_SESSION_XP = 30;
 
 function sanitizeMuscleGroups(input: unknown): MuscleGroup[] {
   if (!Array.isArray(input)) return ['full_body'];
@@ -631,7 +630,7 @@ export async function createSession(userId: number, academyId: number | null, in
           userId,
           academyId,
           source: 'workout',
-          xp: WORKOUT_SESSION_XP,
+          sessionId,
           dateKey: isRetroactive ? performedKey : undefined,
           completedAt: isRetroactive ? performedAt : undefined,
           workout: {

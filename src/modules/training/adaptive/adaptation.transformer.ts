@@ -102,6 +102,50 @@ export function assertSafeAdaptation(
   }
 }
 
+
+/**
+ * Quanto cada estado mexe no treino (Spec 033, Onda P6).
+ *
+ * Estes números estavam escritos direto dentro do laço — `isRed ? 2 : 1`,
+ * `isRed ? 1.30 : 1.15`, `origRpe - 1` — e ninguém conseguia responder "de
+ * quanto é a redução no amarelo?" sem ler o transformer inteiro. Pior: não
+ * havia teste nenhum sobre eles, então mudar um por engano não quebrava nada.
+ *
+ * Nomeá-los aqui não muda comportamento: os valores são exatamente os que
+ * estavam inline. O que muda é que agora existe UM lugar para discutir a
+ * política de adaptação, e testes que travam cada número.
+ *
+ * ## Por que a adaptação é assimétrica
+ *
+ * Todo fator só REDUZ exigência (menos séries, menos reps, menos RPE) ou
+ * AUMENTA recuperação (mais descanso). Não existe multiplicador que suba
+ * carga: adaptar para cima seria prescrever, e quem prescreve é o profissional
+ * com registro. O guard `assertSafeAdaptation` transforma isso em invariante
+ * verificada, não em promessa.
+ */
+export const ADAPTATION_RULES_V1 = Object.freeze({
+  /** Séries retiradas do prescrito. O piso da política ainda se aplica por cima. */
+  SETS_REDUCTION: Object.freeze({ yellow: 1, red: 2 }),
+  /** Fator sobre o descanso prescrito. Teto vem de `maxRestIncreasePct`. */
+  REST_FACTOR: Object.freeze({ yellow: 1.15, red: 1.3 }),
+  /**
+   * RPE: no amarelo desce um ponto; no vermelho vai direto ao piso da política.
+   * Um ponto é o menor passo que o aluno percebe — meio ponto seria falsa
+   * precisão numa escala que ele responde de cabeça.
+   */
+  RPE_STEP_YELLOW: 1,
+});
+
+/**
+ * Versão da política de adaptação.
+ *
+ * Separada de `FORMULA_VERSION` (Progress Score) e de `GOAL_METRIC_VERSION`:
+ * são conceitos independentes, e amarrá-los faria a mudança de um obrigar a
+ * reinterpretar o histórico do outro. O log de adaptação já carrega a
+ * `policy_version` do personal; esta é a versão das REGRAS do motor.
+ */
+export const ADAPTATION_VERSION = 1;
+
 // ── Core transformer ───────────────────────────────────────────────────────
 
 export function adaptWorkoutDay(
@@ -136,7 +180,7 @@ export function adaptWorkoutDay(
       const origSets = parseLeadingInt(orig.sets);
       if (origSets !== null) {
         const floor = Math.max(1, Math.ceil(origSets * (1 - policy.maxSetReductionPct / 100)));
-        const reduction = isRed ? 2 : 1;
+        const reduction = isRed ? ADAPTATION_RULES_V1.SETS_REDUCTION.red : ADAPTATION_RULES_V1.SETS_REDUCTION.yellow;
         const raw = origSets - reduction;
         const newSets = Math.max(floor, raw);
         if (newSets < origSets) {
@@ -159,7 +203,7 @@ export function adaptWorkoutDay(
     if (policy.allowRestIncrease) {
       const origRest = parseSeconds(orig.rest);
       if (origRest !== null) {
-        const factor = isRed ? 1.30 : 1.15;
+        const factor = isRed ? ADAPTATION_RULES_V1.REST_FACTOR.red : ADAPTATION_RULES_V1.REST_FACTOR.yellow;
         const cap = Math.round(origRest * (1 + policy.maxRestIncreasePct / 100));
         const newRest = Math.min(cap, Math.round(origRest * factor));
         if (newRest > origRest) {
@@ -175,7 +219,7 @@ export function adaptWorkoutDay(
       const origRpe = parseRpe(orig.rpe);
       if (origRpe !== null) {
         const floor = Math.round(origRpe * policy.minIntensityPct / 100);
-        const newRpe = isRed ? floor : Math.max(floor, origRpe - 1);
+        const newRpe = isRed ? floor : Math.max(floor, origRpe - ADAPTATION_RULES_V1.RPE_STEP_YELLOW);
         if (newRpe < origRpe) {
           a.rpe = String(newRpe);
           changes.push({ exerciseId: orig.exerciseId, field: 'rpe', original: orig.rpe, adapted: a.rpe, reason: reasonSuffix });

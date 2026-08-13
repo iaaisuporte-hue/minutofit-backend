@@ -23,6 +23,11 @@ import {
 import { PR_KINDS, type PrKind } from './pr.engine';
 import { GOAL_KINDS, type GoalKind } from './goals.engine';
 import {
+  READINESS_STATE_BY_LEVEL,
+  READINESS_VERSION,
+} from '../readiness/readiness.engine';
+import { getReadinessLensToday } from '../readiness/readiness.service';
+import {
   GoalError,
   abandonGoalForUser,
   createGoal,
@@ -231,6 +236,69 @@ router.patch('/goals/:id', async (req: Request, res: Response) => {
     return res.json({ success: true, data });
   } catch (err) {
     return sendGoalError(res, err, 'PATCH /goals/:id');
+  }
+});
+
+/**
+ * GET /api/performance/readiness — como o aluno está para treinar HOJE.
+ *
+ * Prontidão não é o Progress Score, e a resposta deixa isso explícito no
+ * formato: aqui não existe número. O Progress Score responde "estou
+ * evoluindo?"; este endpoint responde "posso puxar forte hoje?" — e a segunda
+ * pergunta é qualitativa por decisão de produto registrada na spec, que barra
+ * um readiness 0-100 geral. Um número aqui daria ao aluno a impressão de
+ * medição fisiológica que este produto não faz.
+ *
+ * NÃO é gated: o Lens vale para todo aluno. Interpretar evolução é o que o
+ * Premium vende; saber se hoje dá para treinar não se cobra de ninguém.
+ *
+ * Sem check-in do dia a resposta é `insufficient_data` — e não um estado
+ * "verde" por omissão. Afirmar que alguém está pronto sem ter perguntado nada
+ * é a forma mais barata de perder a confiança de quem não estava.
+ */
+router.get('/readiness', async (req: Request, res: Response) => {
+  try {
+    const lens = await getReadinessLensToday(req.user!.id);
+    const generatedAt = new Date().toISOString();
+
+    if (!lens) {
+      return res.json({
+        success: true,
+        data: {
+          state: 'insufficient_data',
+          level: null,
+          factors: [],
+          headline: 'Ainda estamos construindo seu dia',
+          microcopy: 'Faça o check-in de hoje para o S2Core ler sua prontidão.',
+          confidence: 'low',
+          version: READINESS_VERSION,
+          generatedAt,
+        },
+      });
+    }
+
+    // Cobertura de dados, não probabilidade: diz o quanto do quadro está
+    // preenchido, e nunca "chance de X%". `info` são fatores informativos
+    // (nutrição boa, estado nominal) — presença deles não é sinal de risco.
+    const sinais = lens.factors.filter((f) => f.severity !== 'info').length;
+    const confidence = sinais >= 3 ? 'high' : sinais >= 1 ? 'medium' : 'low';
+
+    return res.json({
+      success: true,
+      data: {
+        state: READINESS_STATE_BY_LEVEL[lens.level],
+        level: lens.level,
+        factors: lens.factors,
+        headline: lens.headline,
+        microcopy: lens.microcopy,
+        confidence,
+        version: READINESS_VERSION,
+        generatedAt,
+      },
+    });
+  } catch (err) {
+    logger.error({ err }, '[performance] GET /readiness error');
+    return res.status(500).json({ success: false, error: 'Falha ao carregar sua prontidão.' });
   }
 });
 

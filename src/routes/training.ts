@@ -127,7 +127,13 @@ router.get('/today', async (req: Request, res: Response) => {
 });
 
 // Frontend UX events — allow-list only, actorId = subjectUserId = self
-const ALLOWED_FRONTEND_EVENTS = new Set<string>(['training.adaptation.viewed']);
+const ALLOWED_FRONTEND_EVENTS = new Set<string>([
+  'training.adaptation.viewed',
+  // Onda P6 — o aluno pode seguir o original. Medir as duas escolhas é o que
+  // permite saber se o ajuste ajuda ou atrapalha; só uma delas seria viés.
+  'training.adaptation.accepted',
+  'training.adaptation.declined',
+]);
 
 router.post('/events', async (req: Request, res: Response) => {
   const { eventType, payload = {} } = req.body ?? {};

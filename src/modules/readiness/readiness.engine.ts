@@ -1,5 +1,23 @@
 export type ReadinessLevel = 'green' | 'yellow' | 'red';
 
+/**
+ * Versão das regras do Lens (Onda P6).
+ *
+ * Separada de `FORMULA_VERSION` (Progress Score) e de `ADAPTATION_VERSION`:
+ * são três conceitos independentes, e amarrá-los faria a mudança de um obrigar
+ * a reinterpretar o histórico dos outros. Prontidão responde "como estou para
+ * treinar hoje"; o Progress Score responde "como estou evoluindo". Misturar as
+ * versões seria admitir que são a mesma coisa.
+ */
+export const READINESS_VERSION = 1;
+
+/** Estado em linguagem de produto. O nível técnico continua sendo o do Lens. */
+export type ReadinessState = 'ready' | 'moderate' | 'recover';
+
+export const READINESS_STATE_BY_LEVEL: Readonly<Record<ReadinessLevel, ReadinessState>> =
+  Object.freeze({ green: 'ready', yellow: 'moderate', red: 'recover' });
+
+
 export interface ReadinessFactor {
   id: string;
   label: string;

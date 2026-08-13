@@ -469,6 +469,99 @@ mudar a cada chamada, e o cache nunca acertaria.
 
 ---
 
+## v1 — Onda P6 (ago/2026)
+
+A P6 não criou motor: readiness, check-in e adaptação já existiam. Ela conectou,
+travou e versionou o que estava solto.
+
+### Readiness continua QUALITATIVO
+
+`green | yellow | red`, exibido como **Pronto / Moderado / Recuperação**. Não há
+score 0–100, e a ausência é decisão registrada: a Spec 033 coloca "readiness
+numérico geral" no anti-escopo, porque um número aqui sugeriria medição
+fisiológica que este produto não faz. O 0–100 do Fight Intelligence segue
+escopado a esporte, em motor separado.
+
+`READINESS_VERSION = 1`, independente de `FORMULA_VERSION` (Progress Score) e de
+`ADAPTATION_VERSION`. Três conceitos, três versões: amarrá-las faria a mudança
+de um obrigar a reinterpretar o histórico dos outros.
+
+### O fator de carga que estava morto
+
+A P3 criou o campo opcional `trainingLoadRatio` e o gatilho `load.spike`
+(`ratio ≥ 1.6`), mas **nada nunca alimentou o campo**: o fator era código morto,
+e o teste de regressão daquela onda ("sem o campo, saída idêntica") passava
+justamente porque o campo nunca chegava.
+
+A P6 fecha o circuito — `readiness.service.ts` lê `loadScoreAggregates` e passa
+a razão ao Lens. Falha na consulta devolve `null` e o fator não participa:
+prontidão não deixa de existir porque uma leitura de carga falhou.
+
+No mesmo passo, os dois pontos que montavam o input do Lens (um com cache, outro
+sem) viraram **um só**. Eram cópias, e a cópia divergiria no instante em que a
+P6 acrescentasse o ritmo de carga a um dos lados — dois estados diferentes para
+o mesmo aluno, dependendo de qual ramo executou.
+
+### Estados e evidência
+
+| estado | nível | quando |
+|---|---|---|
+| Pronto | `green` | nenhum fator de atenção ou bloqueio |
+| Moderado | `yellow` | sono ruim, cansaço, carga mental alta, queda metabólica, nutrição ruim, **pico de carga** |
+| Recuperação | `red` | dor relatada, metabolismo muito baixo, queda acentuada, ou cansaço **somado a** noite mal dormida |
+
+Cada leitura carrega `factors[]` com `id`, `label` e `severity`. `confidence`
+(`high`/`medium`/`low`) mede **cobertura de dado**, nunca probabilidade clínica.
+
+Sem check-in do dia o endpoint devolve `insufficient_data` — e não "verde" por
+omissão. Afirmar que alguém está pronto sem ter perguntado nada é o jeito mais
+barato de perder a confiança de quem não estava.
+
+### Adaptação: números que agora têm nome
+
+| | amarelo | vermelho |
+|---|---|---|
+| séries | −1 | −2 |
+| descanso | ×1,15 | ×1,30 |
+| RPE | −1 | piso da política |
+| técnica avançada | rebaixada | rebaixada |
+| sugestão de recuperação | — | sim |
+
+Estavam escritos direto no laço (`isRed ? 2 : 1`), sem teste algum. Agora vivem
+em `ADAPTATION_RULES_V1` e cada número tem asserção. Sobre eles ainda incidem os
+tetos que o personal controla (`maxSetReductionPct`, `maxRestIncreasePct`,
+`minIntensityPct`).
+
+**Achado da onda:** com o teto padrão de séries (25%), o piso
+`ceil(sets × 0,75)` engole a redução extra do vermelho em exercícios de 3 a 6
+séries — vermelho e amarelo reduzem igual, e a diferença de volume só aparece a
+partir de 7. Não é defeito (o teto faz o que promete), mas significa que o que
+separa os dois estados na prática é descanso, RPE e a sugestão de recuperação.
+
+Toda adaptação só REDUZ exigência ou AUMENTA recuperação. `assertSafeAdaptation`
+recusa mais séries, RPE maior, descanso menor ou troca de exercício — substituir
+exercício seria prescrever, e quem prescreve tem registro.
+
+### Idempotência: a garantia está em quem chama
+
+O motor é função pura e não sabe se o que recebeu já foi adaptado — encadear
+compõe desconto (4 → 3 → 2 séries). A proteção é que `GET /training/today`
+adapta **sempre a partir de `day.items`**, carregado fresco da prescrição do
+personal. Há teste para as duas metades: partir do original é estável, e
+encadear compõe.
+
+O original nunca é sobrescrito: fica em `workout_adaptation_log.original_payload`
+(o upsert do dia não o reescreve) e viaja ao cliente em `originalPlanDay`.
+
+### Override do aluno
+
+O ajuste é sugestão, não tutela: o aluno pode seguir a prescrição original, e a
+escolha é reversível e do dia — não vira preferência permanente. Ambas as
+escolhas são medidas (`training.adaptation.accepted` / `.declined`); instrumentar
+só uma delas seria viés embutido.
+
+---
+
 ## Changelog
 
 | versão | data | mudança |
@@ -477,3 +570,4 @@ mudar a cada chamada, e o cache nunca acertaria.
 | 1 | ago/2026 | Onda P3 (Spec 033): ritmo de carga (faixa qualitativa) e Progress Score. Nenhuma fórmula da P1 mudou — versão mantida em 1, sem recomputo. |
 | 1 | ago/2026 | Onda P4 (Spec 033): metas. Nenhuma métrica nova — cada tipo lê medida existente. Versão mantida em 1, sem recomputo. |
 | 1 | ago/2026 | Onda P5 (Spec 033): visão do personal. Rótulo canônico da meta, sinais determinísticos e síntese opcional. Nenhuma fórmula nova; versão mantida em 1. |
+| 1 | ago/2026 | Onda P6: readiness ganha o ritmo de carga (fator `load.spike` deixa de ser código morto), constantes de adaptação nomeadas, `READINESS_VERSION` e `ADAPTATION_VERSION` próprias. Nenhuma fórmula de performance mudou. |

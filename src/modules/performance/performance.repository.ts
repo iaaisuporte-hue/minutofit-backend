@@ -45,6 +45,9 @@
  */
 import type { PoolClient } from 'pg';
 
+import { weeklyTargetFromPreset } from '../../services/personalDashboardService';
+import { pickWeeklyTarget, type WeeklyFrequencyTarget } from './consistency.engine';
+
 import pool from '../../config/database';
 import { APP_TIMEZONE, dayKey } from '../../utils/appDay';
 import {
@@ -362,6 +365,53 @@ export async function loadActivePlanTarget(
     daysSinceStarted: rows[0]?.days_since ?? null,
     activeSince: rows[0]?.active_since ?? null,
   };
+}
+
+/**
+ * O alvo semanal VIGENTE — a fonte única (Spec 033 + hardening pré-C2).
+ *
+ * Antes, cada consumidor combinava `loadActivePlanTarget` com
+ * `weeklyTargetFromPreset` por conta própria: a aba Consistência, o Progress
+ * Score e os marcos repetiam a mesma composição em cinco lugares. Bastava um
+ * deles ganhar o fallback de meta pessoal para o produto passar a exibir dois
+ * denominadores diferentes para o mesmo aluno — o defeito recorrente deste
+ * repositório. Agora quem precisa do alvo chama ISTO, e a precedência vive num
+ * lugar só (`pickWeeklyTarget`).
+ *
+ * Entre metas de frequência ativas, vale a MAIOR: com várias declaradas, usar a
+ * menor deixaria a consistência subir só por existir uma meta modesta ao lado
+ * de uma ambiciosa.
+ */
+export async function loadWeeklyFrequencyTarget(
+  userId: number,
+): Promise<WeeklyFrequencyTarget> {
+  const [plan, goalRes] = await Promise.all([
+    loadActivePlanTarget(userId),
+    pool.query<{ target: string | null; since: string | null; days_since: number | null }>(
+      `SELECT MAX(target_value)::text AS target,
+              to_char(MIN(starts_on), 'YYYY-MM-DD') AS since,
+              (CURRENT_DATE - MIN(starts_on))::int AS days_since
+         FROM user_performance_goals
+        WHERE user_id = $1 AND kind = 'weekly_frequency' AND status = 'active'`,
+      [userId],
+    ),
+  ]);
+
+  const meta = goalRes.rows[0];
+  const metaAlvo = meta?.target != null ? Number(meta.target) : null;
+
+  return pickWeeklyTarget(
+    {
+      weeklyTarget: weeklyTargetFromPreset(plan.weekPreset),
+      since: plan.activeSince,
+      daysSinceStarted: plan.daysSinceStarted,
+    },
+    {
+      weeklyTarget: metaAlvo != null && Number.isFinite(metaAlvo) ? metaAlvo : null,
+      since: meta?.since ?? null,
+      daysSinceStarted: meta?.days_since ?? null,
+    },
+  );
 }
 
 /**

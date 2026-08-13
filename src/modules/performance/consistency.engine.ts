@@ -17,17 +17,79 @@
  * `computeEngagementScore` do dashboard do personal NÃO muda: ele já compõe os
  * dois conceitos com nomes próprios.
  *
- * ## Por que o denominador pode não existir
+ * ## De onde vem o denominador
  *
- * Sem ficha ativa não há prescrição, e sem prescrição não existe "quanto era
- * para treinar". Nesse caso devolvemos `null` e a tela mostra o número absoluto
- * de dias ativos. Zero seria mentira: significaria "faltou a tudo que foi
- * pedido", quando nada foi pedido.
+ * Em ordem: **ficha ativa** → **meta pessoal de frequência** → `null`.
+ *
+ * O segundo degrau existe porque o aluno B2C — o que assina sozinho, sem
+ * personal — nunca tem ficha, e sem ele a consistência dele seria
+ * permanentemente indefinida: a aba mostraria só números absolutos e os marcos
+ * de semana ficariam inalcançáveis para sempre. A meta que ele mesmo declarou é
+ * um compromisso legítimo, e medir contra ela é exatamente o princípio do
+ * produto ("aderência ao próprio plano").
+ *
+ * A ficha tem precedência absoluta: existindo prescrição válida, uma meta
+ * pessoal menor não pode substituí-la, ou bastaria declarar "1x por semana"
+ * para exibir 100% de consistência contra um plano de 5x.
+ *
+ * Sem ficha e sem meta, `null` — e a tela mostra o número absoluto de dias
+ * ativos. Zero seria mentira: significaria "faltou a tudo que foi pedido",
+ * quando nada foi pedido. E nenhum padrão é inventado: 3x ou 4x por semana
+ * seriam números arbitrários apresentados como se fossem do aluno.
  */
 import {
   CONSISTENCY_MIN_WINDOW_DAYS,
   CONSISTENCY_WINDOW_DAYS,
 } from './performance.constants';
+
+/** De onde saiu o alvo semanal vigente. `null` quando não há alvo. */
+export type WeeklyTargetSource = 'plan' | 'goal' | null;
+
+export interface WeeklyFrequencyTarget {
+  /** Dias de treino previstos por semana. `null` = sem alvo. */
+  weeklyTarget: number | null;
+  source: WeeklyTargetSource;
+  /** Dia em que o alvo vigente passou a valer (`YYYY-MM-DD`). */
+  since: string | null;
+  /** Dias desde que o alvo vigente começou — usado na proporcionalidade. */
+  daysSinceStarted: number | null;
+}
+
+export const NO_WEEKLY_TARGET: WeeklyFrequencyTarget = Object.freeze({
+  weeklyTarget: null,
+  source: null,
+  since: null,
+  daysSinceStarted: null,
+});
+
+/**
+ * Escolhe o alvo vigente entre prescrição e meta pessoal.
+ *
+ * Pura de propósito: a precedência é regra de negócio e precisa ser testável
+ * sem banco. Quem lê as duas fontes é o repositório.
+ */
+export function pickWeeklyTarget(
+  plan: { weeklyTarget: number | null; since: string | null; daysSinceStarted: number | null },
+  goal: { weeklyTarget: number | null; since: string | null; daysSinceStarted: number | null },
+): WeeklyFrequencyTarget {
+  if (plan.weeklyTarget != null && plan.weeklyTarget > 0) {
+    return {
+      weeklyTarget: plan.weeklyTarget,
+      source: 'plan',
+      since: plan.since,
+      daysSinceStarted: plan.daysSinceStarted,
+    };
+  }
+  if (goal.weeklyTarget != null && goal.weeklyTarget > 0) {
+    return {
+      weeklyTarget: goal.weeklyTarget,
+      source: 'goal',
+      since: goal.since,
+      daysSinceStarted: goal.daysSinceStarted,
+    };
+  }
+  return { ...NO_WEEKLY_TARGET };
+}
 
 /**
  * Alvo de dias ativos na janela, proporcional ao tempo de vínculo.

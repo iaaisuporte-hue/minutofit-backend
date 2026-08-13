@@ -10,7 +10,6 @@
  */
 import { getFeatureMapForUser } from '../../services/planFeatureService';
 import { dayKey } from '../../utils/appDay';
-import { weeklyTargetFromPreset } from '../../services/personalDashboardService';
 import type { PrKind } from './pr.engine';
 import {
   CONSISTENCY_WINDOW_DAYS,
@@ -28,7 +27,7 @@ import { countGoalsAchievedSince } from './goals.repository';
 import { computeConsistencyPct, resolveConsistencyTarget } from './consistency.engine';
 import {
   countActiveDays,
-  loadActivePlanTarget,
+  loadWeeklyFrequencyTarget,
   loadCurrentPrRecords,
   loadFreeSummaryCounters,
   loadMonthCalendar,
@@ -114,15 +113,17 @@ export interface PerformanceOverview {
  * Ninguém deve chamar isto direto numa rota: o gate mora nas funções acima.
  */
 export async function computePerformanceCore(userId: number) {
-  const [activeDays28, counters, plan] = await Promise.all([
+  const [activeDays28, counters, alvo] = await Promise.all([
     countActiveDays(userId, CONSISTENCY_WINDOW_DAYS),
     loadFreeSummaryCounters(userId, 30),
-    loadActivePlanTarget(userId),
+    // Fonte única: ficha → meta pessoal → null. O aluno B2C, que nunca tem
+    // ficha, deixa de ficar com consistência permanentemente indefinida.
+    loadWeeklyFrequencyTarget(userId),
   ]);
   const { sessionsInWindow: sessions30d, currentStreak } = counters;
 
-  const weeklyTarget = weeklyTargetFromPreset(plan.weekPreset);
-  const target = resolveConsistencyTarget(weeklyTarget, plan.daysSinceStarted);
+  const weeklyTarget = alvo.weeklyTarget;
+  const target = resolveConsistencyTarget(weeklyTarget, alvo.daysSinceStarted);
   const consistencyPct = computeConsistencyPct(activeDays28, target);
   const { score, load } = await resolveScoreAndLoad(userId, consistencyPct);
 
@@ -131,6 +132,7 @@ export async function computePerformanceCore(userId: number) {
     activeDays28,
     currentStreak,
     weeklyTarget,
+    weeklyTargetSource: alvo.source,
     consistencyPct,
     score,
     load,
@@ -144,13 +146,13 @@ export async function getPerformanceOverview(userId: number): Promise<Performanc
   const premium = await hasPerformanceFeature(userId);
 
   if (!premium) {
-    const [activeDays28, counters, plan] = await Promise.all([
+    const [activeDays28, counters, alvo] = await Promise.all([
       countActiveDays(userId, CONSISTENCY_WINDOW_DAYS),
       loadFreeSummaryCounters(userId, 30),
-      loadActivePlanTarget(userId),
+      loadWeeklyFrequencyTarget(userId),
     ]);
-    const weeklyTarget = weeklyTargetFromPreset(plan.weekPreset);
-    const target = resolveConsistencyTarget(weeklyTarget, plan.daysSinceStarted);
+    const weeklyTarget = alvo.weeklyTarget;
+    const target = resolveConsistencyTarget(weeklyTarget, alvo.daysSinceStarted);
     const consistencyPct = computeConsistencyPct(activeDays28, target);
     return {
       gated: true,
@@ -159,7 +161,7 @@ export async function getPerformanceOverview(userId: number): Promise<Performanc
         activeDays28,
         currentStreak: counters.currentStreak,
       },
-      consistency: { pct: consistencyPct, activeDays28, targetPerWeek: weeklyTarget },
+      consistency: { pct: consistencyPct, activeDays28, targetPerWeek: weeklyTarget, targetSource: alvo.source },
       score: null,
       load: null,
       headline: buildHeadline(null, consistencyPct),
@@ -178,6 +180,7 @@ export async function getPerformanceOverview(userId: number): Promise<Performanc
       pct: core.consistencyPct,
       activeDays28: core.activeDays28,
       targetPerWeek: core.weeklyTarget,
+      targetSource: core.weeklyTargetSource,
     },
     score: core.score,
     load: core.load,

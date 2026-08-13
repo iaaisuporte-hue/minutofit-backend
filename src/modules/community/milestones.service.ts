@@ -35,13 +35,12 @@ import type { PoolClient } from 'pg';
 import pool from '../../config/database';
 import logger from '../../lib/logger';
 import { dayKey, dayKeyToInstant } from '../../utils/appDay';
-import { weeklyTargetFromPreset } from '../../services/personalDashboardService';
 import { awardXpTx } from '../../services/xpLedgerService';
 import {
   findFirstActiveDay,
   findLastActiveDayBefore,
   listActiveDays,
-  loadActivePlanTarget,
+  loadWeeklyFrequencyTarget,
 } from '../performance/performance.repository';
 import { findMilestone, type MilestoneCode, MILESTONE_CATALOG } from './milestones.catalog';
 import {
@@ -120,7 +119,11 @@ async function loadFacts(userId: number): Promise<MilestoneFacts> {
       ),
       listActiveDays(userId, windowStart, today),
       findLastActiveDayBefore(userId, windowStart),
-      loadActivePlanTarget(userId),
+      // O alvo semanal vem do resolvedor canônico do módulo Performance — os
+      // marcos CONSOMEM a métrica, nunca a recalculam. Foi assim que o aluno
+      // B2C, sem ficha, passou a poder conquistar os marcos de semana: a regra
+      // mudou em um lugar só.
+      loadWeeklyFrequencyTarget(userId),
       findFirstActiveDay(userId),
     ]);
 
@@ -151,8 +154,8 @@ async function loadFacts(userId: number): Promise<MilestoneFacts> {
     firstActiveDay,
     activeDays,
     previousActiveDay,
-    weeklyTarget: weeklyTargetFromPreset(plan.weekPreset),
-    planActiveSince: plan.activeSince,
+    weeklyTarget: plan.weeklyTarget,
+    planActiveSince: plan.since,
   };
 }
 
@@ -352,11 +355,11 @@ export async function listMilestonesForUser(userId: number): Promise<MilestoneDt
         WHERE user_id = $1`,
       [userId],
     ),
-    loadActivePlanTarget(userId),
+    loadWeeklyFrequencyTarget(userId),
   ]);
 
   const byCode = new Map(rows.map((r) => [r.code, r]));
-  const temAlvoSemanal = weeklyTargetFromPreset(plan.weekPreset) != null;
+  const temAlvoSemanal = plan.weeklyTarget != null;
 
   return MILESTONE_CATALOG.map((def) => {
     const row = byCode.get(def.code);
@@ -369,7 +372,9 @@ export async function listMilestonesForUser(userId: number): Promise<MilestoneDt
         unavailableReason = 'Chega com os desafios.';
       } else if (REQUIRE_WEEKLY_TARGET.has(def.code) && !temAlvoSemanal) {
         available = false;
-        unavailableReason = 'Precisa de uma ficha com frequência prevista.';
+        // Duas saídas, não uma: quem não tem personal destrava criando a
+        // própria meta de frequência.
+        unavailableReason = 'Precisa de uma ficha ou de uma meta de frequência semanal.';
       }
     }
 

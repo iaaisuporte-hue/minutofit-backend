@@ -32,7 +32,10 @@
     "script:grant-academy-pro": "tsx src/scripts/grantAcademyPro.ts",
     "itest:storage": "tsx src/scripts/itest-storage.ts",
     "itest:del": "tsx src/scripts/itest-del.ts",
-    "itest:photos-service": "tsx src/scripts/itest-photos-service.ts"
+    "itest:photos-service": "tsx src/scripts/itest-photos-service.ts",
+    "test:unit": "jest --passWithNoTests --testPathIgnorePatterns \"/node_modules/\" \".integration.test.ts$\"",
+    "test:integration": "jest --runInBand --passWithNoTests --testPathPattern \"\\.integration\\.test\\.ts$\"",
+    "db:prepare-test": "tsx src/scripts/prepareTestDatabase.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",

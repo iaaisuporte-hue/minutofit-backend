@@ -49,4 +49,10 @@ export interface ConsistencySummary {
   activeDays28: number;
   /** Treinos/semana que a ficha ativa prescreve. `null` = sem ficha. */
   targetPerWeek: number | null;
+  /**
+   * De onde saiu o alvo: `plan` (ficha do personal) ou `goal` (meta que o
+   * próprio aluno declarou). A tela precisa disso para não dizer "sua ficha
+   * prescreve" a quem não tem ficha nenhuma.
+   */
+  targetSource: 'plan' | 'goal' | null;
 }

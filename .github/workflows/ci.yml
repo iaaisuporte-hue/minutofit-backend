@@ -6,11 +6,13 @@ on:
   pull_request:
 
 jobs:
-  typecheck-and-lint:
+  # Tipos, lint e testes que NÃO tocam banco. A ausência de Postgres aqui é
+  # proposital: é o que prova que a suíte unitária continua independente de
+  # infraestrutura. Se um teste unitário passar a precisar de banco, ele quebra
+  # neste job — que é exatamente onde queremos descobrir isso.
+  unit:
+    name: Tipos, lint e testes unitários
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
 
     steps:
       - uses: actions/checkout@v4
@@ -30,9 +32,73 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Smoke tests
-        run: npm test
+      - name: Testes unitários
+        run: npm run test:unit
         env:
           JWT_SECRET: ci-test-jwt-secret-placeholder-32chars
           JWT_REFRESH_SECRET: ci-test-refresh-secret-placeholder-32chars
           NODE_ENV: test
+
+  # Invariantes que só existem no banco: cascata de FK, semântica de NULL em
+  # índice parcial, conversão de fuso por tipo de coluna, atomicidade de
+  # transação, advisory lock. Testar isso com mock é testar o mock — e por
+  # meses estes testes se auto-pularam no CI por falta de Postgres, o que fazia
+  # a suíte parecer verde sem exercitar nenhuma dessas garantias.
+  integration:
+    name: Testes de integração (Postgres)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # Mesma major do compose local e do Render — validar contra outra versão
+        # testaria um banco que não é o nosso.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: corefit
+          POSTGRES_PASSWORD: corefit
+          POSTGRES_DB: corefit_ci_test
+        ports:
+          - 5432:5432
+        # O job só começa quando o banco aceita conexão: sem isso a primeira
+        # query corre contra um Postgres ainda subindo, e a falha aparece como
+        # ECONNREFUSED intermitente.
+        options: >-
+          --health-cmd "pg_isready -U corefit -d corefit_ci_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # Credenciais efêmeras do serviço acima. Nunca há acesso a banco externo
+      # nem a segredo de produção: o container nasce e morre com o job.
+      DATABASE_URL: postgresql://corefit:corefit@localhost:5432/corefit_ci_test
+      TEST_DATABASE_URL: postgresql://corefit:corefit@localhost:5432/corefit_ci_test
+      JWT_SECRET: ci-test-jwt-secret-placeholder-32chars
+      JWT_REFRESH_SECRET: ci-test-refresh-secret-placeholder-32chars
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Schema base. Migrations e `ensure*` apenas ALTERAM o schema — num banco
+      # vazio a primeira migration morre em `relation does not exist`.
+      - name: Schema base
+        run: npm run db:seed
+
+      # migrations + ensure*, pela MESMA função que o `index.ts` executa no
+      # boot. Uma lista paralela de passos faria o CI validar um schema que não
+      # existe em produção.
+      - name: Migrations e ensure* (boot chain de produção)
+        run: npm run db:prepare-test
+
+      - name: Testes de integração
+        run: npm run test:integration

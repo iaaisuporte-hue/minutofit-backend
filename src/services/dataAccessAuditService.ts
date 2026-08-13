@@ -67,6 +67,10 @@ export type DataAccessEventType =
   | 'performance.prs_viewed'
   | 'performance.pr_celebrated'
   | 'performance.upgrade_cta_clicked'
+  // Onda P3 — adoção do Progress Score.
+  | 'performance.score_viewed'
+  | 'performance.score_component_opened'
+  | 'performance.score_history_viewed'
   | 'identity.user_created'
   | 'identity.user_reused';
 

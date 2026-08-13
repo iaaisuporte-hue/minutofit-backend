@@ -17,6 +17,7 @@ import {
   getPerformanceOverview,
   getPrRecords,
   getProgression,
+  getScoreHistory,
   getTrainingCalendar,
 } from './performance.service';
 import { PR_KINDS, type PrKind } from './pr.engine';
@@ -117,6 +118,18 @@ router.get('/progression', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ err }, '[performance] GET /progression error');
     return res.status(500).json({ success: false, error: 'Failed to load progression' });
+  }
+});
+
+// GET /api/performance/score/history — série do Progress Score.
+// Só pontos reais: dia sem snapshot não vira zero nem ponto interpolado.
+router.get('/score/history', async (req: Request, res: Response) => {
+  try {
+    const data = await getScoreHistory(req.user!.id, parseIntInRange(req.query.days, 90, 7, 365));
+    return res.json({ success: true, data });
+  } catch (err) {
+    logger.error({ err }, '[performance] GET /score/history error');
+    return res.status(500).json({ success: false, error: 'Failed to load score history' });
   }
 });
 

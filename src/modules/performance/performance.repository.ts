@@ -47,7 +47,11 @@ import type { PoolClient } from 'pg';
 
 import pool from '../../config/database';
 import { APP_TIMEZONE, dayKey } from '../../utils/appDay';
-import { FORMULA_VERSION } from './performance.constants';
+import {
+  FORMULA_VERSION,
+  PROGRESSION_MIN_POINTS_PER_WINDOW,
+  SCORE_SESSION_LOOKBACK_DAYS,
+} from './performance.constants';
 import { bestKey, type CurrentBests, type PrDetection, type PrKind } from './pr.engine';
 import type { ActiveDay, ActiveDaySource } from './performance.types';
 
@@ -547,4 +551,284 @@ export async function loadProgressionSeries(
     });
   }
   return Array.from(byExercise.values());
+}
+
+// ── Progress Score e carga (P3) ────────────────────────────────────────────
+
+/** Tudo que o Progress Score precisa do banco, em UMA viagem. */
+export interface ScoreWindowAggregates {
+  accountAgeDays: number | null;
+  sessionsInLookback: number;
+  daysSinceLastSession: number | null;
+  tonnageCurrent: number | null;
+  tonnagePrevious: number | null;
+  prCount: number;
+  loadSum7d: number | null;
+  loadSum28d: number | null;
+  sessionsWithLoad28d: number;
+}
+
+/**
+ * Agregados das duas janelas do score numa query só.
+ *
+ * São nove números vindos de cinco tabelas. Como subconsultas escalares
+ * independentes, o Postgres resolve tudo num plano e o endpoint gasta UMA
+ * conexão — a alternativa (uma query por número) multiplicaria por nove o
+ * fan-out da tela de abertura da Evolução.
+ *
+ * Todas as janelas usam `performed_at` (data canônica da execução) e o teto
+ * cru em timestamptz, que é sargable e usa `idx_wsm_user_performed`.
+ *
+ * NULL é preservado de ponta a ponta: `SUM` sobre zero linhas devolve NULL, e
+ * é isso que o engine precisa receber para não confundir "sem tonelagem" com
+ * "tonelagem zero".
+ */
+export async function loadScoreAggregates(
+  userId: number,
+  windowDays: number,
+): Promise<ScoreWindowAggregates> {
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT (EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400)::int
+          FROM users WHERE id = $1) AS account_age_days,
+
+       (SELECT COUNT(*)::int
+          FROM workout_session_metrics m
+         WHERE m.user_id = $1
+           AND m.performed_at >= NOW() - ($3::int || ' days')::interval) AS sessions_lookback,
+
+       (SELECT (EXTRACT(EPOCH FROM (NOW() - MAX(m.performed_at))) / 86400)::int
+          FROM workout_session_metrics m WHERE m.user_id = $1) AS days_since_last,
+
+       (SELECT SUM(m.tonnage_kg)
+          FROM workout_session_metrics m
+         WHERE m.user_id = $1
+           AND m.performed_at >= NOW() - ($2::int || ' days')::interval) AS tonnage_current,
+
+       (SELECT SUM(m.tonnage_kg)
+          FROM workout_session_metrics m
+         WHERE m.user_id = $1
+           AND m.performed_at >= NOW() - (($2::int * 2) || ' days')::interval
+           AND m.performed_at <  NOW() - ($2::int || ' days')::interval) AS tonnage_previous,
+
+       -- Só recorde de verdade: estreia (is_first) é linha de base, não conquista.
+       (SELECT COUNT(*)::int
+          FROM user_pr_events p
+         WHERE p.user_id = $1
+           AND p.is_first = false
+           AND p.achieved_at >= NOW() - ($2::int || ' days')::interval) AS pr_count,
+
+       (SELECT SUM(m.effort_load)
+          FROM workout_session_metrics m
+         WHERE m.user_id = $1
+           AND m.performed_at >= NOW() - INTERVAL '7 days') AS load_7d,
+
+       (SELECT SUM(m.effort_load)
+          FROM workout_session_metrics m
+         WHERE m.user_id = $1
+           AND m.performed_at >= NOW() - ($2::int || ' days')::interval) AS load_28d,
+
+       (SELECT COUNT(*)::int
+          FROM workout_session_metrics m
+         WHERE m.user_id = $1
+           AND m.effort_load IS NOT NULL
+           AND m.performed_at >= NOW() - ($2::int || ' days')::interval) AS sessions_with_load`,
+    [userId, windowDays, SCORE_SESSION_LOOKBACK_DAYS],
+  );
+
+  const r = rows[0] ?? {};
+  const num = (v: unknown): number | null => (v == null ? null : Number(v));
+  return {
+    accountAgeDays: num(r.account_age_days),
+    sessionsInLookback: Number(r.sessions_lookback ?? 0),
+    daysSinceLastSession: num(r.days_since_last),
+    tonnageCurrent: num(r.tonnage_current),
+    tonnagePrevious: num(r.tonnage_previous),
+    prCount: Number(r.pr_count ?? 0),
+    loadSum7d: num(r.load_7d),
+    loadSum28d: num(r.load_28d),
+    sessionsWithLoad28d: Number(r.sessions_with_load ?? 0),
+  };
+}
+
+/**
+ * Exercícios comparáveis entre as duas janelas, e quantos melhoraram/pioraram.
+ *
+ * "Comparável" = pelo menos 2 dias com registro em CADA janela. Com um ponto só
+ * de cada lado, qualquer variação de um treino viraria "progressão", e o score
+ * oscilaria com ruído.
+ *
+ * A métrica comparada é o melhor e1RM do período; quando o exercício não tem
+ * e1RM (reps fora de 1..12, ou peso corporal), cai para a maior carga. Sem
+ * nenhuma das duas, o exercício não entra.
+ */
+export async function loadKeyExerciseProgression(
+  userId: number,
+  windowDays: number,
+): Promise<{ total: number; improved: number; regressed: number }> {
+  const { rows } = await pool.query<{ total: string; improved: string; regressed: string }>(
+    `WITH por_dia AS (
+       SELECT sl.exercise_id,
+              ${SOURCE_DAY_EXPR.session} AS d,
+              CASE WHEN ws.performed_at >= NOW() - ($2::int || ' days')::interval
+                   THEN 'atual' ELSE 'anterior' END AS janela,
+              MAX(ROUND((sl.load_done_kg * (1 + sl.reps_done / 30.0)) * 2) / 2)
+                FILTER (WHERE sl.load_done_kg > 0 AND sl.reps_done BETWEEN 1 AND 12) AS e1rm,
+              MAX(sl.load_done_kg) FILTER (WHERE sl.load_done_kg > 0) AS carga
+         FROM workout_set_logs sl
+         JOIN workout_sessions ws ON ws.id = sl.session_id
+        WHERE ws.user_id = $1
+          AND ws.status IN ('completed', 'partial')
+          AND sl.status = 'done'
+          AND sl.exercise_id IS NOT NULL
+          AND ws.performed_at >= NOW() - (($2::int * 2) || ' days')::interval
+        GROUP BY sl.exercise_id, ${SOURCE_DAY_EXPR.session}, janela
+     ),
+     -- COALESCE aqui é seguro: só descarta o exercício quando as DUAS métricas
+     -- faltam, e nesse caso a linha inteira é NULL e some no HAVING.
+     por_janela AS (
+       SELECT exercise_id, janela,
+              COUNT(*) FILTER (WHERE COALESCE(e1rm, carga) IS NOT NULL)::int AS pontos,
+              MAX(COALESCE(e1rm, carga)) AS melhor
+         FROM por_dia
+        GROUP BY exercise_id, janela
+     ),
+     comparaveis AS (
+       SELECT a.exercise_id, a.melhor AS melhor_atual, p.melhor AS melhor_anterior
+         FROM por_janela a
+         JOIN por_janela p ON p.exercise_id = a.exercise_id AND p.janela = 'anterior'
+        WHERE a.janela = 'atual'
+          AND a.pontos >= $3 AND p.pontos >= $3
+          AND a.melhor IS NOT NULL AND p.melhor IS NOT NULL
+     )
+     SELECT COUNT(*)::text AS total,
+            COUNT(*) FILTER (WHERE melhor_atual > melhor_anterior)::text AS improved,
+            COUNT(*) FILTER (WHERE melhor_atual < melhor_anterior)::text AS regressed
+       FROM comparaveis`,
+    [userId, windowDays, PROGRESSION_MIN_POINTS_PER_WINDOW],
+  );
+  const r = rows[0];
+  return {
+    total: Number(r?.total ?? 0),
+    improved: Number(r?.improved ?? 0),
+    regressed: Number(r?.regressed ?? 0),
+  };
+}
+
+/** Snapshot do score de hoje, se já foi calculado. */
+export async function loadTodayScoreSnapshot(userId: number) {
+  const { rows } = await pool.query(
+    `SELECT score, status, trend, factors, inputs, formula_version, created_at
+       FROM user_performance_snapshots
+      WHERE user_id = $1 AND snapshot_date = (NOW() AT TIME ZONE $2)::date
+      LIMIT 1`,
+    [userId, APP_TIMEZONE],
+  );
+  return rows[0] ?? null;
+}
+
+/** Série do score, do mais antigo para o mais recente. */
+export async function loadScoreHistory(
+  userId: number,
+  days: number,
+): Promise<{ date: string; score: number | null; status: string }[]> {
+  const { rows } = await pool.query(
+    `SELECT snapshot_date::text AS date, score, status
+       FROM user_performance_snapshots
+      WHERE user_id = $1
+        AND snapshot_date >= (NOW() AT TIME ZONE $2)::date - $3::int
+      ORDER BY snapshot_date ASC`,
+    [userId, APP_TIMEZONE, days],
+  );
+  return rows.map((r) => ({
+    date: String(r.date),
+    score: r.score == null ? null : Number(r.score),
+    status: String(r.status),
+  }));
+}
+
+/** Breakdown de N dias atrás — base da explicação "o que mudou". */
+export async function loadScoreFactorsAt(
+  userId: number,
+  daysAgo: number,
+): Promise<unknown[] | null> {
+  const { rows } = await pool.query(
+    `SELECT factors
+       FROM user_performance_snapshots
+      WHERE user_id = $1
+        AND snapshot_date <= (NOW() AT TIME ZONE $2)::date - $3::int
+      ORDER BY snapshot_date DESC
+      LIMIT 1`,
+    [userId, APP_TIMEZONE, daysAgo],
+  );
+  return rows[0] ? (rows[0].factors as unknown[]) : null;
+}
+
+/**
+ * Grava o snapshot do dia. Idempotente por `(user, dia)`: recalcular o mesmo
+ * dia sobrescreve com o mesmo resultado, nunca cria linha nova.
+ */
+export async function upsertScoreSnapshot(
+  userId: number,
+  data: {
+    score: number | null;
+    status: string;
+    trend: string;
+    factors: unknown;
+    inputs: unknown;
+    formulaVersion: number;
+  },
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO user_performance_snapshots
+       (user_id, snapshot_date, score, status, trend, factors, inputs, formula_version)
+     VALUES ($1, (NOW() AT TIME ZONE $2)::date, $3, $4, $5, $6::jsonb, $7::jsonb, $8)
+     ON CONFLICT (user_id, snapshot_date) DO UPDATE
+       SET score = EXCLUDED.score,
+           status = EXCLUDED.status,
+           trend = EXCLUDED.trend,
+           factors = EXCLUDED.factors,
+           inputs = EXCLUDED.inputs,
+           formula_version = EXCLUDED.formula_version,
+           created_at = NOW()`,
+    [
+      userId,
+      APP_TIMEZONE,
+      data.score,
+      data.status,
+      data.trend,
+      JSON.stringify(data.factors),
+      JSON.stringify(data.inputs),
+      data.formulaVersion,
+    ],
+  );
+}
+
+/** Invalida o snapshot do dia — chamado quando a execução muda. */
+export async function invalidateTodayScoreSnapshot(userId: number): Promise<void> {
+  await pool.query(
+    `DELETE FROM user_performance_snapshots
+      WHERE user_id = $1 AND snapshot_date = (NOW() AT TIME ZONE $2)::date`,
+    [userId, APP_TIMEZONE],
+  );
+}
+
+/**
+ * Distribuição do método de carga — observabilidade da qualidade do dado.
+ *
+ * Mede quanto da carga vem de duração medida e quanto vem do proxy por séries.
+ * Sem números pessoais: só contagens agregadas.
+ */
+export async function loadEffortMethodDistribution(
+  windowDays: number,
+): Promise<{ method: string; sessions: number }[]> {
+  const { rows } = await pool.query<{ method: string | null; n: string }>(
+    `SELECT effort_load_method AS method, COUNT(*)::text AS n
+       FROM workout_session_metrics
+      WHERE performed_at >= NOW() - ($1::int || ' days')::interval
+      GROUP BY effort_load_method
+      ORDER BY 2 DESC`,
+    [windowDays],
+  );
+  return rows.map((r) => ({ method: r.method ?? 'sem_carga', sessions: Number(r.n) }));
 }

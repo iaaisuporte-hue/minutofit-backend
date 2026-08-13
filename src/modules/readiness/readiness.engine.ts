@@ -15,6 +15,15 @@ export interface ReadinessInput {
   stressed: boolean | null;
   nutritionLevel: 'poor' | 'ok' | 'good' | null;
   mentalLoadLevel: 'low' | 'medium' | 'high' | null;
+  /**
+   * Ritmo de carga dos últimos 7 dias contra o padrão de 28 (Spec 033, P3).
+   *
+   * OPCIONAL de propósito: todos os chamadores anteriores continuam válidos sem
+   * passar nada, e a ausência não muda o veredito — quem não tem amostra
+   * suficiente não recebe fator novo. Não é um segundo motor de readiness: é um
+   * sinal a mais no mesmo Lens.
+   */
+  trainingLoadRatio?: number | null;
 }
 
 export interface ReadinessLens {
@@ -42,6 +51,7 @@ const MICROCOPIES: Record<string, string> = {
   'metabolic.moderate_low': 'Metabolismo abaixo do ideal.',
   'nutrition.poor':       'Alimentação ruim compromete a recuperação muscular.',
   'nutrition.good':       'Boa alimentação hoje favorece energia e recuperação.',
+  'load.spike':           'Volume de treino bem acima do seu padrão recente.',
   'state.nominal':        'Sinais dentro do esperado. Bom treino!',
 };
 
@@ -53,6 +63,16 @@ export function computeReadinessLens(input: ReadinessInput): ReadinessLens {
     factors.push({ id, label, severity });
     if (newLevel === 'red') level = 'red';
     else if (newLevel === 'yellow' && level !== 'red') level = 'yellow';
+  }
+
+  // Carga bem acima do próprio padrão (Spec 033, P3). Observacional: aponta o
+  // desvio, não afirma risco clínico — os dados não sustentam isso.
+  if (
+    input.trainingLoadRatio != null &&
+    Number.isFinite(input.trainingLoadRatio) &&
+    input.trainingLoadRatio >= 1.6
+  ) {
+    add('load.spike', 'Carga acima do padrão', 'caution', 'yellow');
   }
 
   // ── RED triggers ──────────────────────────────────────────────────────────

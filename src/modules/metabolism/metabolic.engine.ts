@@ -6,6 +6,7 @@ import {
   MetabolicStatus,
   MetabolicTrend,
 } from './metabolic.types';
+import { resolveTrend as sharedResolveTrend } from '../../utils/trend';
 
 const BASE_SCORE = 45;
 
@@ -89,25 +90,15 @@ function resolveStatus(score: number): MetabolicStatus {
   return 'high';
 }
 
+/**
+ * Tendência da série metabólica.
+ *
+ * A regressão vive em `utils/trend.ts` desde a Onda P3: o Progress Score usa a
+ * mesma leitura, e duas cópias fariam as telas discordarem sobre o que é
+ * "melhorando" no dia em que alguém ajustasse um limiar.
+ */
 function resolveTrend(previousSnapshots: MetabolicHistory): MetabolicTrend {
-  if (previousSnapshots.length < 5) return 'stable';
-
-  const n = previousSnapshots.length;
-  const xMean = (n - 1) / 2;
-  const yMean = previousSnapshots.reduce((s, p) => s + p.score, 0) / n;
-
-  let num = 0;
-  let den = 0;
-  previousSnapshots.forEach((p, i) => {
-    num += (i - xMean) * (p.score - yMean);
-    den += (i - xMean) ** 2;
-  });
-
-  const slope = den === 0 ? 0 : num / den;
-
-  if (slope >= 0.3) return 'up';
-  if (slope <= -0.3) return 'down';
-  return 'stable';
+  return sharedResolveTrend(previousSnapshots.map((p) => p.score));
 }
 
 /** Janela de carência: conta nova sem nenhum sinal ainda não tem o que ler. */

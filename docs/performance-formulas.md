@@ -184,11 +184,124 @@ o produto pede que o personal faça com frequência.
 > frequência"**. São números diferentes com nomes diferentes — um QA anterior
 > encontrou os dois exibidos sob o mesmo rótulo, e ninguém sabia qual era qual.
 
+---
+
+## v1 — Onda P3 (ago/2026)
+
+A P3 não mudou nenhuma fórmula da P1: acrescentou duas leituras que consomem o
+que a P1 já materializa. `FORMULA_VERSION` continua **1** de propósito — nada do
+que a P1 gravou precisou ser recomputado.
+
+### Ritmo de carga
+
+Compara a **média diária** de `effort_load` das duas janelas:
+
+```
+media7  = Σ effort_load dos últimos 7 dias  ÷ 7
+media28 = Σ effort_load dos últimos 28 dias ÷ 28
+ratio   = media7 ÷ media28
+```
+
+Média diária, e não soma: 7 dias contra 28 somados dariam sempre ~0,25 e a razão
+não significaria nada. Dividindo cada soma pelos seus dias, a razão fica em torno
+de 1 quando o ritmo é o mesmo.
+
+| condição | faixa exibida |
+|---|---|
+| `ratio ≥ 1.6` | Bem acima do seu ritmo habitual |
+| `1.3 ≤ ratio < 1.6` | Acima do seu ritmo habitual |
+| `0.8 ≤ ratio < 1.3` | Dentro do seu ritmo habitual |
+| `ratio < 0.8` | Abaixo do seu ritmo habitual |
+
+**A razão crua nunca sai na API.** Ela é parente do ACWR, usado em preparação
+física para falar de risco de lesão, e os dados aqui não sustentam afirmação
+clínica: a duração da sessão quase nunca é medida, então a maior parte da carga
+vem do fallback por séries. A faixa comunica o que é honesto dizer.
+
+Exige **≥ 8 sessões com `effort_load`** em 28 dias; abaixo disso, e quando
+`media28 = 0`, a faixa é `null` e a tela não mostra nada. O único consumidor do
+número cru é o Readiness, que acende o fator `load.spike` no mesmo limiar da
+faixa de pico (`ratio ≥ 1.6`) — um limiar só, para que a tela de prontidão e a
+de evolução nunca discordem sobre o que é pico.
+
 ### Progress Score
 
-Não existe na v1. Chega na Onda P3, com o breakdown de fatores obrigatório —
-a tabela `user_performance_snapshots` já tem o CHECK que impede gravar score sem
-pelo menos um fator.
+```
+score = clamp(50 + Σ deltas dos fatores, 0, 100)
+```
+
+Janela: **últimos 28 dias vs. os 28 anteriores**. Comparação sempre do aluno com
+ele mesmo — nunca com outros alunos.
+
+**Por que somar deltas a partir de 50**, e não fazer média ponderada de
+componentes normalizados: a média obriga a inventar um valor quando um
+componente falta, e falta é o caso comum (treino de peso corporal não tem
+tonelagem; aluno sem ficha não tem consistência). Somando deltas, componente
+ausente contribui **zero** e o score fica onde estava — a ausência de informação
+não vira informação.
+
+| fator | dispara quando | delta |
+|---|---|---|
+| `progression.load` | exercícios comparáveis melhoraram | `round(melhoraram ÷ total × 18)`, 0..+18 |
+| `progression.regression` | ≥ 40% dos comparáveis pioraram | −12 |
+| `consistency.high` | `consistencyPct ≥ 85` | +14 |
+| `consistency.low` | `consistencyPct < 40` | −10 |
+| `volume.trend` | tonelagem nas duas janelas, anterior > 0 | `round(clamp(variação ÷ 0.30, −1, 1) × 8)`, −8..+8 |
+| `pr.recent` | ≥ 1 recorde real na janela | +6 (fixo) |
+| `goal.achieved` | metas atingidas (Onda P4) | +6 |
+| `inactivity` | > 14 dias sem sessão | −20 |
+
+Detalhes que mudam o número:
+
+- **Exercício comparável** = tem ≥ 2 pontos em **cada** janela. Exercício estreado
+  este mês não entra — contá-lo como "não melhorou" puniria quem variou o treino.
+- **Recorde tem peso fixo**, não proporcional: dez recordes num dia de teste de
+  força não valem dez vezes um.
+- **Volume exige tonelagem nas duas janelas.** Treino de peso corporal tem
+  tonelagem *nula* (não zero); comparar contra ausência produziria uma queda de
+  100% que não aconteceu.
+- **`consistencyPct = null`** (aluno sem ficha) desliga o fator nos dois
+  sentidos. Sem prescrição não há o que cobrar.
+- Todo delta é **inteiro** (`Math.round` no fator, não no total), então a soma
+  reproduz o score exibido somando a tabela à mão.
+
+#### Exemplo reproduzível
+
+O fixture do teste de integração (`performance-p3.integration.test.ts`) tem 3
+exercícios comparáveis, todos em melhora, tonelagem 4260 → 4820 kg e 1 recorde:
+
+```
+progression.load = round(3/3 × 18)                        = +18
+volume.trend     = round(clamp(0.1315/0.30, -1, 1) × 8)   =  +4
+pr.recent                                                 =  +6
+score = clamp(50 + 18 + 4 + 6, 0, 100)                    =  78
+```
+
+#### Onboarding
+
+`value = null` e `status = 'onboarding'` quando a conta tem **< 28 dias** OU
+houve **< 6 sessões nos últimos 60 dias**. A tela mostra "Calibrando" — nunca
+zero. Zero seria uma afirmação; a ausência de número é a verdade.
+
+#### Fallback obrigatório
+
+Quando nenhum fator dispara, o engine emite o fator `steady` ("Sem mudança
+relevante no período") com delta 0. Não é enfeite: o CHECK de
+`user_performance_snapshots` recusa score gravado sem pelo menos um fator, e a
+regra de produto é que nenhum número apareça sem explicação.
+
+#### "O que mudou na semana"
+
+`compareFactorWindows(hoje, 7 dias atrás)` compara os **breakdowns**, não os
+números — a diferença dos scores diz que mudou, não o quê. Fator que
+desapareceu entra com o delta invertido (um `inactivity` que sumiu é boa
+notícia). Nenhuma dessas frases passa por LLM: todas saem de fator existente.
+
+#### Snapshot
+
+Um por `(user_id, snapshot_date)`, calculado no primeiro GET do dia e reusado
+depois. Invalidado junto do metabolismo em `invalidateAfterCheckin`. Snapshots
+antigos **nunca** são recomputados: são fotografias do que se sabia naquele dia.
 
 ---
 
@@ -197,3 +310,4 @@ pelo menos um fator.
 | versão | data | mudança |
 |---|---|---|
 | 1 | ago/2026 | Versão inicial (Spec 033, Onda P1): tonelagem, carga interna sRPE, duração, e1RM Epley, recordes e consistência de frequência. |
+| 1 | ago/2026 | Onda P3 (Spec 033): ritmo de carga (faixa qualitativa) e Progress Score. Nenhuma fórmula da P1 mudou — versão mantida em 1, sem recomputo. |

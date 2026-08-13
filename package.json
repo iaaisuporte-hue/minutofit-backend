@@ -26,6 +26,7 @@
     "lint": "eslint src --ext .ts",
     "script:backfill-protocols": "tsx src/scripts/backfillProtocolFromPlans.ts",
     "script:grant-pilot-personal-pro": "tsx src/scripts/grantPilotPersonalPro.ts",
+    "script:grant-student-premium": "tsx src/scripts/grantStudentPremium.ts",
     "cron:daily": "node dist/scripts/runCronJobs.js daily",
     "cron:six-hourly": "node dist/scripts/runCronJobs.js six-hourly",
     "script:grant-academy-pro": "tsx src/scripts/grantAcademyPro.ts",

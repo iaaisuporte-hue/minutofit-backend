@@ -20,7 +20,7 @@ import {
   createUser,
   describeWithDb,
   hasTestDb,
-  releaseSuiteLock,
+  finishSuite,
   restorePerformanceSchema,
 } from './helpers/integrationDb';
 
@@ -48,9 +48,11 @@ describeWithDb('Performance P4 · Metas com banco real', () => {
   });
 
   afterAll(async () => {
-    await cleanFixtures(c, TAG);
-    await releaseSuiteLock(c);
-    await c.end();
+    // `finishSuite` libera o lock no `finally`: limpeza que falha não
+    // pode reter o advisory lock e travar as suítes seguintes.
+    await finishSuite(c, async () => {
+      await cleanFixtures(c, TAG);
+    });
     const pool = (await import('../config/database')).default;
     await pool.end();
   });

@@ -15,7 +15,7 @@ import {
   createUser,
   describeWithDb,
   hasTestDb,
-  releaseSuiteLock,
+  finishSuite,
   restorePerformanceSchema,
 } from './helpers/integrationDb';
 
@@ -39,9 +39,11 @@ describeWithDb('Desafios · accountability sem vazar ninguém', () => {
   });
 
   afterAll(async () => {
-    await cleanFixtures(c, TAG);
-    await releaseSuiteLock(c);
-    await c.end();
+    // `finishSuite` libera o lock no `finally`: limpeza que falha não
+    // pode reter o advisory lock e travar as suítes seguintes.
+    await finishSuite(c, async () => {
+      await cleanFixtures(c, TAG);
+    });
     const pool = (await import('../config/database')).default;
     await pool.end();
   });
@@ -80,15 +82,28 @@ describeWithDb('Desafios · accountability sem vazar ninguém', () => {
     return id;
   }
 
-  /** N dias de treino na semana que começou `semanasAtras` semanas atrás. */
+  /**
+   * `dias` treinos DENTRO da semana ISO que começou `semanasAtras` semanas atrás.
+   *
+   * Ancorado na SEGUNDA-FEIRA daquela semana, não em "N dias atrás": contando
+   * para trás, os mesmos offsets caem em semanas diferentes conforme o dia em
+   * que o teste roda — o fixture passava na quinta e falhava na sexta. Um teste
+   * que depende do calendário não mede o código, mede o dia.
+   */
   async function treinarNaSemana(userId: number, semanasAtras: number, dias: number) {
+    const hoje = new Date();
+    const dow = hoje.getUTCDay() === 0 ? 7 : hoje.getUTCDay();
+    const segundaDesta = new Date(hoje.getTime() - (dow - 1) * 86_400_000);
+    const segundaAlvo = new Date(segundaDesta.getTime() - semanasAtras * 7 * 86_400_000);
+
     for (let d = 0; d < dias; d += 1) {
-      const offset = semanasAtras * 7 - d;
+      const dia = new Date(segundaAlvo.getTime() + d * 86_400_000).toISOString().slice(0, 10);
       await c.query(
         `INSERT INTO workout_sessions (user_id, source, status, performed_at, started_at, title)
-         VALUES ($1, 'free', 'completed', NOW() - ($2 || ' days')::interval,
-                 NOW() - ($2 || ' days')::interval, 'Treino C2')`,
-        [userId, offset],
+         VALUES ($1, 'free', 'completed',
+                 (($2::date + TIME '12:00') AT TIME ZONE 'America/Sao_Paulo'),
+                 (($2::date + TIME '12:00') AT TIME ZONE 'America/Sao_Paulo'), $3)`,
+        [userId, dia, 'Treino fixture'],
       );
     }
   }

@@ -322,6 +322,52 @@ export async function loadActiveDaysByUserWeek(
 }
 
 /**
+ * Último dia treinado antes de uma data, para VÁRIOS usuários (Spec 034, C3).
+ *
+ * Existe para o painel institucional de um desafio de RETOMADA: sem a pausa de
+ * cada participante, o engine devolve `null` para todos e o gestor vê a turma
+ * inteira como "sem atividade" — um painel que mede errado é pior que um painel
+ * ausente. Uma query para o grupo, no lugar de uma por pessoa.
+ */
+export async function loadLastActiveDayBeforeForUsers(
+  userIds: number[],
+  day: string,
+  lookbackDays = 365,
+): Promise<Map<number, string>> {
+  const saida = new Map<number, string>();
+  if (userIds.length === 0) return saida;
+
+  const { rows } = await pool.query<{ user_id: number; d: string | null }>(
+    `SELECT user_id, to_char(MAX(d), 'YYYY-MM-DD') AS d FROM (
+       SELECT uwl.user_id AS user_id, ${SOURCE_DAY_EXPR.workoutLog} AS d
+         FROM user_workout_logs uwl
+        WHERE uwl.user_id = ANY($1::int[])
+          AND ${SOURCE_DAY_EXPR.workoutLog} < $3::date
+          AND ${SOURCE_DAY_EXPR.workoutLog} >= $3::date - $4::int
+       UNION
+       SELECT ws.user_id, ${SOURCE_DAY_EXPR.session}
+         FROM workout_sessions ws
+        WHERE ws.user_id = ANY($1::int[])
+          AND ws.status IN ('completed', 'partial')
+          AND ${SOURCE_DAY_EXPR.session} < $3::date
+          AND ${SOURCE_DAY_EXPR.session} >= $3::date - $4::int
+       UNION
+       SELECT psl.student_id, ${SOURCE_DAY_EXPR.personalLog}
+         FROM personal_session_logs psl
+        WHERE psl.student_id = ANY($1::int[])
+          AND psl.status IN ('present', 'partial')
+          AND ${SOURCE_DAY_EXPR.personalLog} < $3::date
+          AND ${SOURCE_DAY_EXPR.personalLog} >= $3::date - $4::int
+     ) t
+     GROUP BY user_id`,
+    [userIds, APP_TIMEZONE, day, lookbackDays],
+  );
+
+  for (const r of rows) if (r.d) saida.set(r.user_id, r.d);
+  return saida;
+}
+
+/**
  * Alvo semanal de VÁRIOS usuários — duas queries, não duas por pessoa.
  *
  * Mesma precedência de `loadWeeklyFrequencyTarget` (ficha → meta → null), pela

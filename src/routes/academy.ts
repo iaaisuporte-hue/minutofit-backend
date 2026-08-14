@@ -1,8 +1,17 @@
 import { Router, Request, Response } from 'express';
 import bcryptjs from 'bcryptjs';
 import { authMiddleware } from '../middleware/auth';
+import logger from '../lib/logger';
 import { requireProduct } from '../middleware/productGate';
 import { tenantContextMiddleware, requireTenantPermission } from '../middleware/tenantContext';
+import {
+  ChallengeError,
+  cancelAcademyChallengeAsTenant,
+  createAcademyChallenge,
+  getAcademyChallengePanel,
+  inviteToAcademyChallenge,
+  listChallengesForAcademyPanel,
+} from '../modules/community/challenges.service';
 import {
   getTeam,
   addMemberDirect,
@@ -1512,5 +1521,162 @@ router.get(
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+/* ------------------------------------------------------------------ *
+ * Desafios institucionais (Spec 034, C3)
+ *
+ * Mesmo domínio da C2 — mesmo engine, mesmo avaliador, mesma tabela de
+ * participantes. O que muda aqui é ownership e autorização: o `academy_id` vem
+ * do TENANT RESOLVIDO (`req.tenant`), nunca do corpo. Um `academy_id` no
+ * payload seria um pedido de autorização disfarçado de campo.
+ *
+ * `requireTenantPermission` é a autorização real; papel sozinho não basta.
+ *
+ * ## Leitura × escrita
+ *
+ * Ler o painel exige `academy.dashboard`. Criar, convidar e cancelar exigem
+ * `academy.students.write` — porque `academy.dashboard` é permissão de
+ * LEITURA, e o papel `academy_finance` a possui: com ela gateando escrita, o
+ * perfil financeiro poderia disparar convite para a base inteira.
+ *
+ * As escritas exigem AS DUAS: `academy.dashboard` e `academy.students.write`.
+ * Nenhuma sozinha serve. `academy_finance` tem a primeira e não a segunda —
+ * com só a primeira, o financeiro convidaria a base inteira. `academy_reception`
+ * tem a segunda e não a primeira — com só a segunda, a recepção dispararia
+ * convite para um desafio que ela sequer consegue listar.
+ *
+ * Não foi criada uma permissão `academy.challenges.write`: os papéis são
+ * hardcoded por design (`db/academyRoles.ts`), cada permissão nova exige
+ * deploy, e decidir quem a recebe é decisão de produto — não de implementação.
+ * ------------------------------------------------------------------ */
+
+function desafioIdParam(raw: unknown): string | null {
+  // Id de desafio é BIGINT — não pode passar pelo validador de int4.
+  const v = String(raw ?? '');
+  if (!/^[0-9]{1,18}$/.test(v) || v === '0') return null;
+  return v;
+}
+
+function responderErroDesafio(err: unknown, res: Response, contexto: string): Response {
+  if (err instanceof ChallengeError) {
+    return res.status(err.httpStatus).json({ success: false, error: err.message, code: err.code });
+  }
+  logger.error({ err }, `[community] ${contexto}`);
+  return res.status(500).json({ success: false, error: 'Falha ao processar o desafio.' });
+}
+
+router.post(
+  '/challenges',
+  requireTenantPermission('academy.dashboard'),
+  requireTenantPermission('academy.students.write'),
+  async (req: Request, res: Response) => {
+    try {
+      const data = await createAcademyChallenge(
+        req.tenant!.academyId,
+        req.user!.id,
+        req.body ?? {},
+      );
+      // Auditoria de tenant, como toda escrita deste módulo: sem ela o dono da
+      // academia não consegue responder "quem criou isso".
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'challenge.created',
+        entityType: 'challenge',
+        // `entityId` é `number` no schema de auditoria e o id do desafio é
+        // BIGINT — vai como texto no meta para não truncar silenciosamente.
+        meta: { challengeId: (data as { id: string }).id, kind: (data as { kind?: string }).kind },
+        ipAddress: req.ip,
+      });
+      return res.status(201).json({ success: true, data });
+    } catch (err) {
+      return responderErroDesafio(err, res, 'POST /academy/challenges');
+    }
+  },
+);
+
+router.get(
+  '/challenges',
+  requireTenantPermission('academy.dashboard'),
+  async (req: Request, res: Response) => {
+    try {
+      const challenges = await listChallengesForAcademyPanel(req.tenant!.academyId);
+      return res.json({ success: true, data: { challenges } });
+    } catch (err) {
+      return responderErroDesafio(err, res, 'GET /academy/challenges');
+    }
+  },
+);
+
+router.get(
+  '/challenges/:challengeId',
+  requireTenantPermission('academy.dashboard'),
+  async (req: Request, res: Response) => {
+    const id = desafioIdParam(req.params.challengeId);
+    if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+    try {
+      const data = await getAcademyChallengePanel(req.tenant!.academyId, id);
+      return res.json({ success: true, data });
+    } catch (err) {
+      return responderErroDesafio(err, res, 'GET /academy/challenges/:id');
+    }
+  },
+);
+
+router.post(
+  '/challenges/:challengeId/invite',
+  requireTenantPermission('academy.dashboard'),
+  requireTenantPermission('academy.students.write'),
+  async (req: Request, res: Response) => {
+    const id = desafioIdParam(req.params.challengeId);
+    if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+    try {
+      // `studentIds` ausente = convidar todos os elegíveis, resolvidos no
+      // servidor. Presente = filtro sobre os elegíveis, nunca autorização.
+      const data = await inviteToAcademyChallenge(
+        req.tenant!.academyId,
+        id,
+        req.body?.studentIds,
+      );
+      // Convite em massa é a ação de MAIOR alcance do módulo — toca todos os
+      // alunos ativos. Precisa deixar rastro.
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'challenge.invited',
+        entityType: 'challenge',
+        meta: { challengeId: id, invited: data.invited, rejected: data.rejected },
+        ipAddress: req.ip,
+      });
+      return res.json({ success: true, data });
+    } catch (err) {
+      return responderErroDesafio(err, res, 'POST /academy/challenges/:id/invite');
+    }
+  },
+);
+
+router.post(
+  '/challenges/:challengeId/cancel',
+  requireTenantPermission('academy.dashboard'),
+  requireTenantPermission('academy.students.write'),
+  async (req: Request, res: Response) => {
+    const id = desafioIdParam(req.params.challengeId);
+    if (!id) return res.status(404).json({ success: false, error: 'Desafio não encontrado' });
+    try {
+      const data = await cancelAcademyChallengeAsTenant(req.tenant!.academyId, id);
+      logAcademyAction({
+        academyId: req.tenant!.academyId,
+        userId: req.user!.id,
+        action: 'challenge.cancelled',
+        entityType: 'challenge',
+        meta: { challengeId: id },
+        ipAddress: req.ip,
+      });
+      return res.json({ success: true, data });
+    } catch (err) {
+      return responderErroDesafio(err, res, 'POST /academy/challenges/:id/cancel');
+    }
+  },
+);
 
 export default router;

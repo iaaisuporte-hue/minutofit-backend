@@ -26,6 +26,11 @@ export type AuditAction =
   | 'reception.denied'
   | 'reception.visitor_access'
   | 'reception.notes_viewed'
+  // Spec 034 C3 — desafios institucionais. Escrita de maior alcance do módulo
+  // (o convite toca todos os alunos ativos) precisa deixar rastro.
+  | 'challenge.created'
+  | 'challenge.invited'
+  | 'challenge.cancelled'
   | 'personal.student_note.created'
   | 'personal.student_note.updated'
   | 'personal.student_note.deleted'

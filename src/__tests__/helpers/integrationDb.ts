@@ -74,6 +74,34 @@ export async function releaseSuiteLock(c: Client): Promise<void> {
   await c.query('SELECT pg_advisory_unlock($1)', [SUITE_LOCK_ID]);
 }
 
+/**
+ * Encerramento de suíte que NUNCA retém o lock.
+ *
+ * O `afterAll` típico era `limpeza(); releaseSuiteLock(); c.end();` em
+ * sequência — e uma limpeza que falhasse abortava antes das duas últimas. O
+ * resultado observado: um erro de schema de 2 segundos virou **14 horas** de
+ * espera. A suíte falhava, deixava a conexão aberta segurando o advisory lock
+ * de sessão, e todas as suítes seguintes bloqueavam em
+ * `pg_advisory_lock` até alguém matar o processo à mão.
+ *
+ * A regra aqui é a mesma de qualquer recurso: liberar no `finally`. Falha de
+ * limpeza vira aviso; o lock e a conexão saem de qualquer jeito.
+ */
+export async function finishSuite(
+  c: Client,
+  limpeza?: () => Promise<void>,
+): Promise<void> {
+  try {
+    if (limpeza) await limpeza();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[itest] limpeza da suíte falhou — liberando o lock mesmo assim:', err);
+  } finally {
+    await c.query('SELECT pg_advisory_unlock($1)', [SUITE_LOCK_ID]).catch(() => undefined);
+    await c.end().catch(() => undefined);
+  }
+}
+
 /** Remove o que ESTA suíte criou. Seguro de rodar antes e depois. */
 export async function cleanFixtures(c: Client, tag: FixtureTag): Promise<void> {
   await c.query(`DELETE FROM users WHERE email LIKE $1`, [`${tag}-%@test.local`]);

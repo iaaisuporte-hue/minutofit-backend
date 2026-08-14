@@ -39,13 +39,40 @@ export const CHALLENGE_KINDS: readonly ChallengeKind[] = Object.freeze([
 export const RULES_VERSION = 1;
 
 /**
- * Mínimo de participantes ativos para publicar faixas.
+ * Mínimo de participantes ativos para publicar QUALQUER agregado.
  *
- * Abaixo disso a faixa identifica a pessoa: numa turma de três, "1 concluído"
- * é um nome. O corte é do BACKEND — esconder na tela deixaria o dado saindo
- * pela API, e um cliente qualquer o leria.
+ * Abaixo disso o agregado identifica a pessoa: numa turma de três, "1
+ * concluído" é um nome, e uma média de dois é praticamente o valor de cada um.
+ * O corte é do BACKEND — esconder na tela deixaria o dado saindo pela API, e
+ * um cliente qualquer o leria.
+ *
+ * Vale igual para a academia: turma institucional não relaxa a regra. Uma
+ * unidade com quatro alunos ativos é tão identificável quanto a turma de um
+ * personal com quatro.
  */
 export const MIN_PARTICIPANTS_FOR_BANDS = 5;
+
+/**
+ * A política de grupo pequeno, em um lugar só.
+ *
+ * Existe para o `if (count < 5)` não se espalhar por controllers — quando essa
+ * condição vira código repetido, basta um lugar esquecê-la para o dado vazar
+ * exatamente onde ninguém está olhando. Quem publica agregado pergunta AQUI.
+ */
+export function canPublishAggregate(activeParticipants: number): boolean {
+  return activeParticipants >= MIN_PARTICIPANTS_FOR_BANDS;
+}
+
+/**
+ * Aplica a política a qualquer agregado: devolve o valor ou `null`.
+ *
+ * `null` não é "escondi na tela" — é a API não devolvendo o número. E é
+ * genérico de propósito: média de consistência, distribuição, taxa de adesão,
+ * tudo passa pela mesma porta.
+ */
+export function withAggregatePolicy<T>(activeParticipants: number, valor: T): T | null {
+  return canPublishAggregate(activeParticipants) ? valor : null;
+}
 
 /**
  * Percentual a partir do qual a semana conta como cumprida.
@@ -359,7 +386,7 @@ export interface BandCount {
  * em cada uma, jamais quem são.
  */
 export function summarizeBands(pcts: Array<{ pct: number | null; achieved: boolean }>): BandCount[] | null {
-  if (pcts.length < MIN_PARTICIPANTS_FOR_BANDS) return null;
+  if (!canPublishAggregate(pcts.length)) return null;
 
   const contagem: Record<BandId, number> = {
     completed: 0,

@@ -13,7 +13,7 @@ import {
   connect,
   describeWithDb,
   hasTestDb,
-  releaseSuiteLock,
+  finishSuite,
 } from './helpers/integrationDb';
 
 if (hasTestDb) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
@@ -21,6 +21,8 @@ jest.setTimeout(120_000);
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const migration = require('../../migrations/1829000000000_challenges.js');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const teardown = require('../../migrations/1830000000000_academy-teardown-and-challenge-fk.js');
 
 describeWithDb('Migration 1829 · up → down → up', () => {
   let c: Client;
@@ -34,10 +36,13 @@ describeWithDb('Migration 1829 · up → down → up', () => {
   });
 
   afterAll(async () => {
-    // Deixa o schema no estado esperado pelas demais suítes.
-    await migration.up(pgm(c));
-    await releaseSuiteLock(c);
-    await c.end();
+    // `finishSuite` libera o lock no `finally`: limpeza que falha não
+    // pode reter o advisory lock e travar as suítes seguintes.
+    await finishSuite(c, async () => {
+      // Deixa o schema no estado esperado pelas demais suítes.
+      await migration.up(pgm(c));
+      await teardown.up(pgm(c));
+    });
   });
 
   async function existe(tabela: string): Promise<boolean> {
@@ -105,6 +110,77 @@ describeWithDb('Migration 1829 · up → down → up', () => {
 
     await migration.up(pgm(c));
     await c.query(`DELETE FROM users WHERE email LIKE 'mig1829-%@test.local'`);
+  });
+
+  it('a 1830 sobe, desce e sobe — e é ela que torna possível excluir academia', async () => {
+    await migration.up(pgm(c));
+    await teardown.up(pgm(c));
+
+    // O defeito: `academy_roles` cascateia da academia e tem gatilho de
+    // auditoria; a FK do audit recusava o INSERT do gatilho porque a academia
+    // já tinha sumido na mesma transação. Excluir academia era impossível.
+    const { rows: a } = await c.query<{ id: number }>(
+      `INSERT INTO academies (slug, legal_name, display_name, status)
+       VALUES ('mig1830-a', 'Teste', 'Teste', 'active') RETURNING id`,
+    );
+    await c.query(
+      `INSERT INTO academy_roles (academy_id, slug, label, permissions, is_system)
+       VALUES ($1, 'academy_student', 'Aluno', '[]'::jsonb, true)`,
+      [a[0].id],
+    );
+    await expect(
+      c.query(`DELETE FROM academies WHERE id = $1`, [a[0].id]),
+    ).resolves.toBeDefined();
+
+    await teardown.down(pgm(c));
+    await teardown.up(pgm(c));
+    // Depois do round trip, continua funcionando.
+    const { rows: b } = await c.query<{ id: number }>(
+      `INSERT INTO academies (slug, legal_name, display_name, status)
+       VALUES ('mig1830-b', 'Teste', 'Teste', 'active') RETURNING id`,
+    );
+    await c.query(
+      `INSERT INTO academy_roles (academy_id, slug, label, permissions, is_system)
+       VALUES ($1, 'academy_student', 'Aluno', '[]'::jsonb, true)`,
+      [b[0].id],
+    );
+    await expect(
+      c.query(`DELETE FROM academies WHERE id = $1`, [b[0].id]),
+    ).resolves.toBeDefined();
+  });
+
+  it('desafio institucional CASCATEIA quando a academia some', async () => {
+    await migration.up(pgm(c));
+    await teardown.up(pgm(c));
+
+    const { rows: a } = await c.query<{ id: number }>(
+      `INSERT INTO academies (slug, legal_name, display_name, status)
+       VALUES ('mig1830-c', 'Teste', 'Teste', 'active') RETURNING id`,
+    );
+    const { rows: u } = await c.query<{ id: number }>(
+      `INSERT INTO users (email, password, role, name, cpf, phone)
+       VALUES ('mig1830-c@test.local','x','user','Fixture','918273650','11918273650')
+       RETURNING id`,
+    );
+    const { rows: ch } = await c.query<{ id: string }>(
+      `INSERT INTO challenges (scope, created_by_user_id, academy_id, title, kind,
+                               rule_json, starts_on, ends_on, status)
+       VALUES ('academy', $1, $2, 'X', 'consistency', '{"requiredWeeks":1}'::jsonb,
+               CURRENT_DATE, CURRENT_DATE + 7, 'active')
+       RETURNING id::text`,
+      [u[0].id, a[0].id],
+    );
+
+    await c.query(`DELETE FROM academies WHERE id = $1`, [a[0].id]);
+
+    // Entidade operacional não sobrevive ao dono (precedente da 1826).
+    const { rows } = await c.query<{ n: number }>(
+      `SELECT COUNT(*)::int n FROM challenges WHERE id = $1::bigint`,
+      [ch[0].id],
+    );
+    expect(rows[0].n).toBe(0);
+
+    await c.query(`DELETE FROM users WHERE id = $1`, [u[0].id]);
   });
 
   it('o CHECK de dono tolera o SET NULL do personal excluído', async () => {

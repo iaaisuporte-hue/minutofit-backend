@@ -82,7 +82,9 @@ export async function lockChallengeEvaluation(
 
 export interface CreateChallengeInput {
   createdByUserId: number;
-  personalId: number;
+  /** Dono do desafio. Exatamente UM dos dois — o CHECK do banco exige. */
+  personalId?: number | null;
+  academyId?: number | null;
   title: string;
   description: string | null;
   kind: ChallengeKind;
@@ -93,15 +95,23 @@ export interface CreateChallengeInput {
 }
 
 export async function insertChallenge(input: CreateChallengeInput): Promise<ChallengeRow> {
+  // O escopo é DERIVADO do dono, nunca aceito do cliente: quem cria dentro do
+  // contexto de uma academia produz desafio institucional, e quem cria como
+  // personal produz desafio de turma. Um `scope` vindo do corpo seria um
+  // pedido de autorização disfarçado de campo.
+  const scope = input.academyId != null ? 'academy' : 'personal';
+
   const { rows } = await pool.query<ChallengeRow>(
     `INSERT INTO challenges
-       (scope, created_by_user_id, personal_id, title, description, kind,
+       (scope, created_by_user_id, personal_id, academy_id, title, description, kind,
         rule_json, rules_version, starts_on, ends_on, status)
-     VALUES ('personal', $1, $2, $3, $4, $5, $6::jsonb, $7, $8::date, $9::date, 'active')
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::date, $11::date, 'active')
      RETURNING ${challengeColumns('challenges')}`,
     [
+      scope,
       input.createdByUserId,
-      input.personalId,
+      input.personalId ?? null,
+      input.academyId ?? null,
       input.title,
       input.description,
       input.kind,
@@ -112,6 +122,104 @@ export async function insertChallenge(input: CreateChallengeInput): Promise<Chal
     ],
   );
   return rows[0];
+}
+
+/**
+ * Um desafio, se pertencer à ACADEMIA informada.
+ *
+ * Gêmeo de `findChallengeOwnedBy`, com o tenant na cláusula pela mesma razão:
+ * desafio de outra academia não é "encontrado e recusado", é inexistente para
+ * quem pergunta — a resposta não distingue "não existe" de "é de outro tenant".
+ */
+export async function findChallengeOwnedByAcademy(
+  challengeId: string,
+  academyId: number,
+): Promise<ChallengeRow | null> {
+  const { rows } = await pool.query<ChallengeRow>(
+    `SELECT ${challengeColumns('c')} FROM challenges c
+      WHERE c.id = $1::bigint AND c.academy_id = $2 AND c.scope = 'academy'`,
+    [challengeId, academyId],
+  );
+  return rows[0] ?? null;
+}
+
+export async function listChallengesForAcademy(academyId: number): Promise<ChallengeRow[]> {
+  const { rows } = await pool.query<ChallengeRow>(
+    `SELECT ${challengeColumns('c')} FROM challenges c
+      WHERE c.academy_id = $1 AND c.scope = 'academy'
+      ORDER BY c.starts_on DESC, c.id DESC
+      LIMIT 100`,
+    [academyId],
+  );
+  return rows;
+}
+
+/**
+ * Alunos ELEGÍVEIS de uma academia — resolvidos no servidor.
+ *
+ * O convite institucional pode ser "todos os elegíveis", e por isso a lista
+ * nasce aqui: aceitar ids do frontend transformaria a seleção da tela em
+ * autorização. `ar.slug = 'academy_student'` é o vínculo canônico do módulo
+ * Academia — não existe vínculo paralelo para desafio.
+ */
+export async function listEligibleAcademyStudents(
+  academyId: number,
+  unitId?: number | null,
+): Promise<number[]> {
+  const { rows } = await pool.query<{ user_id: number }>(
+    `SELECT au.user_id
+       FROM academy_users au
+       JOIN academy_roles ar ON ar.id = au.role_id
+      WHERE au.academy_id = $1
+        AND ar.slug = 'academy_student'
+        AND au.status = 'active' AND au.is_active = true
+        AND ($2::int IS NULL OR au.academy_unit_id = $2)`,
+    [academyId, unitId ?? null],
+  );
+  return rows.map((r) => r.user_id);
+}
+
+/** O aluno pertence a ESTA academia? Fail-closed, sem revelar existência. */
+export async function isAcademyStudent(academyId: number, userId: number): Promise<boolean> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM academy_users au
+       JOIN academy_roles ar ON ar.id = au.role_id
+      WHERE au.academy_id = $1 AND au.user_id = $2
+        AND ar.slug = 'academy_student'
+        AND au.status = 'active' AND au.is_active = true
+      LIMIT 1`,
+    [academyId, userId],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Remove os desafios de uma academia encerrada.
+ *
+ * Precedente do projeto (migrations 1826 e a exclusão de conta do personal):
+ * entidade operacional não sobrevive ao dono. Um desafio institucional sem
+ * tenant é entidade social órfã carregando dado pessoal de terceiros; os
+ * participantes vão por CASCADE.
+ */
+export async function deleteAcademyChallenges(academyId: number): Promise<number> {
+  const { rowCount } = await pool.query(`DELETE FROM challenges WHERE academy_id = $1`, [
+    academyId,
+  ]);
+  return rowCount ?? 0;
+}
+
+export async function cancelAcademyChallenge(
+  challengeId: string,
+  academyId: number,
+): Promise<boolean> {
+  const { rowCount } = await pool.query(
+    `UPDATE challenges
+        SET status = 'cancelled', updated_at = now()
+      WHERE id = $1::bigint AND academy_id = $2 AND scope = 'academy'
+        AND status IN ('draft', 'active')`,
+    [challengeId, academyId],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 /**
@@ -140,7 +248,10 @@ export async function findChallengeForParticipant(
 ): Promise<{ challenge: ChallengeRow; participant: ParticipantRow } | null> {
   const { rows } = await pool.query(
     `SELECT ${challengeColumns('c')},
-            (SELECT name FROM users WHERE id = c.personal_id) AS invited_by_name,
+            COALESCE(
+              (SELECT name FROM users WHERE id = c.personal_id),
+              (SELECT display_name FROM academies WHERE id = c.academy_id)
+            ) AS invited_by_name,
             p.id::text AS p_id, p.status AS p_status, p.invited_at, p.joined_at,
             p.left_at, p.completed_at, p.consent_ack_at, p.final_pct::text AS final_pct
        FROM challenges c
@@ -179,18 +290,38 @@ export async function listChallengesForPersonal(personalId: number): Promise<Cha
   return rows;
 }
 
-export async function listChallengesForUser(userId: number): Promise<
-  Array<ChallengeRow & { p_status: ParticipantStatus; final_pct: string | null }>
+/**
+ * Os desafios do aluno — do personal E da academia, na mesma lista.
+ *
+ * O `scope` diferencia a origem; não existem "Desafios do Personal" e
+ * "Desafios da Academia" como duas aplicações. A ordem é por ESTADO, não por
+ * origem: em andamento, depois futuros, depois encerrados. Priorizar o
+ * institucional sobre o do personal seria uma escolha de produto que ninguém
+ * fez.
+ */
+export async function listChallengesForUser(userId: number, today: string): Promise<
+  Array<ChallengeRow & { p_status: ParticipantStatus; final_pct: string | null; invited_by_name: string | null }>
 > {
   const { rows } = await pool.query(
     `SELECT ${challengeColumns('c')},
-            p.status AS p_status, p.final_pct::text AS final_pct
+            p.status AS p_status, p.final_pct::text AS final_pct,
+            COALESCE(
+              (SELECT name FROM users WHERE id = c.personal_id),
+              (SELECT display_name FROM academies WHERE id = c.academy_id)
+            ) AS invited_by_name
        FROM challenges c
        JOIN challenge_participants p ON p.challenge_id = c.id
       WHERE p.user_id = $1
-      ORDER BY c.starts_on DESC, c.id DESC
+      ORDER BY
+        CASE
+          WHEN c.status = 'cancelled' THEN 3
+          WHEN c.starts_on > $2::date THEN 1   -- futuros
+          WHEN c.ends_on   < $2::date THEN 2   -- encerrados
+          ELSE 0                               -- em andamento
+        END,
+        c.ends_on ASC, c.id DESC
       LIMIT 50`,
-    [userId],
+    [userId, today],
   );
   return rows;
 }
@@ -218,6 +349,16 @@ export async function inviteParticipants(
     [challengeId, userIds],
   );
   return rowCount ?? 0;
+}
+
+/** Quem já saiu deste desafio — o convite em massa não os reconvida. */
+export async function listParticipantsWhoLeft(challengeId: string): Promise<number[]> {
+  const { rows } = await pool.query<{ user_id: number }>(
+    `SELECT user_id FROM challenge_participants
+      WHERE challenge_id = $1::bigint AND status = 'left'`,
+    [challengeId],
+  );
+  return rows.map((r) => r.user_id);
 }
 
 export async function listParticipants(challengeId: string): Promise<ParticipantRow[]> {
@@ -337,7 +478,10 @@ export async function cancelChallenge(challengeId: string, personalId: number): 
 export async function listRunningForUser(userId: number, today: string) {
   const { rows } = await pool.query(
     `SELECT ${challengeColumns('c')}, p.status AS p_status,
-            (SELECT name FROM users WHERE id = c.personal_id) AS invited_by_name
+            COALESCE(
+              (SELECT name FROM users WHERE id = c.personal_id),
+              (SELECT display_name FROM academies WHERE id = c.academy_id)
+            ) AS invited_by_name
        FROM challenges c
        JOIN challenge_participants p ON p.challenge_id = c.id
       WHERE p.user_id = $1

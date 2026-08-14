@@ -28,7 +28,7 @@ import {
   createUser,
   describeWithDb,
   hasTestDb,
-  releaseSuiteLock,
+  finishSuite,
   restorePerformanceSchema,
   runBackfill,
 } from './helpers/integrationDb';
@@ -61,9 +61,11 @@ describeWithDb('Performance P1 · integração com banco real', () => {
   });
 
   afterAll(async () => {
-    await cleanFixtures(c, TAG);
-    await releaseSuiteLock(c);
-    await c.end();
+    // `finishSuite` libera o lock no `finally`: limpeza que falha não
+    // pode reter o advisory lock e travar as suítes seguintes.
+    await finishSuite(c, async () => {
+      await cleanFixtures(c, TAG);
+    });
     // Fecha o pool do app, senão o Jest não encerra.
     const pool = (await import('../config/database')).default;
     await pool.end();

@@ -33,6 +33,7 @@ import {
 import { reviewNetworkProfile, type CredentialStatus, type PublicationStatus } from '../services/professionalNetworkService';
 import { setPersonalPlan, getPersonalPlan, reconcilePlatformSubscription, listPlatformBillingEvents, type PersonalPlan } from '../services/personalPlanService';
 import { getAcademySubscription, setAcademySubscription, reconcileAcademySubscription, listAcademyBillingEvents, expireOverdueAcademySubs, type AcademySaasPlan } from '../services/academySubscriptionService';
+import { parseLimit } from '../utils/parseId';
 
 const router = Router();
 
@@ -1906,7 +1907,22 @@ router.post(
 // P0-5: Falhas de pagamento e suporte de cobrança
 // ---------------------------------------------------------------------------
 
-// GET /admin/billing/failures — pagamentos com falha (personal_billing_events + payments)
+/**
+ * GET /admin/billing/failures — pagamentos B2C que não foram aprovados.
+ *
+ * Respondia 500 desde que nasceu: a query lia `payments.provider_ref` (a coluna
+ * do id do gateway chama-se `mercado_pago_payment_id`) e havia uma segunda
+ * query sobre `personal_billing_events` juntando por `pbe.personal_id`, coluna
+ * que a tabela não tem — ela guarda `subscription_id`. Como o cliente trata
+ * resposta não-ok como "sem dados", o admin via "nenhuma falha registrada"
+ * mesmo com pagamento reprovado no banco (Onda F4, ago/2026).
+ *
+ * A metade de `personal_billing_events` foi removida em vez de corrigida: é o
+ * domínio de assinatura MP congelado (`STUDENT_BILLING_ENABLED=false`), que não
+ * gera evento nenhum — consertar o JOIN só produziria uma lista sempre vazia.
+ * O financeiro do personal (`personal_financial_*`) é manual e não tem falha de
+ * gateway para reportar, então nada entra no lugar.
+ */
 router.get(
   '/billing/failures',
   authMiddleware,
@@ -1914,36 +1930,20 @@ router.get(
   requireAdminPermission('admin.finance'),
   async (req: Request, res: Response) => {
     try {
-      const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 200);
+      const limit = parseLimit(req.query.limit, 50, 200);
 
-      // Eventos de falha em personal billing
-      const { rows: billingFailures } = await pool.query(
-        `SELECT pbe.id, pbe.personal_id, u.name AS personal_name, u.email AS personal_email,
-                pbe.event_type, pbe.payload_json, pbe.occurred_at
-         FROM personal_billing_events pbe
-         JOIN users u ON u.id = pbe.personal_id
-         WHERE pbe.event_type ILIKE '%fail%' OR pbe.event_type ILIKE '%reject%' OR pbe.event_type ILIKE '%error%'
-         ORDER BY pbe.occurred_at DESC
-         LIMIT $1`,
-        [Math.floor(limit / 2)]
-      );
-
-      // Pagamentos gerais com status != approved
       const { rows: paymentFailures } = await pool.query(
         `SELECT p.id, p.user_id, u.name AS user_name, u.email AS user_email,
-                p.amount_brl, p.status, p.provider_ref, p.created_at
+                p.amount_brl, p.status, p.mercado_pago_payment_id, p.created_at
          FROM payments p
          JOIN users u ON u.id = p.user_id
          WHERE p.status NOT IN ('approved', 'pending')
          ORDER BY p.created_at DESC
          LIMIT $1`,
-        [Math.floor(limit / 2)]
+        [limit]
       );
 
-      return res.json({
-        success: true,
-        data: { billingFailures, paymentFailures },
-      });
+      return res.json({ success: true, data: { paymentFailures } });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
     }

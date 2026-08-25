@@ -29,7 +29,8 @@ export type PersonalDashboardAlertType =
   | 'silent_disappear'
   | 'overtraining'
   | 'metabolic_decline'
-  | 'recovery_gap';
+  | 'recovery_gap'
+  | 'payment_overdue';
 
 export type PersonalMetabolicBand = 'low' | 'moderate' | 'high' | 'unknown';
 export type PersonalMetabolicTrend = 'up' | 'down' | 'stable' | 'unknown';
@@ -55,6 +56,12 @@ export type PersonalDashboardStudent = {
   engagementScore: number | null;
   /** `null` = aluno em carência de onboarding — NÃO tratar como risco máximo. */
   riskScore: number | null;
+  /**
+   * Por que este aluno pontua risco, um item por componente que somou. Vazio
+   * quando `riskScore` é `null` ou quando o consent do aluno derruba todos os
+   * motivos. Nunca exibir risco sem estes motivos ao lado.
+   */
+  riskFactors: string[];
   risk: PersonalDashboardRisk;
   goal: PersonalDashboardGoal;
   notes: string | null;
@@ -76,4 +83,10 @@ export type PersonalDashboardAlert = {
   description: string;
   studentId: string | null;
   studentName: string | null;
+  /**
+   * Destino do CTA quando o alerta não se resolve na ficha do aluno (ex.:
+   * `payment_overdue` → Financeiro). Ausente = comportamento antigo (abre o
+   * aluno, ou a lista quando não há aluno).
+   */
+  actionHref?: string;
 };

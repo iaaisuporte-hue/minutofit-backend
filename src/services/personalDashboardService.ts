@@ -17,6 +17,7 @@ import type {
   PersonalMetabolicTrend,
 } from '../shared/types/personal-dashboard';
 import { resolveWeekDays } from '../utils/weekPreset';
+import { dayKey } from '../utils/appDay';
 
 const DASHBOARD_CACHE_TTL = 60; // seconds
 
@@ -292,15 +293,33 @@ export function computeEngagementScore(input: {
   return Math.round(clamp(score, 0, 100));
 }
 
-/** `null` quando não há engajamento apurável (aluno em onboarding). */
-export function computeRiskScore(input: {
+/**
+ * Sinais que alimentam o risco. Tipo único de propósito: `computeRiskScore` e
+ * `buildRiskFactors` leem exatamente a mesma entrada, então o número e a
+ * explicação não podem divergir por descuido de assinatura.
+ */
+export type RiskSignals = {
   engagementScore: number | null;
   metabolismDelta7d: number | null;
   latestSleptWell: boolean | null;
   lastWorkoutISO: string | null;
   lastCheckinISO: string | null;
   assignedAtISO?: string | null;
-}): number | null {
+  /**
+   * Dias de atraso da cobrança em aberto mais antiga (Onda F3).
+   * `null`/ausente = sem sinal financeiro — o cálculo fica idêntico ao de antes
+   * do módulo Financeiro existir.
+   */
+  paymentOverdueDays?: number | null;
+};
+
+/** Atraso a partir do qual a cobrança vira sinal de risco. */
+const OVERDUE_SIGNAL_DAYS = 3;
+/** Atraso que caracteriza inadimplência instalada, não esquecimento. */
+const OVERDUE_SEVERE_DAYS = 15;
+
+/** `null` quando não há engajamento apurável (aluno em onboarding). */
+export function computeRiskScore(input: RiskSignals): number | null {
   if (input.engagementScore === null) return null;
 
   let score = 100 - input.engagementScore;
@@ -308,7 +327,77 @@ export function computeRiskScore(input: {
   if (input.latestSleptWell === false) score += 10;
   const touchpointGap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO, input.assignedAtISO);
   if (touchpointGap >= 10) score += 10;
+  // Degrau, não soma: 20 dias de atraso valem +15, não +25. Atraso não é dose.
+  const overdue = input.paymentOverdueDays ?? 0;
+  if (overdue >= OVERDUE_SEVERE_DAYS) score += 15;
+  else if (overdue >= OVERDUE_SIGNAL_DAYS) score += 10;
   return Math.round(clamp(score, 0, 100));
+}
+
+/**
+ * Motivo legível de cada parcela do risco.
+ *
+ * A regra do produto é que nenhum aluno apareça "em risco" sem que o personal
+ * consiga ler POR QUÊ — "o sistema detectou" não é explicação. Cada item aqui
+ * corresponde a um termo que somou no `computeRiskScore`; a ordem é a mesma do
+ * cálculo.
+ *
+ * O `scope` acompanha o fator porque a redação por consent acontece depois: o
+ * aluno que revogou `metabolic` continua contando risco (decisão documentada em
+ * `getPersonalDashboard`), mas não pode ter o sinal metabólico devolvido em
+ * texto. Fatores com `scope: null` não derivam de dado de saúde/treino —
+ * financeiro é acordo entre personal e aluno, não dado clínico.
+ */
+export type RiskFactor = { scope: ConsentScope | null; label: string };
+
+export function buildRiskFactors(input: RiskSignals): RiskFactor[] {
+  if (input.engagementScore === null) return [];
+
+  const factors: RiskFactor[] = [];
+  const engagement = input.engagementScore;
+  if (engagement < 100) {
+    factors.push({
+      // Mesmo número que já vai no payload como `engagementScore` — não é dado
+      // novo, então não depende de escopo.
+      scope: null,
+      label:
+        engagement < 40
+          ? `engajamento baixo (${engagement}/100)`
+          : `engajamento em ${engagement}/100`,
+    });
+  }
+
+  if (input.metabolismDelta7d !== null && input.metabolismDelta7d <= -15) {
+    factors.push({
+      scope: 'metabolic',
+      label: `score metabólico caiu ${Math.abs(input.metabolismDelta7d)} pontos em 7 dias`,
+    });
+  }
+
+  if (input.latestSleptWell === false) {
+    factors.push({ scope: 'sleep', label: 'sono ruim no último check-in' });
+  }
+
+  const gap = latestTouchpointDays(input.lastWorkoutISO, input.lastCheckinISO, input.assignedAtISO);
+  if (gap >= 10) {
+    factors.push({
+      scope: 'workouts',
+      // O sentinela de "nunca aconteceu" jamais vira número em copy.
+      label: gap >= NEVER_DAYS ? 'sem treino nem check-in registrado' : `sem contato há ${gap} dias`,
+    });
+  }
+
+  const overdue = input.paymentOverdueDays ?? 0;
+  if (overdue >= OVERDUE_SIGNAL_DAYS) {
+    // Sem valor em reais: o quanto o aluno deve é dado do módulo Financeiro, e
+    // repeti-lo aqui o espalharia para toda superfície que exibe risco.
+    factors.push({
+      scope: null,
+      label: `pagamento vencido há ${overdue} ${overdue === 1 ? 'dia' : 'dias'}`,
+    });
+  }
+
+  return factors;
 }
 
 function bandFromScore(score: number | null): PersonalMetabolicBand {
@@ -378,7 +467,16 @@ async function loadCarteiraMetabolism(studentIds: number[], academyId: number | 
   return map;
 }
 
-function buildIntelligentAlerts(students: PersonalDashboardStudent[]): PersonalDashboardAlert[] {
+/** Aluno com cobrança vencida, já resolvido na consulta da carteira. */
+export type OverdueStudent = { id: string; name: string; days: number };
+
+/** Para onde o alerta financeiro manda o personal. */
+const FINANCE_ROUTE = '/app/personal/finance';
+
+export function buildIntelligentAlerts(
+  students: PersonalDashboardStudent[],
+  overdue: OverdueStudent[] = [],
+): PersonalDashboardAlert[] {
   const alerts: PersonalDashboardAlert[] = [];
 
   const attentionLoad = students.filter(
@@ -391,6 +489,29 @@ function buildIntelligentAlerts(students: PersonalDashboardStudent[]): PersonalD
       description: 'A carteira já mostra sinais de baixa aderência ou ausência recente. Vale priorizar contato curto e ajuste rápido.',
       studentId: null,
       studentName: null,
+    });
+  }
+
+  // Financeiro entra logo depois da carga de atenção porque atraso é sinal
+  // precoce de saída — costuma vir antes de o aluno parar de treinar. Um único
+  // card agregado: cobrança é assunto para a tela do Financeiro, não seis
+  // alertas empurrando o resto da carteira para fora do teto.
+  if (overdue.length > 0) {
+    const pior = overdue[0];
+    const um = overdue.length === 1;
+    alerts.push({
+      type: 'payment_overdue',
+      title: um
+        ? `${pior.name} com pagamento vencido há ${pior.days} dias`
+        : `${overdue.length} alunos com pagamento vencido`,
+      // Sem valor em reais — a conversa aqui é de relacionamento, e o número
+      // exato mora no Financeiro.
+      description: um
+        ? 'Um lembrete curto costuma resolver antes de virar ausência. O Financeiro tem o atalho de WhatsApp.'
+        : `Atraso a partir de ${OVERDUE_SIGNAL_DAYS} dias, o mais antigo há ${pior.days}. Vale um lembrete antes que a cobrança vire motivo de sumiço.`,
+      studentId: um ? pior.id : null,
+      studentName: um ? pior.name : null,
+      actionHref: FINANCE_ROUTE,
     });
   }
 
@@ -837,7 +958,28 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
             AND ($2::integer IS NULL OR pwp.academy_id IS NULL OR pwp.academy_id = $2)
           ORDER BY pwp.created_at DESC
           LIMIT 1
-        ) AS active_week_preset
+        ) AS active_week_preset,
+        (
+          -- Sinal financeiro (Onda F3): dias de atraso da cobrança em aberto
+          -- mais antiga deste aluno com ESTE personal. Subconsulta na mesma
+          -- query da carteira — uma cobrança por aluno seria N+1 numa tela que
+          -- o app repolla a cada 30s.
+          --
+          -- O dashboard só LÊ: quem cria cobrança é a geração preguiçosa do
+          -- Financeiro (ensureCharges), e chamá-la aqui transformaria todo
+          -- poll do dashboard num write.
+          --
+          -- A comparação é com o DIA DO ALUNO ($3), não com CURRENT_DATE: o
+          -- servidor roda em UTC e o Financeiro decide "vencido" em BRT — usar
+          -- os dois critérios faria a mesma cobrança aparecer vencida numa tela
+          -- e a vencer na outra por algumas horas.
+          SELECT ($3::date - MIN(pfc.due_date))::int
+          FROM personal_financial_charges pfc
+          WHERE pfc.personal_id = $1
+            AND pfc.student_id = u.id
+            AND pfc.status IN ('open','partial')
+            AND pfc.due_date < $3::date
+        ) AS payment_overdue_days
       FROM personal_student_assignments psa
       JOIN users u
         ON u.id = psa.student_id
@@ -859,7 +1001,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
         AND u.role = 'user'
         AND ($2::integer IS NULL OR psa.academy_id IS NULL OR psa.academy_id = $2)
       ORDER BY u.name ASC`,
-    [personalId, academyId ?? null]
+    [personalId, academyId ?? null, dayKey()]
   );
 
   const baseStudents = result.rows.map((row) => {
@@ -911,10 +1053,19 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       lastTechnicalNoteAt: row.last_technical_note_at
         ? new Date(row.last_technical_note_at).toISOString()
         : null,
+      paymentOverdueDays:
+        row.payment_overdue_days === null || row.payment_overdue_days === undefined
+          ? null
+          : Number(row.payment_overdue_days),
     };
   });
 
   const metabolismMap = await loadCarteiraMetabolism(baseStudents.map((s) => s.numericId), academyId ?? null);
+
+  // Fatores com o escopo de consent preservado. O payload leva só os rótulos;
+  // a filtragem por consent acontece adiante, e sem a etiqueta ela seria um
+  // `includes()` sobre texto — frágil na primeira vez que alguém trocar a copy.
+  const riskFactorsByStudent = new Map<string, RiskFactor[]>();
 
   const students: PersonalDashboardStudent[] = baseStudents.map((s) => {
     const m = metabolismMap.get(s.numericId);
@@ -936,21 +1087,29 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       checkins7d: s.checkins7d,
       onboarding,
     });
-    const riskScore = computeRiskScore({
+    const signals: RiskSignals = {
       engagementScore,
       metabolismDelta7d: delta,
       latestSleptWell: s.latestSleptWell,
       lastWorkoutISO: s.lastWorkoutISO,
       lastCheckinISO: s.lastCheckinISO,
       assignedAtISO: s.assignedAtISO,
-    });
-    const { numericId: _omit, ...rest } = s;
+      paymentOverdueDays: s.paymentOverdueDays,
+    };
+    const riskScore = computeRiskScore(signals);
+    const factors = buildRiskFactors(signals);
+    riskFactorsByStudent.set(s.id, factors);
+    // `paymentOverdueDays` fica FORA do payload: o valor e o status da cobrança
+    // são do módulo Financeiro; aqui basta o motivo em texto no `riskFactors`.
+    const { numericId: _omit, paymentOverdueDays: _finance, ...rest } = s;
     void _omit;
+    void _finance;
     return {
       ...rest,
       adherenceScore: s.adherencePct,
       engagementScore,
       riskScore,
+      riskFactors: factors.map((f) => f.label),
       metabolismScore: latestScore,
       metabolismBand: bandFromScore(latestScore),
       metabolismTrend: normalizeTrend(m?.latest_trend),
@@ -1001,6 +1160,19 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       // sai é a anotação livre, que pode conter qualquer coisa.
       student.notes = null;
     }
+    // O motivo do risco segue a MESMA regra dos campos acima: o score continua
+    // (o personal precisa saber quem chamar), mas o sinal de saúde/treino que o
+    // sustenta não volta em texto para quem revogou o escopo. O fator
+    // financeiro tem `scope: null` e sobrevive — cobrança é acordo entre
+    // personal e aluno, não dado de saúde, e não é regida por `user_data_consents`.
+    student.riskFactors = (riskFactorsByStudent.get(student.id) ?? [])
+      .filter((factor) => {
+        if (factor.scope === null) return true;
+        // Espelha a redação de sono acima: `daily_checkins` também sustenta.
+        if (factor.scope === 'sleep') return scopes.has('sleep') || scopes.has('daily_checkins');
+        return scopes.has(factor.scope);
+      })
+      .map((factor) => factor.label);
   }
 
   const totalStudents = students.length;
@@ -1042,6 +1214,13 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
     .filter((s): s is typeof s & { riskScore: number } => s.riskScore !== null && s.riskScore >= 55)
     .sort((a, b) => b.riskScore - a.riskScore)
     .slice(0, 8);
+
+  // Mesmo corte do sinal de risco (`OVERDUE_SIGNAL_DAYS`): quem venceu ontem
+  // não vira alerta no painel — vira linha no Financeiro.
+  const overdueStudents: OverdueStudent[] = baseStudents
+    .filter((s) => (s.paymentOverdueDays ?? 0) >= OVERDUE_SIGNAL_DAYS)
+    .map((s) => ({ id: s.id, name: s.name, days: s.paymentOverdueDays as number }))
+    .sort((a, b) => b.days - a.days);
 
   const insights = computeRetentionInsights(students);
   const recognizedMilestones = await loadAlreadyRecognizedMilestones(personalId);
@@ -1087,7 +1266,7 @@ export async function getPersonalDashboard(personalId: number, academyId?: numbe
       most,
       least,
       needsFollowUp,
-      intelligentAlerts: buildIntelligentAlerts(students),
+      intelligentAlerts: buildIntelligentAlerts(students, overdueStudents),
       metabolismDistribution,
       atRiskTop,
       insights,

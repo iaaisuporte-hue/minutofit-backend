@@ -15,6 +15,7 @@ export const ACTION_TYPES = [
   'message_sent',
   'quick_nudge',
   'recognition_sent',
+  'payment_reminder_sent',
 ] as const;
 
 export type ActionType = (typeof ACTION_TYPES)[number];
@@ -28,7 +29,7 @@ export type CreateActionInput = {
 };
 
 export type TimelineItem = {
-  kind: 'action' | 'message' | 'workout' | 'checkin' | 'note';
+  kind: 'action' | 'message' | 'workout' | 'checkin' | 'note' | 'payment';
   id: string;
   occurredAt: string;
   title: string;
@@ -107,7 +108,8 @@ export async function deleteRelationshipAction(actionId: number, personalId: num
 }
 
 // ---------------------------------------------------------------------------
-// Timeline (UNION ALL: actions + messages + workouts + checkins + notes)
+// Timeline (UNION ALL: actions + messages + workouts + checkins + notes +
+// pagamentos)
 // ---------------------------------------------------------------------------
 
 export async function listRelationshipTimeline(
@@ -203,6 +205,35 @@ export async function listRelationshipTimeline(
       AND ($3::int IS NULL OR sen.academy_id IS NULL OR sen.academy_id = $3)
       AND sen.recorded_at >= NOW() - INTERVAL '90 days'
 
+    UNION ALL
+
+    -- Pagamentos registrados pelo personal (Onda F3). O lembrete de cobrança já
+    -- chega pelo primeiro ramo — é uma ação (payment_reminder_sent) —, mas o
+    -- pagamento em si vive no ledger financeiro, que nenhuma outra fonte lê.
+    --
+    -- Sem filtro de academia: as tabelas financeiras não têm academy_id por
+    -- desenho (o acordo é entre personal e aluno, inclusive no autônomo), e o
+    -- isolamento aqui é personal_id + student_id.
+    SELECT
+      'payment'                             AS kind,
+      pfe.id::text                          AS id,
+      pfe.created_at                        AS occurred_at,
+      'Pagamento registrado'                AS title_raw,
+      COALESCE('Competência ' || to_char(pfc.competence,'MM/YYYY'), '') AS summary,
+      jsonb_build_object(
+        'chargeId', pfe.charge_id,
+        'competence', to_char(pfc.competence,'YYYY-MM-DD'),
+        'dueDate', to_char(pfc.due_date,'YYYY-MM-DD'),
+        'paidMethod', pfe.payload_json->>'paidMethod',
+        'status', pfe.payload_json->>'status'
+      )                                     AS meta
+    FROM personal_financial_events pfe
+    JOIN personal_financial_charges pfc ON pfc.id = pfe.charge_id
+    WHERE pfe.personal_id = $1
+      AND pfc.student_id  = $2
+      AND pfe.event_type  = 'payment_recorded'
+      AND pfe.created_at >= NOW() - INTERVAL '90 days'
+
     ORDER BY occurred_at DESC
     LIMIT $4
     `,
@@ -230,6 +261,7 @@ function humanizeTitle(kind: string, raw: string): string {
       message_sent: 'Mensagem enviada',
       quick_nudge: 'Contato rápido',
       recognition_sent: 'Marco reconhecido',
+      payment_reminder_sent: 'Lembrete de cobrança enviado',
     };
     return map[raw] ?? raw;
   }

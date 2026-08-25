@@ -15,6 +15,7 @@ import adminRoutes from './routes/admin';
 import gamificationRoutes from './routes/gamification';
 import messagesRoutes from './routes/messages';
 import personalRoutes from './routes/personal';
+import personalFinanceRoutes from './routes/personalFinance';
 import videoRoutes from './routes/videos';
 import exercisesRoutes from './routes/exercises';
 import activitiesRoutes from './routes/activities';
@@ -235,6 +236,11 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/gamification', gamificationRoutes);
 app.use('/api/messages', messagesRoutes);
 app.use('/api/personal', personalRoutes);
+// Financeiro do personal: mesmo prefixo, router próprio (personal.ts já passa
+// de 2 mil linhas). Vem DEPOIS de propósito — montado antes, seu
+// `roleCheckMiddleware('personal')` de router responderia 403 ao admin em todo
+// /api/personal/*, que hoje ele alcança.
+app.use('/api/personal', personalFinanceRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/exercises', exercisesRoutes);
 app.use('/api', planRoutes);

@@ -11,6 +11,8 @@ import { getUserProducts } from '../db/ensureProductsSchema';
 import { grantMembership } from './membershipService';
 import { findOrCreateUserFromContext, findOrCreateUserForPublicSignup } from './userIdentityService';
 import { touchUserActivity } from './usageTelemetryService';
+import { checkStudentLimitGate } from './personalPlanService';
+import { grantConsents, DIRECT_INVITE_SCOPES_PERSONAL } from './consentService';
 import {
   PARQ_FORM_VERSION,
   assertParqSignature,
@@ -196,6 +198,57 @@ function throwFriendlyUniqueError(error: any): never {
   throw new Error('Nao foi possivel concluir o cadastro por conflito de dados.');
 }
 
+// E-mail do personal padrão para o qual todo aluno que se cadastra direto no
+// app (sem academia, sem convite) é vinculado automaticamente. Decisão de
+// negócio de 25/ago/2026: aluno de signup público entra na carteira deste
+// personal por padrão. Falha aqui nunca deve derrubar o cadastro do aluno.
+const DEFAULT_SIGNUP_PERSONAL_EMAIL = 'personal@treinai.com';
+
+export async function autoAssignDefaultPersonalForDirectSignup(studentId: number): Promise<void> {
+  const { rows } = await pool.query(
+    `SELECT id FROM users WHERE email = $1 AND role = 'personal' LIMIT 1`,
+    [DEFAULT_SIGNUP_PERSONAL_EMAIL]
+  );
+  const personalId = rows[0]?.id;
+  if (!personalId) {
+    logger.warn(
+      { studentId, email: DEFAULT_SIGNUP_PERSONAL_EMAIL },
+      '[auth] default signup personal not found — skipping auto-assign'
+    );
+    return;
+  }
+
+  const gate = await checkStudentLimitGate(personalId);
+  if (gate.over) {
+    logger.warn(
+      { studentId, personalId, limit: gate.limit, current: gate.current },
+      '[auth] default signup personal at student limit — skipping auto-assign'
+    );
+    return;
+  }
+
+  await pool.query(
+    `INSERT INTO personal_student_assignments (personal_id, student_id, status, initiated_by, created_at, updated_at)
+     VALUES ($1, $2, 'active', 'student', NOW(), NOW())
+     ON CONFLICT (personal_id, student_id) DO UPDATE SET status = 'active', updated_at = NOW()`,
+    [personalId, studentId]
+  );
+
+  await grantConsents(studentId, personalId, 'personal', DIRECT_INVITE_SCOPES_PERSONAL, pool);
+
+  await grantMembership(studentId, 'personal', {
+    professionalId: personalId,
+    source: 'bonus_personal',
+    metadata: { origin: 'default_personal_auto_assign' },
+  });
+
+  await grantMembership(studentId, 'app', {
+    professionalId: personalId,
+    source: 'bonus_personal',
+    metadata: { origin: 'default_personal_auto_assign' },
+  });
+}
+
 export async function registerUser(
   data: {
     email: string;
@@ -319,6 +372,10 @@ export async function registerUser(
     source: 'direct_purchase',
     metadata: { signup: 'public', channel: 'self_signup' },
   }).catch((err) => logger.error({ err, userId: user.id }, '[auth] grantMembership app failed'));
+
+  await autoAssignDefaultPersonalForDirectSignup(user.id).catch((err) =>
+    logger.error({ err, userId: user.id }, '[auth] auto-assign default personal failed')
+  );
 
   const products = await getUserProducts(user.id);
   const accessToken = generateAccessToken({

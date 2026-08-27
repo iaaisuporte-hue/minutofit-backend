@@ -19,10 +19,11 @@ import {
   decodeSessionCursor,
   getSession,
   getWorkoutStats,
+  sanitizeClientKey,
 } from '../services/workoutSessionService';
 import { dayKey } from '../utils/appDay';
 import { registerNumericParams } from '../middleware/numericParam';
-import { parseLimit } from '../utils/parseId';
+import { parseId, parseLimit, parseOptionalIndex } from '../utils/parseId';
 
 const router = Router();
 registerNumericParams(router, ['id']);
@@ -258,8 +259,13 @@ router.post('/sessions', requirePhysicalActivityClearance(), retroOnly(retroFeat
       source: body.source,
       status: body.status,
       title: typeof body.title === 'string' ? body.title.slice(0, 200) : null,
-      planId: Number.isFinite(Number(body.planId)) ? Number(body.planId) : null,
-      dayIndex: Number.isFinite(Number(body.dayIndex)) ? Number(body.dayIndex) : null,
+      // `Number(null)` é 0 e `Number.isFinite(0)` é `true`: a coerção anterior
+      // transformava o `planId: null` explícito do Treino Livre em `plan_id = 0`,
+      // que estoura a FK de `personal_workout_plans` — 500 em 100% dos registros
+      // livres (QA em navegador, ago/2026). O mesmo valia para `dayIndex`, que
+      // gravava "dia 0" numa sessão sem ficha nenhuma.
+      planId: parseId(body.planId),
+      dayIndex: parseOptionalIndex(body.dayIndex),
       sessionRpe: body.sessionRpe ?? null,
       notes: typeof body.notes === 'string' ? body.notes.slice(0, 1000) : null,
       prescribed: Array.isArray(body.prescribed) ? body.prescribed : [],
@@ -269,6 +275,10 @@ router.post('/sessions', requirePhysicalActivityClearance(), retroOnly(retroFeat
       performedAt,
       retroactiveReason: typeof body.retroactiveReason === 'string' ? body.retroactiveReason.slice(0, 280) : null,
       confirmationAccepted,
+      // Chave de idempotência do treino livre. Lixo vira null: sem chave o
+      // comportamento é o de sempre (nenhuma dedup), nunca um 400 que
+      // descartaria um treino já feito.
+      clientKey: sanitizeClientKey(body.clientKey),
     });
 
     return res.status(201).json({ success: true, data: result });

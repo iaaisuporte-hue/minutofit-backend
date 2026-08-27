@@ -16,3 +16,4 @@ yarn-error.log*
 
 # Sondas de verificação em banco local (não versionadas — ver testes de integração)
 .probe/
+.gstack/

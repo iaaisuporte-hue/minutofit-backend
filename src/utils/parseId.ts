@@ -27,6 +27,25 @@ export function parseId(raw: unknown): number | null {
 }
 
 /**
+ * Índice opcional vindo do corpo (hoje: `dayIndex`). Igual a `parseId`, exceto
+ * por aceitar 0 — o primeiro dia da ficha é o índice 0.
+ *
+ * Existe porque `Number(null)` é `0` e `Number.isFinite(0)` é `true`: coagir com
+ * `Number()` transforma "campo ausente" em "zero". Ausência precisa continuar
+ * ausência (QA Treino Livre, ago/2026).
+ */
+export function parseOptionalIndex(raw: unknown): number | null {
+  if (typeof raw === 'number') {
+    return Number.isInteger(raw) && raw >= 0 && raw <= PG_INT4_MAX ? raw : null;
+  }
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return Number.isSafeInteger(value) && value <= PG_INT4_MAX ? value : null;
+}
+
+/**
  * Limite de paginação sanitizado. `?limit=' OR '1'='1` virava `NaN` e chegava
  * ao `LIMIT $n` como 500 (QA 02/ago/2026, P2-7).
  */

@@ -1,3 +1,5 @@
+import type { PoolClient } from 'pg';
+
 import pool from '../config/database';
 import { getReadinessLensToday } from '../modules/readiness/readiness.service';
 import { assertStudentAssignedToPersonal } from './personalWorkoutPlanService';
@@ -133,6 +135,20 @@ export interface CreateSessionInput {
   retroactiveReason?: string | null;
   /** Aceite de honestidade do aluno — persistido para auditoria. */
   confirmationAccepted?: boolean;
+  /**
+   * Chave de idempotência gerada pelo cliente (Treino Livre). Única por aluno
+   * (índice parcial da migration 1833). Necessária porque a sessão sem `planId`
+   * não tem chave natural: sem ela, o retry de um POST que se perdeu na rede
+   * vira um segundo treino no histórico.
+   */
+  clientKey?: string | null;
+}
+
+/** Normaliza a chave do cliente: string não vazia, ≤64. Qualquer outra coisa = null. */
+export function sanitizeClientKey(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const trimmed = v.trim().slice(0, 64);
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function leadingInt(v: unknown): number | null {
@@ -215,6 +231,54 @@ function sanitizeConfidence(v: unknown): string | null {
   return v === 'low' || v === 'medium' || v === 'high' ? v : null;
 }
 
+/** Linha mínima da sessão já existente que o replay precisa devolver. */
+interface ExistingSessionRow {
+  id: number;
+  started_at: Date;
+  performed_at: Date;
+}
+
+/**
+ * Resposta de replay idempotente: a sessão já existe, devolvemos o resultado da
+ * primeira tentativa em vez de erro. Serve às DUAS chaves de deduplicação — a
+ * natural (aluno+ficha+dia) e a `client_key` do treino livre.
+ *
+ * Tudo o que é "conquista" volta vazio de propósito: recorde, meta e marco já
+ * foram avaliados na sessão original, e repetir aqui só produziria uma segunda
+ * celebração na tela para algo que já foi comemorado. `markGoalAchieved` nem
+ * mudaria o banco — só afeta meta `active`.
+ */
+async function buildReplayResponse(
+  client: PoolClient,
+  userId: number,
+  prev: ExistingSessionRow,
+  isRetroactive: boolean,
+) {
+  const stats = await client.query(
+    `SELECT xp, current_streak FROM user_gamification_stats WHERE user_id = $1`,
+    [userId],
+  );
+  const setCount = await client.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM workout_set_logs WHERE session_id = $1`,
+    [prev.id],
+  );
+  return {
+    id: Number(prev.id),
+    startedAt: prev.started_at,
+    performedAt: prev.performed_at,
+    isRetroactive,
+    countedForStreak: false,
+    setCount: Number(setCount.rows[0]?.n ?? 0),
+    streak: stats.rows[0] ? Number(stats.rows[0].current_streak ?? 0) : null,
+    xp: stats.rows[0] ? Number(stats.rows[0].xp ?? 0) : null,
+    duplicate: true,
+    prEvents: [] as PrDetectionResult[],
+    celebrate: false,
+    goalsAchieved: [] as GoalAchievement[],
+    milestonesUnlocked: [] as MilestoneAward[],
+  };
+}
+
 export async function createSession(userId: number, academyId: number | null, input: CreateSessionInput) {
   const client = await pool.connect();
   /** Resultado da transação, lido DEPOIS que a conexão volta ao pool. */
@@ -273,6 +337,43 @@ export async function createSession(userId: number, academyId: number | null, in
 
     await client.query('BEGIN');
 
+    // ── Idempotência explícita por chave do cliente (Treino Livre) ──────────
+    // A dedup por chave natural logo abaixo depende de `plan_id`. O treino
+    // livre não tem ficha, então nada distinguia "o aluno treinou duas vezes
+    // hoje" de "o POST foi reenviado depois de um timeout" — e a segunda leitura
+    // é a comum no celular. `client_key` resolve isso pela origem: o cliente
+    // gera a chave uma vez por execução e a repete no retry.
+    //
+    // O advisory lock vem ANTES do SELECT pelo mesmo motivo do bloco seguinte:
+    // sem ele, dois POSTs simultâneos passam limpos pela leitura e ambos
+    // inserem. Aqui daria para deixar o UNIQUE parcial (migration 1833) barrar,
+    // mas a violação abortaria a transação inteira — e recuperar disso exigiria
+    // SAVEPOINT ou uma segunda transação. Serializar antes é mais simples e
+    // deixa o índice como rede de segurança, não como fluxo de controle.
+    const clientKey = sanitizeClientKey(input.clientKey);
+    if (clientKey) {
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        `free-session:${userId}:${clientKey}`,
+      ]);
+      const existing = await client.query(
+        `SELECT id, started_at, performed_at
+           FROM workout_sessions
+          WHERE user_id = $1 AND client_key = $2
+          LIMIT 1`,
+        [userId, clientKey],
+      );
+      if (existing.rows.length > 0) {
+        const prev = existing.rows[0] as ExistingSessionRow;
+        const replay = await buildReplayResponse(client, userId, prev, isRetroactive);
+        await client.query('COMMIT');
+        logger.info(
+          { userId, clientKey, sessionId: prev.id },
+          '[training] reenvio com a mesma client_key — devolvendo a sessão existente',
+        );
+        return replay;
+      }
+    }
+
     // ── Idempotência da conclusão (QA final 02/ago/2026) ────────────────────
     // A guarda de duplo envio era só de UI, e `registeredToday` nasce `false` a
     // cada montagem do componente: recarregar a página, abrir numa segunda aba
@@ -315,42 +416,14 @@ export async function createSession(userId: number, academyId: number | null, in
       );
 
       if (existing.rows.length > 0) {
-        const prev = existing.rows[0];
-        const stats = await client.query(
-          `SELECT xp, current_streak FROM user_gamification_stats WHERE user_id = $1`,
-          [userId],
-        );
-        const setCount = await client.query<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM workout_set_logs WHERE session_id = $1`,
-          [prev.id],
-        );
+        const prev = existing.rows[0] as ExistingSessionRow;
+        const replay = await buildReplayResponse(client, userId, prev, isRetroactive);
         await client.query('COMMIT');
         logger.info(
           { userId, planId: input.planId, dayIndex: input.dayIndex, sessionId: prev.id },
           '[training] reenvio da mesma conclusão — devolvendo a sessão existente',
         );
-        return {
-          id: Number(prev.id),
-          startedAt: prev.started_at,
-          performedAt: prev.performed_at,
-          isRetroactive,
-          countedForStreak: false,
-          setCount: Number(setCount.rows[0]?.n ?? 0),
-          streak: stats.rows[0] ? Number(stats.rows[0].current_streak ?? 0) : null,
-          xp: stats.rows[0] ? Number(stats.rows[0].xp ?? 0) : null,
-          duplicate: true,
-          // Replay não descobre recorde: a sessão original já detectou o dela.
-          prEvents: [] as PrDetectionResult[],
-          celebrate: false,
-          // Nem meta: a avaliação da sessão original já concluiu o que havia
-          // para concluir, e `markGoalAchieved` só afeta meta `active`. Repetir
-          // aqui não mudaria o banco — só produziria uma segunda celebração na
-          // tela para uma conquista que já foi comemorada.
-          goalsAchieved: [] as GoalAchievement[],
-          // Idem marcos: o replay não conquista nada novo, e o UNIQUE já
-          // recusaria a segunda linha — devolver vazio evita a segunda festa.
-          milestonesUnlocked: [] as MilestoneAward[],
-        };
+        return replay;
       }
     }
 
@@ -388,8 +461,8 @@ export async function createSession(userId: number, academyId: number | null, in
       `INSERT INTO workout_sessions
          (user_id, academy_id, personal_id, source, plan_id, day_index, adaptation_log_id,
           readiness_level, prescribed_snapshot, status, session_rpe, title, started_at, ended_at, notes,
-          performed_at, is_retroactive, retroactive_reason, confirmation_accepted)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+          performed_at, is_retroactive, retroactive_reason, confirmation_accepted, client_key)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        RETURNING id, started_at, performed_at`,
       [
         userId,
@@ -412,6 +485,7 @@ export async function createSession(userId: number, academyId: number | null, in
         isRetroactive,
         input.retroactiveReason ? String(input.retroactiveReason).slice(0, 280) : null,
         input.confirmationAccepted === true,
+        clientKey,
       ],
     );
     const sessionId: number = header.rows[0].id;
@@ -935,9 +1009,14 @@ export async function getWorkoutStats(userId: number) {
     if (!byExercise.has(key)) byExercise.set(key, { exerciseId: key, name: r.exercise_name, points: [] });
     byExercise.get(key)!.points.push({ date: r.d, maxLoadKg: Number(r.max_load) });
   }
-  // Só exercícios com ≥2 pontos rendem "progressão"; ordena por maior ganho.
+  // Um ponto basta para "qual foi minha última carga"; dois são necessários só
+  // para a reta da progressão. O filtro `>= 2` daqui apagava o chip
+  // "última: X kg" e o "Comparado à última vez" de quem tinha um único dia de
+  // histórico — o app dizia "1ª vez" para um exercício registrado ontem (QA em
+  // navegador, ago/2026). Com um ponto só, `firstLoadKg === lastLoadKg` e
+  // `deltaKg` sai 0 por construção: não houve ganho nem queda, e quem desenha
+  // tendência decide pelo `points.length`. Ordena por maior ganho.
   const exerciseProgression = Array.from(byExercise.values())
-    .filter((e) => e.points.length >= 2)
     .map((e) => ({
       ...e,
       firstLoadKg: e.points[0].maxLoadKg,
@@ -1002,8 +1081,21 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
   const sessions = rows.map((r) => {
     const presc = Array.isArray(r.prescribed_snapshot) ? r.prescribed_snapshot : [];
     const prescribedSets = presc.reduce((acc: number, it: { sets?: string }) => acc + parseSetCount(it?.sets), 0);
-    totalDone += r.sets_done;
-    totalPrescribed += prescribedSets;
+    // Só sessão COM prescrição entra na conta. A métrica responde "das séries
+    // que o personal prescreveu, quantas o aluno fez" — sessão sem nenhuma
+    // série prescrita não tem o que responder, e somar `setsDone` no numerador
+    // contra zero no denominador é erro de aritmética, não de arredondamento:
+    // a aderência passava de 100% e o aluno que treinava por conta própria
+    // aparecia como mais aderente do que o plano permite.
+    //
+    // `prescribedSets > 0` — e não `plan_id != null` — porque a sessão do Lab
+    // guiado (Spec 022) chega com `plan_id` preenchido e snapshot vazio: é
+    // análise de UM exercício, não execução da ficha do dia. As duas continuam
+    // na lista abaixo com o próprio `source`; o personal precisa vê-las.
+    if (prescribedSets > 0) {
+      totalDone += r.sets_done;
+      totalPrescribed += prescribedSets;
+    }
     return {
       id: r.id,
       // Data real do treino (retro usa performed_at); createdAt desambigua quando
@@ -1020,7 +1112,11 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
     };
   });
 
-  const adherencePct = totalPrescribed > 0 ? Math.round((totalDone / totalPrescribed) * 100) : null;
+  // Teto em 100: séries extras dentro da própria ficha (o aluno que faz a 5ª
+  // série de um exercício de 4) são bem-vindas, mas "115% de aderência" é
+  // número que não quer dizer nada na tela do personal.
+  const adherencePct =
+    totalPrescribed > 0 ? Math.min(100, Math.round((totalDone / totalPrescribed) * 100)) : null;
 
   const freq = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE performed_at >= now() - interval '7 days')::int AS last_7d,

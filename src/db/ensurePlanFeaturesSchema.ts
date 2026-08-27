@@ -19,11 +19,12 @@ const featureCatalog = [
   ['movement_lab_guided', 'Lab de Movimento — Guiado pela ficha', 'Abrir o Lab de um exercicio da ficha, contar series/reps e gravar execucao real (Spec 022). Recurso pago — saiu do Free em ago/2026.'],
   ['retro_workout_enabled', 'Registro Retroativo de Treino', 'Registrar treino feito nos ultimos 3 dias que o aluno esqueceu de marcar (Spec 024). Flag = kill-switch; liberada no Free.'],
   ['challenges', 'Desafios', 'Participar de desafio criado pelo personal (Spec 034 C2). Liberada no Free por decisao de produto: cobrar do aluno para participar de um desafio que o personal dele criou quebraria o compromisso assumido com a turma.'],
+  ['free_workout', 'Treino Livre', 'Aluno monta treino ad-hoc e executa com a engine de series. Kill-switch; liberada no Free.'],
 ] as const;
 
 /**
- * Plano Free: sem catálogo geral de treinos / ficha — só Hoje, sugestão do dia,
- * treinos em casa, perfil e config.
+ * Plano Free: sem catálogo geral de treinos, sem ficha do personal, sem IA e sem
+ * histórico — o resto do essencial entra.
  *
  * `tracker` entra no Free (ago/2026): o item já aparecia no menu de todo aluno e
  * a corrida já era gravada em `activity_sessions`, mas o check-in que alimenta
@@ -34,8 +35,13 @@ const featureCatalog = [
  * `movement_lab*` sai do Free na mesma troca — o beta de validação cumpriu o
  * papel e o recurso vira pago. A flag continua sendo o kill-switch: devolver as
  * duas chaves a esta lista religa o Lab no Free sem migration.
+ *
+ * `free_workout` nasce no Free pelo mesmo argumento do tracker: montar o próprio
+ * treino é insumo do score (execução real, com séries e carga), não capacidade
+ * premium. A flag é só kill-switch de UI — a API de registro de sessão não é
+ * gateada por ela, porque `source: 'free'` já é o caminho do registro retroativo.
  */
-const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges'];
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges', 'free_workout'];
 
 const PRO_PRODUCT_FEATURES: string[] = [
   'today',
@@ -53,6 +59,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
   'movement_lab_guided',
   'retro_workout_enabled',
   'challenges',
+  'free_workout',
 ];
 
 const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog.map((row) => row[0]);

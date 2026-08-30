@@ -124,6 +124,20 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
+  // Sem `DATABASE_URL` o `pg` NÃO falha: ele assume o default dele
+  // (localhost:5432) e o erro que chega ao log é um `ECONNREFUSED ::1:5432`
+  // que parece problema de rede/banco fora do ar. Foi exatamente esse o
+  // sintoma quando os cron jobs do Render ficaram fora do Environment e não
+  // herdaram env var nenhuma. Falhar aqui nomeia a causa real.
+  if (!process.env.DATABASE_URL) {
+    logger.fatal(
+      { schedule },
+      '[cron] DATABASE_URL não definida — o processo não tem env var do banco. ' +
+        'No Render, confira se este cron job pertence ao mesmo Environment do web service e do Postgres.',
+    );
+    process.exit(2);
+  }
+
   logger.info({ schedule }, '[cron] início');
   const results = await Promise.all(TASKS[schedule].map(runWithLock));
 

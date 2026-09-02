@@ -91,6 +91,22 @@ export type DataAccessEventType =
   | 'personal.performance_insight_opened'
   | 'personal.performance_ai_summary_requested'
   | 'personal.performance_ai_summary_shown'
+  // ── Execução do treino no mobile (SPEC P1 §51/§52) ──────────────────────
+  // Só o que responde às perguntas de produto do §52: quantos começam e
+  // concluem, quanto tempo levam, onde abandonam, e quanto se usa treino
+  // livre, repetir e reordenar. Nenhum evento carrega carga, repetição, dor,
+  // nome de exercício ou qualquer sinal do corpo — a instrumentação mede o
+  // USO da tela, não o treino (pacto de dados do CLAUDE.md).
+  | 'workout.started'
+  | 'workout.completed'
+  | 'workout.abandoned'
+  | 'workout.resumed'
+  | 'workout.set_completed'
+  | 'workout.exercise_skipped'
+  | 'workout.exercise_reordered'
+  | 'workout.free_started'
+  | 'workout.repeat_started'
+  | 'workout.share_opened'
   | 'identity.user_created'
   | 'identity.user_reused';
 

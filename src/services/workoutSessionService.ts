@@ -1129,6 +1129,49 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
   return { adherencePct, last7d: freq.rows[0].last_7d, total: freq.rows[0].total, sessions };
 }
 
+/**
+ * Últimas execuções de UM exercício (SPEC P1 §27 — histórico rápido).
+ *
+ * Serve a pergunta que a pessoa faz no meio do treino: "quanto eu levantei da
+ * última vez, e antes disso?". A alternativa no cliente seria baixar as N
+ * últimas sessões inteiras e filtrar — N+1 requisições e muito payload para
+ * três linhas, com o aparelho na mão entre duas séries.
+ *
+ * Uma linha por SESSÃO, não por série: `MAX(load)` e as repetições feitas
+ * naquela carga é o par que informa a decisão. Escopado por `user_id` — o
+ * `exerciseId` vem da URL e não pode virar leitura do histórico alheio.
+ */
+export async function getExerciseHistory(
+  userId: number,
+  exerciseId: string,
+  limit = 3,
+): Promise<{ date: string; loadKg: number | null; reps: number | null; sets: number }[]> {
+  const { rows } = await pool.query(
+    `SELECT (ws.performed_at AT TIME ZONE $3)::date AS d,
+            MAX(sl.load_done_kg)                    AS max_load,
+            COUNT(*) FILTER (WHERE sl.status = 'done')::int AS sets,
+            -- reps da série mais pesada: é a que a pessoa quer comparar
+            (ARRAY_AGG(sl.reps_done ORDER BY sl.load_done_kg DESC NULLS LAST, sl.set_index))[1] AS reps
+       FROM workout_set_logs sl
+       JOIN workout_sessions ws ON ws.id = sl.session_id
+      WHERE ws.user_id = $1
+        AND sl.exercise_id = $2
+        AND sl.status = 'done'
+        AND ws.status IN ('completed', 'partial')
+      GROUP BY ws.id, (ws.performed_at AT TIME ZONE $3)::date
+      ORDER BY MAX(ws.performed_at) DESC
+      LIMIT $4`,
+    [userId, exerciseId, APP_TIMEZONE, Math.min(Math.max(1, limit), 10)],
+  );
+
+  return rows.map((r) => ({
+    date: String(r.d),
+    loadKg: r.max_load == null ? null : Number(r.max_load),
+    reps: r.reps == null ? null : Number(r.reps),
+    sets: Number(r.sets ?? 0),
+  }));
+}
+
 export async function getSession(userId: number, sessionId: number) {
   const head = await pool.query(`SELECT * FROM workout_sessions WHERE id = $1 AND user_id = $2`, [sessionId, userId]);
   if (head.rows.length === 0) return null;

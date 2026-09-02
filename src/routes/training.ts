@@ -18,6 +18,7 @@ import {
   listSessionsPage,
   decodeSessionCursor,
   getSession,
+  getExerciseHistory,
   getWorkoutStats,
   sanitizeClientKey,
 } from '../services/workoutSessionService';
@@ -360,6 +361,31 @@ router.get('/sessions/:id', async (req: Request, res: Response) => {
   } catch (err: any) {
     logger.error({ err }, '[training] GET /sessions/:id error');
     return res.status(500).json({ success: false, error: 'Failed to load session' });
+  }
+});
+
+/**
+ * GET /api/training/exercises/:exerciseId/history — últimas execuções (P1 §27).
+ *
+ * Leitura do próprio histórico: escopada por `req.user.id`, então um uuid de
+ * outra pessoa não devolve nada. O id é UUID v4 e é validado por formato antes
+ * de tocar o banco — id malformado é 400, não 500 (mesma regra que o QA de
+ * ago/2026 firmou para `/sessions/:id`).
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.get('/exercises/:exerciseId/history', async (req: Request, res: Response) => {
+  try {
+    const exerciseId = String(req.params.exerciseId ?? '');
+    if (!UUID_RE.test(exerciseId)) {
+      return res.status(400).json({ success: false, error: 'invalid_exercise_id' });
+    }
+    const limit = parseLimit(req.query.limit, 3);
+    const data = await getExerciseHistory(req.user!.id, exerciseId, limit);
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    logger.error({ err }, '[training] GET /exercises/:id/history error');
+    return res.status(500).json({ success: false, error: 'Failed to load exercise history' });
   }
 });
 

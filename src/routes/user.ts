@@ -67,6 +67,17 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'personal.performance_ai_summary_requested',
   'personal.performance_ai_summary_shown',
   'community.milestone_share_changed',
+  // Execução do treino no mobile (SPEC P1 §51). Emitidos pela tela de sessão.
+  'workout.started',
+  'workout.completed',
+  'workout.abandoned',
+  'workout.resumed',
+  'workout.set_completed',
+  'workout.exercise_skipped',
+  'workout.exercise_reordered',
+  'workout.free_started',
+  'workout.repeat_started',
+  'workout.share_opened',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

@@ -1,6 +1,20 @@
 import pino from 'pino';
 
 const isDev = (process.env.NODE_ENV || 'development') !== 'production';
+/**
+ * `pino-pretty` via `transport` sobe uma worker thread (thread-stream) por
+ * processo que importa este módulo. Em teste, o Jest isola o cache de módulo
+ * POR ARQUIVO mesmo com `--runInBand` — então cada suíte de integração que
+ * importa (direta ou indiretamente, via `config/database.ts`) este logger
+ * spawna a SUA PRÓPRIA worker, nunca fechada, e o processo acumula uma por
+ * suíte ao longo da run inteira. É exatamente o "open handle" que o Jest
+ * reporta ao final (`Jest has detected... WORKER`) e a causa mais provável da
+ * flakiness intermitente do job de integração no CI (runner com menos núcleos/
+ * memória que a máquina de dev). Pretty-print não tem valor nenhum em teste
+ * (ninguém lê o log colorido de uma suíte de CI) — desligar aqui elimina o
+ * problema na origem, sem tocar no comportamento de dev/produção.
+ */
+const usePrettyTransport = isDev && process.env.NODE_ENV !== 'test';
 
 /**
  * Logger centralizado para todo o backend.
@@ -53,7 +67,7 @@ const logger = pino({
     ],
     censor: '[redacted]',
   },
-  ...(isDev
+  ...(usePrettyTransport
     ? {
         transport: {
           target: 'pino-pretty',

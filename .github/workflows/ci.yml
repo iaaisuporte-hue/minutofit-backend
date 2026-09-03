@@ -76,6 +76,15 @@ jobs:
       JWT_SECRET: ci-test-jwt-secret-placeholder-32chars
       JWT_REFRESH_SECRET: ci-test-refresh-secret-placeholder-32chars
       NODE_ENV: test
+      # O Jest isola o cache de módulo POR ARQUIVO mesmo com `--runInBand`, então
+      # cada uma das dezenas de suítes de integração cria seu PRÓPRIO `Pool`
+      # (config/database.ts é reimportado por suíte). Com o default de produção
+      # (max 20, idle 30s) isso significa até centenas de conexões possíveis e
+      # ~30s de espera no fim da suíte por handle ocioso — tolerável numa máquina
+      # de dev, pressão real num runner de 2 núcleos. Menor pegada aqui não muda
+      # nada de produção (só vale para este job).
+      PG_POOL_MAX: "5"
+      PG_POOL_IDLE_TIMEOUT_MS: "1000"
 
     steps:
       - uses: actions/checkout@v4

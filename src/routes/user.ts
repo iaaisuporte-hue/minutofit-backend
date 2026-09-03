@@ -123,6 +123,17 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'replacement_manual_search_selected',
   'replacement_suggestions_empty',
   'replacement_suggestions_error',
+  // Aderência, Recorrência e Insights do Personal (Sprint P2B). Emitidos pela
+  // aba Performance (Insights) do cockpit do personal — mesmo endpoint
+  // genérico de auto-relato dos demais eventos `personal_*` acima
+  // (`personal_custom_exercise_*`): não existe rota de eventos própria do
+  // módulo Personal.
+  'personal_adherence_viewed',
+  'personal_exercise_insight_viewed',
+  'personal_recurring_replacement_viewed',
+  'personal_plan_review_started',
+  'personal_plan_review_cancelled',
+  'personal_plan_updated_from_insight',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

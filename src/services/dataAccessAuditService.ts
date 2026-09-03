@@ -162,6 +162,16 @@ export type DataAccessEventType =
   | 'replacement_manual_search_selected'
   | 'replacement_suggestions_empty'
   | 'replacement_suggestions_error'
+  // Aderência, Recorrência e Insights do Personal (Sprint P2B). Emitidos pela
+  // aba Performance (Insights) do cockpit e pelo drill-down/revisão assistida
+  // — nunca carregam nome de exercício ou motivo de substituição (mesma regra
+  // de `workout.*`/`replacement_*` acima: mede USO da tela, não o conteúdo).
+  | 'personal_adherence_viewed'
+  | 'personal_exercise_insight_viewed'
+  | 'personal_recurring_replacement_viewed'
+  | 'personal_plan_review_started'
+  | 'personal_plan_review_cancelled'
+  | 'personal_plan_updated_from_insight'
   | 'identity.user_created'
   | 'identity.user_reused';
 

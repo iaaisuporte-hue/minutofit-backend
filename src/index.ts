@@ -17,6 +17,7 @@ import messagesRoutes from './routes/messages';
 import personalRoutes from './routes/personal';
 import personalFinanceRoutes from './routes/personalFinance';
 import personalExercisesRoutes from './routes/personalExercises';
+import personalInsightsRoutes from './routes/personalInsights';
 import videoRoutes from './routes/videos';
 import exercisesRoutes from './routes/exercises';
 import activitiesRoutes from './routes/activities';
@@ -247,6 +248,9 @@ app.use('/api/personal', personalFinanceRoutes);
 // motivo/ordem da linha acima — router próprio, mesmo prefixo, DEPOIS de
 // personalRoutes.
 app.use('/api/personal', personalExercisesRoutes);
+// Aderência/recorrência/insights do personal (Sprint P2B): mesmo motivo/ordem
+// das duas linhas acima — router próprio, mesmo prefixo, DEPOIS de personalRoutes.
+app.use('/api/personal', personalInsightsRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/exercises', exercisesRoutes);
 app.use('/api', planRoutes);

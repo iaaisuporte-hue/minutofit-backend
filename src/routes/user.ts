@@ -78,6 +78,19 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'workout.free_started',
   'workout.repeat_started',
   'workout.share_opened',
+  // Camada de atividade e dispositivos (SPEC Mobile P2 §70).
+  'activity.started',
+  'activity.paused',
+  'activity.resumed',
+  'activity.completed',
+  'activity.abandoned',
+  'activity.recovered',
+  'activity.discarded',
+  'activity.gps_denied',
+  'activity.share_opened',
+  'health_connect.connected',
+  'apple_health.connected',
+  'widget.workout_started',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

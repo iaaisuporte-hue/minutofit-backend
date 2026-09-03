@@ -107,6 +107,23 @@ export type DataAccessEventType =
   | 'workout.free_started'
   | 'workout.repeat_started'
   | 'workout.share_opened'
+  // ── Camada de atividade e dispositivos (SPEC Mobile P2 §70/§71) ─────────
+  // Medem o USO: quantas atividades, de que tipo, quantas do S2Core e quantas
+  // importadas, taxa de conclusão, adoção do widget. NENHUM evento carrega
+  // coordenada, endereço ou distância exata — rota de exercício revela casa,
+  // trabalho e rotina, e a §70 proíbe explicitamente mandá-la para analytics.
+  | 'activity.started'
+  | 'activity.paused'
+  | 'activity.resumed'
+  | 'activity.completed'
+  | 'activity.abandoned'
+  | 'activity.recovered'
+  | 'activity.discarded'
+  | 'activity.gps_denied'
+  | 'activity.share_opened'
+  | 'health_connect.connected'
+  | 'apple_health.connected'
+  | 'widget.workout_started'
   | 'identity.user_created'
   | 'identity.user_reused';
 

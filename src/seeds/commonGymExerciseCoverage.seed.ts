@@ -67,12 +67,12 @@ export const COMMON_GYM_EXERCISE_ALIASES: Record<string, string[]> = {
   'Pullover com Haltere': ['Pullover com halter'],
 
   'Puxada Frente (Lat Pulldown)': ['Puxada frontal aberta'],
-  'Puxada na Polia Alta (Close Grip)': ['Puxada frontal fechada'],
+  'Puxada Supinada Fechada': ['Puxada frontal fechada'],
   'Barra Fixa': ['Barra fixa pronada'],
   'Remada Curvada com Barra': ['Remada curvada com barra'],
   'Remada Unilateral com Haltere': ['Remada unilateral com halter'],
   'Remada Baixa no Cabo': ['Remada baixa no cabo'],
-  'Remada T-Bar': ['Remada cavalinho'],
+  'Remada Cavalinho': ['Remada cavalinho'],
   'Remada Sentada no Cabo': ['Remada máquina'],
   'Levantamento Terra': ['Levantamento terra'],
   'Stiff (Romanian Deadlift)': ['Terra romeno', 'Stiff com barra'],
@@ -84,7 +84,7 @@ export const COMMON_GYM_EXERCISE_ALIASES: Record<string, string[]> = {
   'Elevação Lateral': ['Elevação lateral com halteres'],
   'Elevação Frontal': ['Elevação frontal com barra'],
   'Elevação Frontal com Halteres': ['Elevação frontal com halteres'],
-  'Crucifixo Inverso (Elevação Posterior)': ['Elevação posterior com halteres', 'Crucifixo inverso'],
+  'Crucifixo Inverso': ['Elevação posterior com halteres', 'Crucifixo inverso'],
   'Face Pull no Cabo': ['Face pull'],
   'Encolhimento de Ombros com Halteres': ['Encolhimento com halteres'],
   'Remada Alta no Cabo': ['Remada alta'],
@@ -93,17 +93,16 @@ export const COMMON_GYM_EXERCISE_ALIASES: Record<string, string[]> = {
   'Rosca Alternada com Halteres': ['Rosca alternada com halteres'],
   'Rosca Martelo': ['Rosca martelo'],
   'Rosca Concentrada': ['Rosca concentrada'],
-  'Rosca Scott (Preacher Curl)': ['Rosca Scott com barra'],
+  'Rosca Scott com Barra': ['Rosca Scott com barra'],
   'Rosca Inclinada com Halteres': ['Rosca inclinada com halteres'],
   'Rosca 21 com Barra': ['Rosca 21'],
 
-  'Tríceps Testa (Skull Crusher)': ['Tríceps testa com barra', 'Tríceps testa com barra reta'],
   'Tríceps Francês com Haltere': ['Tríceps francês com halter'],
-  'Extensão de Tríceps com Haltere Unilateral': ['Tríceps francês unilateral', 'Tríceps francês unilateral com halter'],
+  'Francês Unilateral com Halter': ['Tríceps francês unilateral', 'Tríceps francês unilateral com halter'],
   'Tríceps Corda (Pushdown)': ['Tríceps corda na polia', 'Tríceps corda na polia alta'],
   'Tríceps Pulley (Pushdown)': ['Tríceps barra reta na polia'],
   'Tríceps Coice com Haltere': ['Tríceps coice com halter'],
-  'Fundinho (Bench Dip)': ['Tríceps banco'],
+  'Dip no Banco': ['Tríceps banco'],
   'Dip em Barras Paralelas': ['Paralelas', 'Paralelas para tríceps'],
   'Flexão de Braço Fechada': ['Flexão fechada'],
 
@@ -114,7 +113,7 @@ export const COMMON_GYM_EXERCISE_ALIASES: Record<string, string[]> = {
   'Hack Squat na Máquina': ['Hack squat'],
   'Leg Press 45°': ['Leg press 45'],
   'Cadeira Extensora': ['Cadeira extensora'],
-  'Afundo (Lunge)': ['Afundo'],
+  'Afundo com Halter': ['Afundo'],
   'Afundo com Barra': ['Avanço com barra'],
   'Afundo Reverso': ['Avanço com halteres'],
   'Agachamento Búlgaro': ['Afundo búlgaro'],
@@ -122,11 +121,11 @@ export const COMMON_GYM_EXERCISE_ALIASES: Record<string, string[]> = {
 
   'Mesa Flexora (Leg Curl Deitado)': ['Mesa flexora'],
   'Good Morning': ['Good morning'],
-  'Nordic Curl (Curl Nórdico)': ['Nordic curl'],
+  'Flexão Nórdica': ['Nordic curl'],
   'Elevação Pélvica (Hip Thrust)': ['Elevação pélvica com barra', 'Hip thrust'],
   'Ponte de Glúteo': ['Ponte de glúteos'],
   'Glúteo no Cabo (Kickback)': ['Glúteo na polia', 'Coice na polia'],
-  'Glúteo 4 Apoios (Donkey Kick)': ['Coice com caneleira'],
+  'Glúteo 4 Apoios': ['Coice com caneleira'],
   'Abdução de Quadril na Máquina': ['Abdução de quadril máquina'],
   'Abdução com Elástico (Monster Walk)': ['Abdução com elástico'],
 
@@ -250,7 +249,7 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     movementPattern: 'puxar',
   }),
   makeExercise({
-    name: 'Remada Invertida',
+    name: 'Remada Livre',
     freeDbId: 'Bodyweight_Mid_Row',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal',
@@ -299,16 +298,9 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     aliases: ['Elevação lateral na máquina'],
     movementPattern: 'isolamento',
   }),
-  makeExercise({
-    name: 'Encolhimento com Barra',
-    freeDbId: 'Barbell_Shrug',
-    bodyPart: 'ombro',
-    targetMuscle: 'Trapézio superior',
-    secondaryMuscles: ['Levantador da escápula'],
-    equipment: 'barra',
-    aliases: ['Encolhimento com barra'],
-    movementPattern: 'puxar',
-  }),
+  // 'Encolhimento com Barra' foi arquivado na curadoria 2026Q3 — duplicata de
+  // 'Encolhimento de Ombros com Barra' (mesmo freeDbId/gif), que passa a ser
+  // o nome canônico. Ver docs/content/exercise_library_curation_2026Q3.md.
   makeExercise({
     name: 'Rosca Direta com Barra W',
     freeDbId: 'Close-Grip_EZ_Bar_Curl',
@@ -440,7 +432,7 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     movementPattern: 'empurrar',
   }),
   makeExercise({
-    name: 'Extensão de Tríceps Acima da Cabeça na Polia',
+    name: 'Tríceps Francês na Polia',
     freeDbId: 'Cable_Rope_Overhead_Triceps_Extension',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
@@ -475,7 +467,7 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     movementPattern: 'agachar',
   }),
   makeExercise({
-    name: 'Passada Caminhando',
+    name: 'Passada com Barra',
     freeDbId: 'Barbell_Walking_Lunge',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
@@ -554,16 +546,8 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     aliases: ['Abdução na polia'],
     movementPattern: 'abdução',
   }),
-  makeExercise({
-    name: 'Frog Pump',
-    freeDbId: 'Frog_Sit-Ups',
-    bodyPart: 'glúteo',
-    targetMuscle: 'Glúteo máximo',
-    secondaryMuscles: ['Adutores'],
-    equipment: 'peso_corporal',
-    aliases: ['Frog pump'],
-    movementPattern: 'extensão de quadril',
-  }),
+  // 'Frog Pump' foi arquivado na curadoria 2026Q3 — coberto por 'Glúteo 4
+  // Apoios' (docs/content/exercise_library_curation_2026Q3.md).
   makeExercise({
     name: 'Panturrilha Sentado',
     freeDbId: 'Seated_Calf_Raise',
@@ -856,7 +840,7 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     movementPattern: 'isolamento',
   }),
   makeExercise({
-    name: 'Tríceps Inverso na Polia',
+    name: 'Tríceps Pegada Inversa na Polia',
     freeDbId: 'Reverse_Grip_Triceps_Pushdown',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial (cabeça medial)',
@@ -886,7 +870,7 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     movementPattern: 'isolamento',
   }),
   makeExercise({
-    name: 'Tríceps Francês com Barra W em Pé',
+    name: 'Tríceps Francês com Barra em Pé',
     freeDbId: 'Standing_Overhead_Barbell_Triceps_Extension',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial (cabeça longa)',
@@ -896,7 +880,7 @@ export const COMMON_GYM_EXERCISES_SEED: ExerciseSeed[] = [
     movementPattern: 'isolamento',
   }),
   makeExercise({
-    name: 'Mergulho na Máquina',
+    name: 'Paralela na Máquina',
     freeDbId: 'Dip_Machine',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',

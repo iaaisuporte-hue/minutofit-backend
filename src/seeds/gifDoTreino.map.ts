@@ -1,11 +1,16 @@
 /**
  * Mapa CoreFit → gifdotreino.com — fonte de GIFs animados dos exercícios.
- * GERADO automaticamente (não editar à mão). Regenerar via scripts/mirrorGifDoTreino.
+ * Base gerada em bloco (jun/2026); a partir da curadoria 2026Q3 também recebe
+ * edições manuais pontuais (rename de chave ao renomear exercício, correção
+ * de valor ao trocar um gif errado, entradas novas) — ver
+ * docs/content/exercise_library_curation_2026Q3.md e
+ * src/scripts/curationExerciseLibraryFixes2026Q3.ts. Reespelhar para o bucket
+ * via scripts/mirrorGifDoTreino após editar.
  *
  * Chave = nome PT-BR do nosso exercício (ExerciseSeed.name).
  * Valor = caminho ORIGEM no gifdotreino (relativo), usado só pelo script de espelhamento
  *         para baixar o arquivo. A URL pública final é derivada do slug + EXERCISE_MEDIA_BASE_URL.
- * Total: 224 exercícios com GIF (dos 242 do seed). Os demais mantêm free-exercise-db.
+ * Total original: 224 exercícios com GIF (dos 242 do seed de então). Os demais mantêm free-exercise-db.
  */
 
 export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
@@ -16,9 +21,8 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Abdominal Remador': 'Exercicios/Funcional e HIT/V-Up com Bola de Estabilidade.gif',
   'Abdução com Elástico (Monster Walk)': 'Exercicios/Funcional e HIT/Caminhada Lateral com Faixa de Resistência.gif',
   'Abdução de Quadril na Máquina': 'Exercicios/Glúteos/Máquina de Abdução de Quadril.gif',
-  'Abdução na Máquina': 'Exercicios/Glúteos/Máquina de Abdução de Quadril.gif',
   'Abdução na Polia': 'Exercicios/Glúteos/Abdução de quadril com cabo.gif',
-  'Afundo (Lunge)': 'Exercicios/Pernas/Afundo com Halteres.gif',
+  'Afundo com Halter': 'Exercicios/Pernas/Afundo com Halteres.gif',
   'Afundo Reverso': 'Exercicios/Pernas/Avanço Invertido.gif',
   'Afundo com Barra': 'Exercicios/Pernas/Afundo com Barra.gif',
   'Agachamento Búlgaro': 'Exercicios/Pernas/Agachamento Búlgaro com Halteres.gif',
@@ -33,7 +37,7 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Alongamento de Isquiotibiais (Faixa)': 'Exercicios/Mobilidade/Alongamento de Isquiotibiais deitado.gif',
   'Ankle Mobility Drill': 'Exercicios/Mobilidade/Alongamentos de pés e tornozelos.gif',
   'Arnold Press': 'Exercicios/Ombros/Desenvolvimento Arnold.gif',
-  'Band Pull-Apart': 'Exercicios/Funcional e HIT/Crucifixo invertido com gymstick para deltoides posterior.gif',
+  'Elevação Lateral com Elástico': 'Exercicios/Funcional e HIT/Adução de Ombro com Faixa Elástica.gif',
   'Barra Fixa': 'Exercicios/Costas/Barra fixa.gif',
   'Barra Fixa Assistida': 'Exercicios/Calistenia/Barra fixa Assistida com Faixa Elástica.gif',
   'Barra Fixa Supinada': 'Exercicios/Calistenia/Barra Fixa com Pegada Supinada.gif',
@@ -61,7 +65,7 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Crossover no Cabo': 'Exercicios/Peitoral/Cross over polia media.gif',
   'Crucifixo Inclinado com Halteres': 'Exercicios/Peitoral/Crucifixo com Halteres Inclinado.gif',
   'Crucifixo Inclinado na Máquina': 'Exercicios/Peitoral/Crucifixo Inclinado Cross.gif',
-  'Crucifixo Inverso (Elevação Posterior)': 'Exercicios/Ombros/Voador invertido.gif',
+  'Crucifixo Inverso': 'Exercicios/Mobilidade/Elevação lateral de deltóide posterior com halteres.gif',
   'Crucifixo com Halteres': 'Exercicios/Peitoral/Crucifixo com halteres.gif',
   'Crunch Abdominal': 'Exercicios/Mobilidade/Contração abdominal.gif',
   'Crunch com Cabo': 'Exercicios/Mobilidade/Contração abdominal.gif',
@@ -71,7 +75,7 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Desenvolvimento na Máquina': 'Exercicios/Ombros/Desenvolvimento de ombro na máquina.gif',
   'Dip em Barras Paralelas': 'Exercicios/Calistenia/Paralelas na Barra.gif',
   'Dip em Cadeira': 'Exercicios/Calistenia/Dips na cadeira.gif',
-  'Elevação Frontal': 'Exercicios/Ombros/Elevação frontal com halteres.gif',
+  'Elevação Frontal': 'Exercicios/Ombros/Levantamento frontal com anilha.gif',
   'Elevação Frontal com Halteres': 'Exercicios/Ombros/Elevação frontal com halteres.gif',
   'Elevação Lateral': 'Exercicios/Ombros/Elevação lateral de braços com halteres.gif',
   'Elevação Lateral na Máquina': 'Exercicios/Ombros/Elevação lateral na máquina.gif',
@@ -80,17 +84,15 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Elevação Pélvica Máquina': 'Exercicios/Glúteos/Elevação Pélvica Na Máquina.gif',
   'Elevação de Panturrilha em Pé': 'Exercicios/Calistenia/Elevação de panturrilha em pé.gif',
   'Elíptico': 'Exercicios/Cardio/Máquina Elíptica.gif',
-  'Encolhimento com Barra': 'Exercicios/Trapézio/Encolhimento de Barra.gif',
   'Encolhimento de Ombros com Barra': 'Exercicios/Trapézio/Encolhimento de Barra.gif',
   'Encolhimento de Ombros com Halteres': 'Exercicios/Trapézio/Encolhimento com Halteres.gif',
   'Encolhimento de Ombros na Polia': 'Exercicios/Trapézio/Encolhimento com Cabo.gif',
   'Escada Ergométrica': 'Exercicios/Cardio/Máquina Simulador Escada.gif',
   'Escalador com Torção': 'Exercicios/Funcional e HIT/Escalador de Montanha.gif',
   'Esteira (HIIT)': 'Exercicios/Cardio/Esteira Ergométrica.gif',
-  'Extensão de Perna na Máquina': 'Exercicios/Pernas/Cadeira extensora.gif',
   'Extensão de Punho': 'Exercicios/Antebraços/Rosca de Punho Reversa com Barra.gif',
   'Extensão de Quadril em Pé': 'Exercicios/Funcional e HIT/Glúteo Coice em Pé com Faixa Elástica.gif',
-  'Extensão de Tríceps Acima da Cabeça na Polia': 'Exercicios/Tríceps/Tríceps francês na polia com corda.gif',
+  'Tríceps Francês na Polia': 'Exercicios/Tríceps/Tríceps francês na polia com corda.gif',
   'Extensão de Tríceps com Haltere Unilateral': 'Exercicios/Tríceps/Extensão de tríceps com haltere unilateral sentado.gif',
   'Face Pull no Cabo': 'Exercicios/Trapézio/Face Pull.gif',
   'Farmer Walk': 'Exercicios/Crossfit/Caminhada com Halteres.gif',
@@ -103,9 +105,8 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Frog Jump (Salto Sapo)': 'Exercicios/Calistenia/Salto em Distância.gif',
   'Frog Pump': 'Exercicios/Funcional e HIT/Ponte de Glúteos.gif',
   'Front Lever': 'Exercicios/Calistenia/Puxada Front Lever.gif',
-  'Fundinho (Bench Dip)': 'Exercicios/Tríceps/Tríceps no Banco.gif',
-  'Glute Kickback de Joelhos': 'Exercicios/Glúteos/Quatro Apoios.gif',
-  'Glúteo 4 Apoios (Donkey Kick)': 'Exercicios/Funcional e HIT/Coice de Burro.gif',
+  'Dip no Banco': 'Exercicios/Tríceps/Tríceps no Banco.gif',
+  'Glúteo 4 Apoios': 'Exercicios/Funcional e HIT/Coice de Burro.gif',
   'Glúteo na Máquina': 'Exercicios/Glúteos/Glúteo Coice Na Máquina.gif',
   'Glúteo no Cabo (Kickback)': 'Exercicios/Glúteos/Gluteos Coice nilateral Polia Baixa.gif',
   'Hack Squat na Máquina': 'Exercicios/Pernas/Agachamento na Máquina Hack.gif',
@@ -119,27 +120,26 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Kettlebell Swing': 'Exercicios/Crossfit/Swing de kettlebell.gif',
   'Lateral Shuffle': 'Exercicios/Funcional e HIT/Passo Lateral em Alta Velocidade.gif',
   'Leg Press 45°': 'Exercicios/Pernas/Leg Press.gif',
-  'Leg Press 80°': 'Exercicios/Pernas/Leg Press.gif',
+  'Leg Press 80°': 'Exercicios/Pernas/Leg press 90 no smith.gif',
   'Leg Press Horizontal': 'Exercicios/Pernas/Leg Press Horizontal.gif',
   'Leg Raise Deitado': 'Exercicios/Funcional e HIT/Elevação de Pernas estilo Sapo.gif',
   'Levantamento Terra': 'Exercicios/Costas/Levantamento Terra.gif',
-  'Mergulho (Tríceps Dip)': 'Exercicios/Calistenia/Mergulho de tríceps.gif',
-  'Mergulho na Máquina': 'Exercicios/Tríceps/Mergulho de tríceps com alavanca.gif',
+  'Tríceps na Barra Paralela Livre': 'Exercicios/Calistenia/Mergulho de tríceps.gif',
+  'Paralela na Máquina': 'Exercicios/Tríceps/Mergulho de tríceps com alavanca.gif',
   'Mesa Flexora (Leg Curl Deitado)': 'Exercicios/Pernas/Mesa flexora.gif',
   'Mobilidade de Ombro (Towel Stretch)': 'Exercicios/Mobilidade/Alongamento do ombro com toalha.gif',
   'Mountain Climber': 'Exercicios/Funcional e HIT/Escalador de Montanha.gif',
   'Muscle-Up': 'Exercicios/Calistenia/Muscle up.gif',
-  'Nordic Curl (Curl Nórdico)': 'Exercicios/Pernas/Flexão Nórdica.gif',
+  'Flexão Nórdica': 'Exercicios/Pernas/Flexão Nórdica.gif',
   'Oblíquo com Rotação': 'Exercicios/Mobilidade/Torção Oblíqua Sentada.gif',
   'One-Arm Push-Up': 'Exercicios/Calistenia/Flexão com um braço.gif',
   'Panturrilha Sentado': 'Exercicios/Panturrilhas/Elevação de Panturrilha Sentado com Alavanca.gif',
   'Panturrilha Unilateral': 'Exercicios/Panturrilhas/Levantamento de panturrilha com apoio de uma perna.gif',
   'Panturrilha com Halteres': 'Exercicios/Panturrilhas/Panturrilhas em Pé.gif',
-  'Panturrilha em Pé (Calf Raise)': 'Exercicios/Panturrilhas/Elevação de Panturrilha em Máquina em pé.gif',
   'Panturrilha no Leg Press': 'Exercicios/Panturrilhas/Elevação de Panturrilha no Leg Press.gif',
   'Panturrilha no Smith': 'Exercicios/Panturrilhas/Elevação de Panturrilha no Smith.gif',
   'Paralelas Assistidas': 'Exercicios/Tríceps/Mergulhos Assistidos para Tríceps.gif',
-  'Passada Caminhando': 'Exercicios/Pernas/Avanço com Barra.gif',
+  'Passada com Barra': 'Exercicios/Pernas/Avanço com Barra.gif',
   'Peck Deck (Máquina)': 'Exercicios/Peitoral/Voador no pec deck.gif',
   'Pigeon Pose (Pombo — Quadril)': 'Exercicios/Mobilidade/Alongamento Piriforme.gif',
   'Pike Push-Up': 'Exercicios/Calistenia/Flexão Invertida.gif',
@@ -148,20 +148,20 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Ponte de Glúteo': 'Exercicios/Funcional e HIT/Ponte de Glúteos.gif',
   'Power Clean': 'Exercicios/Crossfit/Power Clean.gif',
   'Pular Corda': 'Exercicios/Crossfit/Pular Corda.gif',
-  'Pulldown com Braços Retos': 'Exercicios/Costas/Pullover com Cabo.gif',
+  'Pulldown com Braços Retos': 'Exercicios/Costas/Pulldown com corda.gif',
   'Pullover com Haltere': 'Exercicios/Peitoral/Pullover com haltere.gif',
   'Pullover na Polia': 'Exercicios/Costas/Pullover com Cabo.gif',
   'Puxada Frente (Lat Pulldown)': 'Exercicios/Costas/Puxada Alta.gif',
   'Puxada Neutra': 'Exercicios/Costas/Puxada Alta com Triângulo.gif',
   'Puxada Supinada': 'Exercicios/Costas/Puxada Alta Invertida.gif',
-  'Puxada na Polia Alta (Close Grip)': 'Exercicios/Costas/Puxada na Polia Alta com Pegada Fechada.gif',
+  'Puxada Supinada Fechada': 'Exercicios/Costas/Puxada na Polia Alta com Pegada Fechada.gif',
   'Remada Alta no Cabo': 'Exercicios/Trapézio/Remada Alta com Cabo.gif',
   'Remada Articulada': 'Exercicios/Costas/Remada Sentada na Máquina.gif',
   'Remada Baixa no Cabo': 'Exercicios/Costas/Remada Sentada com Cabo.gif',
   'Remada Curvada com Barra': 'Exercicios/Costas/Remada Curvada com Barra.gif',
-  'Remada Invertida': 'Exercicios/Costas/Remada Invertida.gif',
+  'Remada Livre': 'Exercicios/Costas/Remada Invertida.gif',
   'Remada Sentada no Cabo': 'Exercicios/Costas/Remada Sentada com Cabo.gif',
-  'Remada T-Bar': 'Exercicios/Costas/Remada Curvada em T.gif',
+  'Remada Cavalinho': 'Exercicios/Costas/Remada Curvada em T.gif',
   'Remada Unilateral com Haltere': 'Exercicios/Costas/Serrote.gif',
   'Remada com Elástico': 'Exercicios/Funcional e HIT/Remada sentada com faixa.gif',
   'Remada com Elástico na Porta': 'Exercicios/Funcional e HIT/Remada sentada com faixa.gif',
@@ -219,13 +219,12 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Tríceps Corda (Pushdown)': 'Exercicios/Tríceps/Tríceps pulley corda.gif',
   'Tríceps Francês Unilateral na Polia': 'Exercicios/Tríceps/Tríceps francês unilateral no cabo.gif',
   'Tríceps Francês com Barra W Sentado': 'Exercicios/Tríceps/Tríceps francês com barra W acima da cabeça sentado.gif',
-  'Tríceps Francês com Barra W em Pé': 'Exercicios/Tríceps/Extensão de tríceps com barra atrás da cabeça.gif',
+  'Tríceps Francês com Barra em Pé': 'Exercicios/Tríceps/Extensão de tríceps com barra em pé.gif',
   'Tríceps Francês com Haltere': 'Exercicios/Tríceps/Tríceps Francês com Halteres.gif',
   'Tríceps Francês na Polia Baixa': 'Exercicios/Tríceps/Tríceps francês na polia com corda.gif',
-  'Tríceps Inverso na Polia': 'Exercicios/Tríceps/Tríceps pulley pegada invertida.gif',
+  'Tríceps Pegada Inversa na Polia': 'Exercicios/Tríceps/Tríceps pulley pegada invertida.gif',
   'Tríceps Máquina': 'Exercicios/Tríceps/Extensão de tríceps na máquina.gif',
   'Tríceps Pulley (Pushdown)': 'Exercicios/Tríceps/Tríceps pulley barra.gif',
-  'Tríceps Testa (Skull Crusher)': 'Exercicios/Tríceps/Tríceps testa com barra.gif',
   'Tríceps Testa com Barra W': 'Exercicios/Tríceps/Extensão de Tríceps deitado com Barra W Pegada Fechada atrás da Cabeça.gif',
   'Tríceps Testa com Halteres': 'Exercicios/Tríceps/Tríceps Testa com Banco Declinado com Halteres.gif',
   'Tríceps Unilateral na Polia': 'Exercicios/Tríceps/Extensão de tríceps lateral com cabo.gif',
@@ -233,6 +232,21 @@ export const GIF_DO_TREINO_SOURCE: Record<string, string> = {
   'Tuck Jump': 'Exercicios/Funcional e HIT/Salto com Joelhos Flexionados.gif',
   'Twist Russo': 'Exercicios/Mobilidade/Torção Oblíqua Sentada.gif',
   'Wall Sit (Cadeira na Parede)': 'Exercicios/Funcional e HIT/Wall Sit.gif',
+
+  // ─── Curadoria 2026Q3 (adições) ──────────────────────────────────────────
+  'Rosca Unilateral com Halter': 'Exercicios/Bíceps/Rosca bíceps unilateral.gif',
+  'Remada Curvada com Halter': 'Exercicios/Costas/Remada curvada com halteres.gif',
+  'Leg Press 45° Unilateral': 'Exercicios/Pernas/Leg Press unilateral.gif',
+  // Reusa o gif de 'Afundo com Halter' — não achamos, verificado, um gif
+  // distinto de passada CAMINHANDO com halteres no gifdotreino.
+  'Passada com Halter': 'Exercicios/Pernas/Afundo com Halteres.gif',
+  'Alongamento de Tríceps em Pé': 'Exercicios/Mobilidade/Alongamento de tríceps em pé.gif',
+  'Alongamento de Costas': 'Exercicios/Mobilidade/Alongamento da parte superior das costas.gif',
+  'Alongamento Lombar': 'Exercicios/Mobilidade/Postura da Cobra - Alongamento Abdominal.gif',
+  'Alongamento de Quadríceps em Pé': 'Exercicios/Mobilidade/Alongamento em Pé dos Quadríceps.gif',
+  'Alongamento de Glúteos': 'Exercicios/Mobilidade/Alongamento de Glúteos Deitado.gif',
+  'Alongamento de Adutores Sentado': 'Exercicios/Mobilidade/Alongamento dos adutores sentado.gif',
+  'Alongamento de Panturrilha na Parede': 'Exercicios/Mobilidade/Alongamento de panturrilha na parede.gif',
 };
 
 /** Slug estável do nome → mesmo algoritmo no script de espelhamento e no seed. */

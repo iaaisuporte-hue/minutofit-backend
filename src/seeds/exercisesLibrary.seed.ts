@@ -363,7 +363,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Afundo (Lunge)',
+    name: 'Afundo com Halter',
     freeDbId: 'Dumbbell_Lunges',
     bodyPart: 'perna',
     targetMuscle: 'Quadríceps',
@@ -380,25 +380,9 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
       'Mantenha o tronco ereto.',
     ],
   },
-  {
-    source: 'corefit',
-    name: 'Panturrilha em Pé (Calf Raise)',
-    freeDbId: 'Rocking_Standing_Calf_Raise',
-    bodyPart: 'perna',
-    targetMuscle: 'Gastrocnêmio',
-    secondaryMuscles: ['Sóleo'],
-    equipment: 'máquina',
-    tags: ['academia', 'isolamento'],
-    instructions: [
-      'Posicione os ombros sob os apoios, pontas dos pés na plataforma.',
-      'Suba nas pontas dos pés contraindo a panturrilha.',
-      'Desça até sentir alongamento do calcanhar abaixo da plataforma.',
-    ],
-    tips: [
-      'Amplitude total é essencial — panturrilha responde bem a volume e amplitude.',
-      '3–4 séries de 15–25 reps funciona bem.',
-    ],
-  },
+  // 'Panturrilha em Pé (Calf Raise)' foi arquivado na curadoria 2026Q3
+  // (docs/content/exercise_library_curation_2026Q3.md) — removido do seed
+  // ativo pelo mesmo motivo documentado acima em Tríceps Testa.
   // ─── GLÚTEO ───────────────────────────────────────────────────────────────
   {
     source: 'corefit',
@@ -503,11 +487,15 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     bodyPart: 'ombro',
     targetMuscle: 'Deltoide anterior',
     secondaryMuscles: ['Peitoral (feixe clavicular)', 'Trapézio'],
-    equipment: 'halteres',
+    // Curadoria 2026Q3: equipamento corrigido de 'halteres' para 'anilha' —
+    // esse nome (sem "com Halteres") é a variante com anilha/disco segurado
+    // com as duas mãos; "Elevação Frontal com Halteres" é a entrada separada
+    // que usa halteres. Estavam usando o MESMO gif antes da correção.
+    equipment: 'anilha',
     tags: ['academia', 'isolamento'],
     instructions: [
-      'Em pé, halteres à frente das coxas.',
-      'Eleve um ou ambos os braços à frente até a altura dos ombros.',
+      'Em pé, segure uma anilha com as duas mãos à frente das coxas.',
+      'Eleve os braços à frente até a altura dos ombros.',
       'Desça de forma controlada.',
     ],
     tips: [
@@ -516,7 +504,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Crucifixo Inverso (Elevação Posterior)',
+    name: 'Crucifixo Inverso',
     freeDbId: 'Cable_Rear_Delt_Fly',
     bodyPart: 'ombro',
     targetMuscle: 'Deltoide posterior',
@@ -609,7 +597,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Rosca Scott (Preacher Curl)',
+    name: 'Rosca Scott com Barra',
     freeDbId: 'Preacher_Curl',
     bodyPart: 'bíceps',
     targetMuscle: 'Bíceps braquial (cabeça curta)',
@@ -645,25 +633,11 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
       'Cotovelos fixos ao lado do corpo.',
     ],
   },
-  {
-    source: 'corefit',
-    name: 'Tríceps Testa (Skull Crusher)',
-    freeDbId: 'Decline_Close-Grip_Bench_To_Skull_Crusher',
-    bodyPart: 'tríceps',
-    targetMuscle: 'Tríceps braquial',
-    secondaryMuscles: [],
-    equipment: 'barra',
-    tags: ['academia', 'hipertrofia'],
-    instructions: [
-      'Deite no banco plano, barra acima do peito.',
-      'Flexione os cotovelos descendo a barra em direção à testa.',
-      'Estenda de volta à posição inicial.',
-    ],
-    tips: [
-      'Cotovelos apontados para o teto — não deixe abrir.',
-      'Use barra EZ para reduzir stress no punho.',
-    ],
-  },
+  // 'Tríceps Testa (Skull Crusher)' foi arquivado na curadoria 2026Q3
+  // (docs/content/exercise_library_curation_2026Q3.md) — removido do seed
+  // ativo de propósito: o índice único parcial só cobre status='active', então
+  // deixar a entrada aqui faria o próximo reseed recriar uma linha nova ativa
+  // por cima do id arquivado via curationExerciseLibraryFixes2026Q3.ts.
   {
     source: 'corefit',
     name: 'Tríceps Francês com Haltere',
@@ -684,7 +658,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Mergulho (Tríceps Dip)',
+    name: 'Tríceps na Barra Paralela Livre',
     freeDbId: 'Dips_-_Triceps_Version',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
@@ -871,7 +845,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Glúteo 4 Apoios (Donkey Kick)',
+    name: 'Glúteo 4 Apoios',
     freeDbId: 'Glute_Kickback',
     bodyPart: 'glúteo',
     targetMuscle: 'Glúteo máximo',
@@ -990,7 +964,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   // ─── COSTAS (adicionais) ─────────────────────────────────────────────────
   {
     source: 'corefit',
-    name: 'Puxada na Polia Alta (Close Grip)',
+    name: 'Puxada Supinada Fechada',
     freeDbId: 'Close-Grip_Front_Lat_Pulldown',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal',
@@ -1022,7 +996,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Remada T-Bar',
+    name: 'Remada Cavalinho',
     freeDbId: 'Lying_T-Bar_Row',
     bodyPart: 'costas',
     targetMuscle: 'Grande dorsal',
@@ -1040,11 +1014,14 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     source: 'corefit',
     name: 'Bom Dia (Good Morning)',
     freeDbId: 'Good_Morning',
-    bodyPart: 'costas',
+    // Curadoria 2026Q3: saiu de 'costas' — é um hip hinge de cadeia posterior
+    // (isquiotibiais + glúteo como secundários), mesmo padrão de 'Terra Sumo'
+    // (também 'perna' apesar do eretor da espinha entrar no movimento).
+    bodyPart: 'perna',
     targetMuscle: 'Eretor da espinha',
     secondaryMuscles: ['Isquiotibiais', 'Glúteo'],
     equipment: 'barra',
-    tags: ['academia', 'lombar', 'posterior'],
+    tags: ['academia', 'lombar', 'posterior', 'perna'],
     instructions: [
       'Coloque a barra nos trapézios e fique em pé com os pés na largura do quadril.',
       'Incline o tronco para frente mantendo a coluna neutra até o torso ficar paralelo ao chão.',
@@ -1086,22 +1063,10 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
 
   // ─── PERNA (adicionais) ───────────────────────────────────────────────────
-  {
-    source: 'corefit',
-    name: 'Extensão de Perna na Máquina',
-    freeDbId: 'Leg_Extensions',
-    bodyPart: 'perna',
-    targetMuscle: 'Quadríceps',
-    secondaryMuscles: [],
-    equipment: 'máquina',
-    tags: ['academia', 'perna', 'isolamento', 'quadríceps'],
-    instructions: [
-      'Ajuste o banco e os suportes da máquina ao seu tamanho.',
-      'Estenda as pernas até a articulação do joelho travar levemente.',
-      'Abaixe controladamente.',
-    ],
-    tips: ['Não trave o joelho com impacto — estenda suavemente.'],
-  },
+  // 'Extensão de Perna na Máquina' foi arquivado na curadoria 2026Q3
+  // (docs/content/exercise_library_curation_2026Q3.md) — mesma nota das
+  // demais remoções acima: não recriar aqui, o script de curadoria arquiva
+  // pelo id existente.
   {
     source: 'corefit',
     name: 'Hack Squat na Máquina',
@@ -1278,22 +1243,9 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
     tips: ['Mantenha os pés paralelos — evite rodar os quadris.'],
   },
-  {
-    source: 'corefit',
-    name: 'Abdução na Máquina',
-    freeDbId: 'Thigh_Adductor',
-    bodyPart: 'glúteo',
-    targetMuscle: 'Glúteo médio',
-    secondaryMuscles: ['TFL'],
-    equipment: 'máquina',
-    tags: ['academia', 'glúteo', 'isolamento', 'abdução'],
-    instructions: [
-      'Sente na máquina abdutora com as coxas nos suportes.',
-      'Abra as pernas contra a resistência.',
-      'Retorne controladamente.',
-    ],
-    tips: ['Ponta do pé para dentro recruta mais glúteo médio.'],
-  },
+  // 'Abdução na Máquina' foi arquivado na curadoria 2026Q3 (duplicata de
+  // 'Abdução de Quadril na Máquina', mesmo freeDbId/gif — mantido o nome mais
+  // descritivo). Ver docs/content/exercise_library_curation_2026Q3.md.
   {
     source: 'corefit',
     name: 'Afundo Reverso',
@@ -1524,7 +1476,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Fundinho (Bench Dip)',
+    name: 'Dip no Banco',
     freeDbId: 'Bench_Dips',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial',
@@ -1540,7 +1492,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Extensão de Tríceps com Haltere Unilateral',
+    name: 'Francês Unilateral com Halter',
     freeDbId: 'Dumbbell_One-Arm_Triceps_Extension',
     bodyPart: 'tríceps',
     targetMuscle: 'Tríceps braquial (cabeça longa)',
@@ -2292,11 +2244,18 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     source: 'corefit',
     name: 'Levantamento Terra',
     freeDbId: 'Barbell_Deadlift',
+    // Curadoria 2026Q3: body_part continua 'costas' (targetMuscle é eretor da
+    // espinha) — o pedido de também aparecer em "Pernas" esbarra em
+    // `body_part` ser campo único; a tag 'perna' abaixo ajuda a busca livre
+    // (`q`, que varre tags), mas NÃO faz o exercício aparecer no chip de
+    // categoria "Perna" do seletor (FREE_WORKOUT_GROUPS/CATALOG_GROUPS
+    // filtram por `bodyPart` exato — ver docs/content/
+    // exercise_library_curation_2026Q3.md).
     bodyPart: 'costas',
     targetMuscle: 'Eretor da espinha',
     secondaryMuscles: ['Glúteo', 'Isquiotibiais', 'Trapézio'],
     equipment: 'barra',
-    tags: ['academia', 'compostos', 'full body'],
+    tags: ['academia', 'compostos', 'full body', 'perna'],
     instructions: [
       'Pés na largura do quadril, barra sobre os pés.',
       'Dobrando os quadris e joelhos, agarre a barra com pegada pronada ou mista.',
@@ -2682,21 +2641,9 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
     ],
     tips: ['Excelente ponto de partida para iniciantes aprenderem o padrão de agachamento.'],
   },
-  {
-    source: 'corefit',
-    name: 'Glute Kickback de Joelhos',
-    freeDbId: 'Glute_Kickback',
-    bodyPart: 'glúteo',
-    targetMuscle: 'Glúteo máximo',
-    secondaryMuscles: ['Core'],
-    equipment: 'peso_corporal',
-    tags: ['casa', 'glúteo', 'iniciante'],
-    instructions: [
-      'Em quatro apoios, chute um joelho para trás e para cima.',
-      'Segure no topo e abaixe sem tocar o chão.',
-    ],
-    tips: ['Pode adicionar elástico acima dos joelhos para mais intensidade.'],
-  },
+  // 'Glute Kickback de Joelhos' foi arquivado na curadoria 2026Q3 — mesmo
+  // movimento de 'Glúteo 4 Apoios', já coberto (docs/content/
+  // exercise_library_curation_2026Q3.md).
   {
     source: 'corefit',
     name: 'Tuck Jump',
@@ -2759,7 +2706,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   },
   {
     source: 'corefit',
-    name: 'Nordic Curl (Curl Nórdico)',
+    name: 'Flexão Nórdica',
     freeDbId: 'Lying_Machine_Squat',
     bodyPart: 'perna',
     targetMuscle: 'Isquiotibiais',
@@ -2823,7 +2770,7 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
   // ─── POSTURA / PREVENÇÃO ──────────────────────────────────────────────────
   {
     source: 'corefit',
-    name: 'Band Pull-Apart',
+    name: 'Elevação Lateral com Elástico',
     freeDbId: 'Band_Pull_Apart',
     bodyPart: 'ombro',
     targetMuscle: 'Deltóide posterior',
@@ -2895,5 +2842,324 @@ export const EXERCISES_SEED: ExerciseSeed[] = [
       'Puxe levemente para cima com a mão superior.',
     ],
     tips: ['Faça após treinos de ombro para recuperação.'],
+  },
+
+  // ─── CURADORIA 2026Q3 — adições novas ──────────────────────────────────────
+  // Ver docs/content/exercise_library_curation_2026Q3.md para o racional de
+  // cada item (por que entrou, por que não tem gif do gifdotreino quando é o
+  // caso). Aplicado via src/scripts/curationExerciseLibraryFixes2026Q3.ts.
+  {
+    source: 'corefit',
+    name: 'Rosca Inversa na Polia',
+    freeDbId: 'Reverse_Cable_Curl',
+    bodyPart: 'bíceps',
+    targetMuscle: 'Braquiorradial',
+    secondaryMuscles: ['Bíceps braquial', 'Extensores do antebraço'],
+    equipment: 'cabo',
+    tags: ['academia', 'isolamento', 'antebraço'],
+    instructions: [
+      'Em pé de frente para a polia baixa, pegada pronada na barra reta.',
+      'Flexione os cotovelos sem girar os pulsos.',
+      'Retorne de forma controlada.',
+    ],
+    tips: ['Trata "com Cabo" e "na Polia" como o mesmo equipamento — sem duplicar o exercício.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Rosca Scott na Máquina Unilateral',
+    freeDbId: 'Machine_Preacher_Curls',
+    bodyPart: 'bíceps',
+    targetMuscle: 'Bíceps braquial (cabeça curta)',
+    secondaryMuscles: ['Braquial'],
+    equipment: 'máquina',
+    tags: ['academia', 'isolamento'],
+    instructions: [
+      'Ajuste o banco Scott da máquina para apoiar um braço de cada vez.',
+      'Flexione o cotovelo até quase a contração total.',
+      'Retorne sem estender completamente.',
+    ],
+    tips: ['Permite focar na simetria entre os lados sem compensação do braço mais forte.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Rosca Unilateral com Halter',
+    bodyPart: 'bíceps',
+    targetMuscle: 'Bíceps braquial',
+    secondaryMuscles: ['Braquial', 'Braquiorradial'],
+    equipment: 'halteres',
+    tags: ['academia', 'casa', 'hipertrofia'],
+    instructions: [
+      'Em pé ou sentado, halter em uma mão.',
+      'Flexione o cotovelo até a contração completa.',
+      'Retorne controladamente e complete a série antes de trocar de lado.',
+    ],
+    tips: ['Diferente da "Rosca Alternada": aqui o braço faz a série inteira antes de trocar.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Rosca Inversa com Desenvolvimento',
+    bodyPart: 'bíceps',
+    targetMuscle: 'Braquiorradial',
+    secondaryMuscles: ['Deltoide anterior', 'Tríceps braquial'],
+    equipment: 'halteres',
+    tags: ['academia', 'composto', 'ombro'],
+    instructions: [
+      'Em pé, halteres em pegada pronada (rosca inversa) na altura das coxas.',
+      'Flexione os cotovelos até os halteres chegarem aos ombros.',
+      'Sem pausa, gire os punhos e empurre os halteres acima da cabeça (desenvolvimento).',
+      'Desça controladamente pelo caminho inverso.',
+    ],
+    tips: [
+      'Movimento composto — carga bem mais leve que a rosca inversa isolada.',
+      'Nome PT-BR curado a partir do pedido original "Curl to Shoulder Press".',
+    ],
+  },
+  {
+    source: 'corefit',
+    name: 'Puxada Supinada Aberta',
+    freeDbId: 'Underhand_Cable_Pulldowns',
+    bodyPart: 'costas',
+    targetMuscle: 'Grande dorsal',
+    secondaryMuscles: ['Bíceps braquial', 'Redondo maior'],
+    equipment: 'cabo',
+    tags: ['academia', 'costas', 'puxar'],
+    instructions: [
+      'Segure a barra reta com pegada supinada, mãos mais afastadas que os ombros.',
+      'Puxe em direção à parte superior do peito.',
+      'Retorne controladamente até o braço quase estender.',
+    ],
+    tips: ['Pegada mais aberta que a "Puxada Supinada" — reduz o braço de alavanca do bíceps.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Remada Curvada com Halter',
+    bodyPart: 'costas',
+    targetMuscle: 'Grande dorsal',
+    secondaryMuscles: ['Romboides', 'Trapézio médio', 'Bíceps braquial'],
+    equipment: 'halteres',
+    tags: ['academia', 'costas', 'puxar', 'compostos'],
+    instructions: [
+      'Incline o tronco a ~45°, um halter em cada mão, joelhos levemente flexionados.',
+      'Puxe os halteres em direção ao abdômen, cotovelos próximos ao corpo.',
+      'Desça controladamente.',
+    ],
+    tips: ['Diferente da "Remada Unilateral com Haltere" — aqui os dois braços puxam juntos.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Remada Baixa na Máquina — Pegada Supinada',
+    freeDbId: 'Seated_Cable_Rows',
+    bodyPart: 'costas',
+    targetMuscle: 'Grande dorsal',
+    secondaryMuscles: ['Bíceps braquial', 'Romboides'],
+    equipment: 'máquina',
+    tags: ['academia', 'costas', 'puxar'],
+    instructions: [
+      'Sente na máquina de remada baixa com pegada supinada (palmas para cima).',
+      'Puxe o handle em direção ao abdômen, cotovelos rentes ao corpo.',
+      'Retorne controladamente sem arredondar a lombar.',
+    ],
+    tips: ['Pegada supinada recruta mais bíceps que a pronada ou neutra.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Remada Baixa na Máquina — Pegada Pronada',
+    freeDbId: 'Seated_Cable_Rows',
+    bodyPart: 'costas',
+    targetMuscle: 'Grande dorsal',
+    secondaryMuscles: ['Romboides', 'Trapézio médio'],
+    equipment: 'máquina',
+    tags: ['academia', 'costas', 'puxar'],
+    instructions: [
+      'Sente na máquina de remada baixa com pegada pronada (palmas para baixo).',
+      'Puxe o handle em direção ao abdômen.',
+      'Retorne controladamente sem arredondar a lombar.',
+    ],
+    tips: ['Pegada pronada prioriza mais as costas superiores e menos o bíceps.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Remada Baixa na Máquina — Pegada Neutra',
+    freeDbId: 'Seated_Cable_Rows',
+    bodyPart: 'costas',
+    targetMuscle: 'Grande dorsal',
+    secondaryMuscles: ['Romboides', 'Trapézio médio', 'Bíceps braquial'],
+    equipment: 'máquina',
+    tags: ['academia', 'costas', 'puxar'],
+    instructions: [
+      'Sente na máquina de remada baixa com pegada neutra (palmas uma de frente para a outra).',
+      'Puxe o handle em direção ao abdômen.',
+      'Retorne controladamente sem arredondar a lombar.',
+    ],
+    tips: ['Pegada mais confortável para o ombro — boa opção para quem sente desconforto nas outras pegadas.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Leg Press 45° Unilateral',
+    freeDbId: 'Leg_Press',
+    bodyPart: 'perna',
+    targetMuscle: 'Quadríceps',
+    secondaryMuscles: ['Glúteo', 'Isquiotibiais'],
+    equipment: 'máquina',
+    tags: ['academia', 'perna', 'unilateral'],
+    instructions: [
+      'Na máquina de leg press 45°, posicione um pé no centro da plataforma.',
+      'Empurre a plataforma estendendo o joelho, sem travar.',
+      'Desça controladamente até 90° de flexão de joelho.',
+    ],
+    tips: ['Corrige assimetrias entre as pernas — não dá para "ajudar" com a outra perna.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Leg Press 45° Articulado',
+    freeDbId: 'Leg_Press',
+    bodyPart: 'perna',
+    targetMuscle: 'Quadríceps',
+    secondaryMuscles: ['Glúteo', 'Isquiotibiais'],
+    equipment: 'máquina',
+    tags: ['academia', 'perna'],
+    instructions: [
+      'Sente na máquina de leg press articulado (assento acompanha o movimento do carrinho).',
+      'Empurre a plataforma estendendo os joelhos, sem travar.',
+      'Desça controladamente.',
+    ],
+    tips: ['O assento articulado reduz a carga na lombar em relação ao leg press 45° tradicional.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Passada com Halter',
+    freeDbId: 'Dumbbell_Lunges',
+    bodyPart: 'perna',
+    targetMuscle: 'Quadríceps',
+    secondaryMuscles: ['Glúteo', 'Isquiotibiais'],
+    equipment: 'halteres',
+    tags: ['academia', 'casa', 'perna', 'unilateral'],
+    instructions: [
+      'Em pé, um halter em cada mão.',
+      'Dê um passo à frente alternando as pernas a cada repetição, descendo até 90° nos dois joelhos.',
+      'Empurre de volta à posição inicial.',
+    ],
+    tips: ['Variação dinâmica do afundo — cobre distância a cada passo, em vez de voltar ao ponto de partida.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Pallof Press',
+    freeDbId: 'Pallof_Press',
+    bodyPart: 'abdômen',
+    targetMuscle: 'Core (anti-rotação)',
+    secondaryMuscles: ['Oblíquos', 'Ombro'],
+    equipment: 'cabo',
+    tags: ['academia', 'core', 'anti-rotação', 'estabilidade'],
+    instructions: [
+      'De lado para a polia (altura do peito), segure o handle com as duas mãos.',
+      'Estenda os braços à frente do peito, resistindo à rotação do tronco em direção à polia.',
+      'Retorne controladamente e repita.',
+    ],
+    tips: ['O objetivo é NÃO girar o tronco — quanto mais estável, mais eficaz.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Alongamento de Tríceps em Pé',
+    bodyPart: 'mobilidade',
+    targetMuscle: 'Tríceps braquial',
+    secondaryMuscles: ['Deltoide posterior'],
+    equipment: 'peso_corporal',
+    tags: ['casa', 'mobilidade', 'alongamento', 'tríceps', 'pós-treino'],
+    instructions: [
+      'Em pé, eleve um braço e dobre o cotovelo atrás da cabeça.',
+      'Com a outra mão, puxe levemente o cotovelo para trás e para o centro.',
+      'Segure 20-30s e troque de lado.',
+    ],
+    tips: ['Faça após treinos de tríceps/empurrar.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Alongamento de Costas',
+    bodyPart: 'mobilidade',
+    targetMuscle: 'Grande dorsal e romboides',
+    secondaryMuscles: ['Trapézio'],
+    equipment: 'peso_corporal',
+    tags: ['casa', 'mobilidade', 'alongamento', 'costas', 'pós-treino'],
+    instructions: [
+      'Segure um apoio fixo à frente e incline o tronco para trás, braços estendidos.',
+      'Deixe a coluna arredondar levemente, afastando o quadril do apoio.',
+      'Segure 20-30s.',
+    ],
+    tips: ['Faça após treinos de costas/puxar.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Alongamento Lombar',
+    bodyPart: 'mobilidade',
+    targetMuscle: 'Lombar',
+    secondaryMuscles: ['Abdômen'],
+    equipment: 'peso_corporal',
+    tags: ['casa', 'mobilidade', 'alongamento', 'lombar', 'pós-treino'],
+    instructions: [
+      'Deitado de bruços, apoie as mãos no chão sob os ombros.',
+      'Estenda os braços elevando o tronco, quadril no chão (postura da cobra).',
+      'Segure 20-30s sem forçar a amplitude.',
+    ],
+    tips: ['Interrompa se sentir dor aguda na lombar — deve ser um alongamento leve, não compressão.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Alongamento de Quadríceps em Pé',
+    bodyPart: 'mobilidade',
+    targetMuscle: 'Quadríceps',
+    secondaryMuscles: ['Flexores de quadril'],
+    equipment: 'peso_corporal',
+    tags: ['casa', 'mobilidade', 'alongamento', 'quadríceps', 'perna', 'pós-treino'],
+    instructions: [
+      'Em pé, segure o tornozelo e puxe o calcanhar em direção ao glúteo.',
+      'Mantenha os joelhos próximos e o quadril neutro.',
+      'Segure 20-30s e troque de lado.',
+    ],
+    tips: ['Use um apoio para equilíbrio se precisar.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Alongamento de Glúteos',
+    bodyPart: 'mobilidade',
+    targetMuscle: 'Glúteo',
+    secondaryMuscles: ['Piriforme'],
+    equipment: 'peso_corporal',
+    tags: ['casa', 'mobilidade', 'alongamento', 'glúteo', 'pós-treino'],
+    instructions: [
+      'Deitado de costas, cruze um tornozelo sobre o joelho oposto.',
+      'Puxe a coxa de apoio em direção ao peito.',
+      'Segure 20-30s e troque de lado.',
+    ],
+    tips: ['Sensação de alongamento no glúteo da perna cruzada, não dor.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Alongamento de Adutores Sentado',
+    bodyPart: 'mobilidade',
+    targetMuscle: 'Adutores',
+    secondaryMuscles: [],
+    equipment: 'peso_corporal',
+    tags: ['casa', 'mobilidade', 'alongamento', 'adutores', 'perna', 'pós-treino'],
+    instructions: [
+      'Sentado, junte as solas dos pés e deixe os joelhos caírem para os lados.',
+      'Incline o tronco levemente à frente mantendo a coluna neutra.',
+      'Segure 20-30s.',
+    ],
+    tips: ['Não force os joelhos para baixo com as mãos — deixe o peso do corpo fazer o trabalho.'],
+  },
+  {
+    source: 'corefit',
+    name: 'Alongamento de Panturrilha na Parede',
+    bodyPart: 'mobilidade',
+    targetMuscle: 'Gastrocnêmio',
+    secondaryMuscles: ['Sóleo'],
+    equipment: 'peso_corporal',
+    tags: ['casa', 'mobilidade', 'alongamento', 'panturrilha', 'pós-treino'],
+    instructions: [
+      'De frente para uma parede, apoie as mãos e leve uma perna para trás, calcanhar no chão.',
+      'Incline o corpo em direção à parede mantendo o joelho de trás estendido.',
+      'Segure 20-30s e troque de lado.',
+    ],
+    tips: ['Dobre levemente o joelho de trás para direcionar o alongamento ao sóleo em vez do gastrocnêmio.'],
   },
 ];

@@ -471,7 +471,7 @@ describeWithDb('Performance P4 · Metas com banco real', () => {
 
   it('a meta que vence hoje sobrevive ao dia; a de ontem expira na leitura', async () => {
     const { createGoal, getGoalsForUser } = await import('../modules/performance/goals.service');
-    const { dayKey } = await import('../utils/appDay');
+    const { dayKey, APP_TIMEZONE } = await import('../utils/appDay');
 
     const userId = await createUser(c, TAG, 'prazo');
     await grantPremium(userId);
@@ -480,9 +480,19 @@ describeWithDb('Performance P4 · Metas com banco real', () => {
     const vencida = await createGoal(userId, { kind: 'monthly_frequency', targetValue: 10 });
     // Vence ontem: o caminho legítimo (criação) recusa data passada, então o
     // envelhecimento é feito no banco — é o que o tempo faria sozinho.
+    //
+    // `CURRENT_DATE` é o dia em UTC, e `getGoalsForUser` avalia o vencimento
+    // contra o DIA DO ALUNO (`dayKey`, fuso do app). Entre 21h e meia-noite no
+    // Brasil os dois divergem: o banco já está no dia seguinte, e
+    // `CURRENT_DATE - 1` vira exatamente HOJE para o aluno — a meta não expira
+    // e o teste falha por três horas todo dia. É a mesma classe de bug que o
+    // CLAUDE.md registra ("dia do aluno, não dia UTC"); aqui ela estava no
+    // próprio teste. Ancorar no fuso do app fecha a janela.
     await c.query(
-      `UPDATE user_performance_goals SET due_on = CURRENT_DATE - 1 WHERE id = $1::bigint`,
-      [vencida.id],
+      `UPDATE user_performance_goals
+          SET due_on = (NOW() AT TIME ZONE $2)::date - 1
+        WHERE id = $1::bigint`,
+      [vencida.id, APP_TIMEZONE],
     );
 
     const lista = await getGoalsForUser(userId);

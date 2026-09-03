@@ -20,6 +20,7 @@ const featureCatalog = [
   ['retro_workout_enabled', 'Registro Retroativo de Treino', 'Registrar treino feito nos ultimos 3 dias que o aluno esqueceu de marcar (Spec 024). Flag = kill-switch; liberada no Free.'],
   ['challenges', 'Desafios', 'Participar de desafio criado pelo personal (Spec 034 C2). Liberada no Free por decisao de produto: cobrar do aluno para participar de um desafio que o personal dele criou quebraria o compromisso assumido com a turma.'],
   ['free_workout', 'Treino Livre', 'Aluno monta treino ad-hoc e executa com a engine de series. Kill-switch; liberada no Free.'],
+  ['readiness', 'Prontidao (S2CORE Readiness)', 'Motor de prontidao diaria: score, motivos, confianca e recomendacao de intensidade (SPEC P3). NAO liberada por padrao — rollout gradual exigido pela SPEC §74/§75.'],
 ] as const;
 
 /**
@@ -40,6 +41,12 @@ const featureCatalog = [
  * treino é insumo do score (execução real, com séries e carga), não capacidade
  * premium. A flag é só kill-switch de UI — a API de registro de sessão não é
  * gateada por ela, porque `source: 'free'` já é o caminho do registro retroativo.
+ *
+ * `readiness` NÃO entra em nenhum plano por padrão, nem no Free nem no pago. A
+ * SPEC P3 §74/§75 exige rollout gradual (interno → beta fechado → 10% → …), e a
+ * flag é o mecanismo. Liberar para todo mundo no primeiro deploy contrariaria a
+ * própria SPEC — e um motor de decisão fisiológica é a última coisa que se
+ * solta sem observar comportamento antes.
  */
 const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges', 'free_workout'];
 
@@ -62,7 +69,23 @@ const PRO_PRODUCT_FEATURES: string[] = [
   'free_workout',
 ];
 
-const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog.map((row) => row[0]);
+/**
+ * Features que NÃO entram em nenhum plano por padrão — nem no Premium.
+ *
+ * `readiness` está aqui porque a SPEC Mobile P3 §74/§75 exige rollout gradual
+ * (interno → beta fechado → 10% → …), e o Premium liga tudo do catálogo. Sem
+ * esta exclusão a feature nasceria ativa para todo assinante Premium no
+ * primeiro deploy — exatamente o que a SPEC proíbe, e a última coisa que se
+ * solta sem observar comportamento quando o recurso é um motor de decisão
+ * fisiológica.
+ *
+ * Liberar é operação de admin (`POST /api/plans/...`), coorte por coorte.
+ */
+const ROLLOUT_ONLY_FEATURES: string[] = ['readiness'];
+
+const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog
+  .map((row) => row[0] as string)
+  .filter((key) => !ROLLOUT_ONLY_FEATURES.includes(key));
 
 const defaultsByPlan: Record<string, string[]> = {
   Free: FREE_PRODUCT_FEATURES,

@@ -5,6 +5,7 @@ import { invalidateMetabolismSnapshot } from '../modules/metabolism/metabolic.se
 import { invalidatePersonalDashboardForStudent } from './personalDashboardService';
 import { invalidateTodayScoreSnapshot } from '../modules/performance/performance.repository';
 import { invalidateReadinessSnapshot } from '../modules/readiness/readiness.service';
+import { invalidarReadiness as invalidarReadinessV1 } from '../modules/readiness/v1/readiness.service';
 import logger from '../lib/logger';
 import { dayKey } from '../utils/appDay';
 
@@ -364,6 +365,13 @@ export function invalidateAfterCheckin(userId: number): void {
   );
   void invalidateReadinessSnapshot(userId).catch((err) =>
     logger.error({ err }, '[readiness] invalidate snapshot error'),
+  );
+  // S2CORE Readiness v1 (SPEC Mobile P3 §58). Tabela e conceito distintos do
+  // Lens acima: aquele é o nível qualitativo que alimenta a adaptação de treino;
+  // este é a leitura numérica com breakdown. Os dois precisam ser invalidados,
+  // porque um check-in novo muda a entrada dos dois.
+  void invalidarReadinessV1(userId).catch((err) =>
+    logger.error({ err }, '[readiness_v1] invalidate snapshot error'),
   );
   // O Progress Score do dia foi calculado antes deste treino existir. Sem
   // invalidar, o aluno terminaria a sessão e veria o número de antes até o dia

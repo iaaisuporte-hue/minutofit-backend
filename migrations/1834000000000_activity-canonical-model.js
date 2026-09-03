@@ -22,120 +22,102 @@
  * 2. **`client_key` + `(user_id, client_key)` UNIQUE parcial.** Mesma ideia que
  *    `workout_sessions.client_key` (migration 1833000000000): o cliente gera a
  *    chave uma vez por atividade e a repete no reenvio. É o que impede um POST
- *    reenviado por timeout de virar uma segunda corrida no histórico — a lição
- *    que a P0 aprendeu no treino e que vale igual aqui.
+ *    reenviado por timeout de virar uma segunda corrida no histórico.
  *
  * A terceira camada — janela temporal + tipo + duração, para quando NENHUM
  * identificador existe — fica no serviço, não no banco, e **nunca apaga nada**:
  * ela marca `possible_duplicate_of` para o usuário decidir. A SPEC é explícita:
  * "não usar heurística destrutiva sem documentação".
  *
- * ## O que NÃO entra aqui
+ * ## Estilo: SQL cru e idempotente
  *
- * Frequência cardíaca e calorias de fonte externa entram como colunas próprias
- * e com `calories_source`, porque a §55 proíbe substituir silenciosamente um
- * dado medido por uma estimativa nossa. `calories_estimated` (que já existia) é
- * a nossa conta; `calories` é o que a fonte disse.
+ * Da migration 1823 em diante o repositório usa `pgm.db.query` com SQL cru, e
+ * não a API de builder. O motivo é o helper de integração
+ * (`restorePerformanceSchema`), que REEXECUTA estas migrations com um `pgm`
+ * mínimo — só `db.query`. Usar `pgm.createTable`/`pgm.func` quebra a suíte
+ * inteira de integração, longe da causa.
  */
 
-exports.up = (pgm) => {
-  pgm.addColumns('activity_sessions', {
-    /**
-     * De onde a atividade veio. `s2core` para o que o app gravou; os demais
-     * para ingestão externa. TEXT com CHECK em vez de ENUM: acrescentar uma
-     * origem nova não deve exigir ALTER TYPE em produção.
-     */
-    source: {
-      type: 'text',
-      notNull: true,
-      default: 's2core',
-    },
-    /** Identificador da atividade NA ORIGEM. Null para o que nasceu aqui. */
-    source_external_id: { type: 'text' },
-    /**
-     * Origem real por trás da origem (§51). Ex.: `source = 'health_connect'` e
-     * `source_app = 'Garmin Connect'`. Guardado desde já porque a P3 vai
-     * precisar distinguir a qualidade do dado por fabricante.
-     */
-    source_app: { type: 'text' },
-    /** Chave de idempotência gerada pelo cliente. Ver bloco acima. */
-    client_key: { type: 'text' },
-    /** FC média/máxima quando a fonte fornece. Nunca calculadas por nós. */
-    avg_heart_rate: { type: 'integer' },
-    max_heart_rate: { type: 'integer' },
-    /** Calorias informadas pela FONTE (§55). Distintas de calories_estimated. */
-    calories: { type: 'integer' },
-    /**
-     * De onde vem o número de calorias exibido: `device` (a fonte mediu) ou
-     * `estimated` (nossa conta por MET). Sem isto, um dado medido e uma
-     * estimativa ficariam indistinguíveis na tela e no histórico.
-     */
-    calories_source: { type: 'text', notNull: true, default: 'estimated' },
-    /** Altimetria acumulada, quando a fonte fornece (§17). */
-    elevation_gain_m: { type: 'numeric(8,1)' },
-    /**
-     * Suspeita de duplicata resolvida por heurística temporal. Aponta para a
-     * atividade que já existia. Nunca apaga — quem decide é o usuário (§5).
-     */
-    possible_duplicate_of: {
-      type: 'integer',
-      references: 'activity_sessions',
-      onDelete: 'SET NULL',
-    },
-    updated_at: {
-      type: 'timestamptz',
-      notNull: true,
-      default: pgm.func('NOW()'),
-    },
-  });
+exports.up = async (pgm) => {
+  await pgm.db.query(`
+    ALTER TABLE activity_sessions
+      ADD COLUMN IF NOT EXISTS source                TEXT NOT NULL DEFAULT 's2core',
+      ADD COLUMN IF NOT EXISTS source_external_id    TEXT,
+      ADD COLUMN IF NOT EXISTS source_app            TEXT,
+      ADD COLUMN IF NOT EXISTS client_key            TEXT,
+      ADD COLUMN IF NOT EXISTS avg_heart_rate        INTEGER,
+      ADD COLUMN IF NOT EXISTS max_heart_rate        INTEGER,
+      ADD COLUMN IF NOT EXISTS calories              INTEGER,
+      ADD COLUMN IF NOT EXISTS calories_source       TEXT NOT NULL DEFAULT 'estimated',
+      ADD COLUMN IF NOT EXISTS elevation_gain_m      NUMERIC(8,1),
+      ADD COLUMN IF NOT EXISTS possible_duplicate_of INTEGER,
+      ADD COLUMN IF NOT EXISTS updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `);
 
-  pgm.addConstraint('activity_sessions', 'activity_sessions_source_chk', {
-    check: `source IN ('s2core','health_connect','apple_health','garmin','strava','manual','import')`,
-  });
+  // Autorreferência: a suspeita aponta para a atividade que já existia.
+  await pgm.db.query(`
+    ALTER TABLE activity_sessions
+      DROP CONSTRAINT IF EXISTS activity_sessions_possible_duplicate_fkey
+  `);
+  await pgm.db.query(`
+    ALTER TABLE activity_sessions
+      ADD CONSTRAINT activity_sessions_possible_duplicate_fkey
+      FOREIGN KEY (possible_duplicate_of) REFERENCES activity_sessions(id) ON DELETE SET NULL
+  `);
 
-  pgm.addConstraint('activity_sessions', 'activity_sessions_calories_source_chk', {
-    check: `calories_source IN ('device','estimated')`,
-  });
+  await pgm.db.query(`ALTER TABLE activity_sessions DROP CONSTRAINT IF EXISTS activity_sessions_source_chk`);
+  await pgm.db.query(`
+    ALTER TABLE activity_sessions ADD CONSTRAINT activity_sessions_source_chk
+      CHECK (source IN ('s2core','health_connect','apple_health','garmin','strava','manual','import'))
+  `);
+
+  // §55: calorias medidas pela fonte nunca se disfarçam de estimativa nossa.
+  await pgm.db.query(`ALTER TABLE activity_sessions DROP CONSTRAINT IF EXISTS activity_sessions_calories_source_chk`);
+  await pgm.db.query(`
+    ALTER TABLE activity_sessions ADD CONSTRAINT activity_sessions_calories_source_chk
+      CHECK (calories_source IN ('device','estimated'))
+  `);
 
   // Defesa 1: identificador da origem. Parcial — só onde ele existe.
-  pgm.createIndex('activity_sessions', ['user_id', 'source', 'source_external_id'], {
-    name: 'uniq_activity_source_external',
-    unique: true,
-    where: 'source_external_id IS NOT NULL',
-  });
+  await pgm.db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_activity_source_external
+      ON activity_sessions (user_id, source, source_external_id)
+      WHERE source_external_id IS NOT NULL
+  `);
 
   // Defesa 2: reenvio do mesmo POST não cria uma segunda atividade.
-  pgm.createIndex('activity_sessions', ['user_id', 'client_key'], {
-    name: 'uniq_activity_client_key',
-    unique: true,
-    where: 'client_key IS NOT NULL',
-  });
+  await pgm.db.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uniq_activity_client_key
+      ON activity_sessions (user_id, client_key)
+      WHERE client_key IS NOT NULL
+  `);
 
   // Leitura do histórico unificado (§39) e da janela de dedup por tempo.
-  pgm.createIndex('activity_sessions', ['user_id', 'started_at'], {
-    name: 'idx_activity_user_started',
-  });
+  await pgm.db.query(`
+    CREATE INDEX IF NOT EXISTS idx_activity_user_started
+      ON activity_sessions (user_id, started_at)
+  `);
 };
 
-exports.down = (pgm) => {
-  pgm.dropIndex('activity_sessions', ['user_id', 'started_at'], { name: 'idx_activity_user_started' });
-  pgm.dropIndex('activity_sessions', ['user_id', 'client_key'], { name: 'uniq_activity_client_key' });
-  pgm.dropIndex('activity_sessions', ['user_id', 'source', 'source_external_id'], {
-    name: 'uniq_activity_source_external',
-  });
-  pgm.dropConstraint('activity_sessions', 'activity_sessions_calories_source_chk');
-  pgm.dropConstraint('activity_sessions', 'activity_sessions_source_chk');
-  pgm.dropColumns('activity_sessions', [
-    'source',
-    'source_external_id',
-    'source_app',
-    'client_key',
-    'avg_heart_rate',
-    'max_heart_rate',
-    'calories',
-    'calories_source',
-    'elevation_gain_m',
-    'possible_duplicate_of',
-    'updated_at',
-  ]);
+exports.down = async (pgm) => {
+  await pgm.db.query(`DROP INDEX IF EXISTS idx_activity_user_started`);
+  await pgm.db.query(`DROP INDEX IF EXISTS uniq_activity_client_key`);
+  await pgm.db.query(`DROP INDEX IF EXISTS uniq_activity_source_external`);
+  await pgm.db.query(`ALTER TABLE activity_sessions DROP CONSTRAINT IF EXISTS activity_sessions_calories_source_chk`);
+  await pgm.db.query(`ALTER TABLE activity_sessions DROP CONSTRAINT IF EXISTS activity_sessions_source_chk`);
+  await pgm.db.query(`ALTER TABLE activity_sessions DROP CONSTRAINT IF EXISTS activity_sessions_possible_duplicate_fkey`);
+  await pgm.db.query(`
+    ALTER TABLE activity_sessions
+      DROP COLUMN IF EXISTS source,
+      DROP COLUMN IF EXISTS source_external_id,
+      DROP COLUMN IF EXISTS source_app,
+      DROP COLUMN IF EXISTS client_key,
+      DROP COLUMN IF EXISTS avg_heart_rate,
+      DROP COLUMN IF EXISTS max_heart_rate,
+      DROP COLUMN IF EXISTS calories,
+      DROP COLUMN IF EXISTS calories_source,
+      DROP COLUMN IF EXISTS elevation_gain_m,
+      DROP COLUMN IF EXISTS possible_duplicate_of,
+      DROP COLUMN IF EXISTS updated_at
+  `);
 };

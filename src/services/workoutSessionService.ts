@@ -12,6 +12,7 @@ import {
 } from '../modules/performance/goals.service';
 import { dayKey, APP_TIMEZONE } from '../utils/appDay';
 import logger from '../lib/logger';
+import { invalidarReadiness } from '../modules/readiness/v1/readiness.service';
 import { computeSessionMetrics, resolveDurationMin } from '../modules/performance/sessionMetrics.engine';
 import { FORMULA_VERSION } from '../modules/performance/performance.constants';
 import type { MetricsSetInput } from '../modules/performance/performance.types';
@@ -820,6 +821,15 @@ export async function createSession(userId: number, academyId: number | null, in
   // Invalidações fora da transação (nunca dentro do COMMIT).
   if (fechado.shouldInvalidate) invalidateAfterCheckin(userId);
 
+  // Prontidão (SPEC Mobile P3 §58): um treino concluído muda a carga recente e
+  // a recuperação muscular, então o snapshot do dia deixou de valer. Apaga em
+  // vez de recalcular na hora — recalcular aqui acoplaria a gravação da sessão
+  // ao motor de prontidão, e uma falha lá derrubaria um treino já commitado.
+  // O próximo GET reconstrói.
+  void invalidarReadiness(userId).catch((err) => {
+    logger.warn({ err, userId, hook: 'readiness' }, '[training] invalidação de prontidão falhou — treino preservado');
+  });
+
   // Metas só podem ser avaliadas AQUI, depois do COMMIT: elas leem
   // `workout_set_logs` e `user_pr_events`, que só existem para outra conexão
   // depois que esta transação fecha. Avaliar antes leria o estado anterior ao
@@ -1147,7 +1157,11 @@ export async function getExerciseHistory(
   limit = 3,
 ): Promise<{ date: string; loadKg: number | null; reps: number | null; sets: number }[]> {
   const { rows } = await pool.query(
-    `SELECT (ws.performed_at AT TIME ZONE $3)::date AS d,
+    // `::date` volta como objeto Date no driver do pg, e `String(...)` no
+    // cliente virava "Wed Sep 02 2026 00:00:00 GMT-0300" na tela. `to_char`
+    // devolve texto ISO já no fuso do aluno — sem reinterpretação em lugar
+    // nenhum do caminho (achado do QA P3, regressão da P1 §27).
+    `SELECT to_char((ws.performed_at AT TIME ZONE $3)::date, 'YYYY-MM-DD') AS d,
             MAX(sl.load_done_kg)                    AS max_load,
             COUNT(*) FILTER (WHERE sl.status = 'done')::int AS sets,
             -- reps da série mais pesada: é a que a pessoa quer comparar

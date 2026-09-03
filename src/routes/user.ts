@@ -91,6 +91,14 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'health_connect.connected',
   'apple_health.connected',
   'widget.workout_started',
+  // Prontidão (SPEC Mobile P3 §71).
+  'readiness_viewed',
+  'readiness_details_opened',
+  'daily_checkin_started',
+  'daily_checkin_completed',
+  'recommendation_accepted',
+  'recommendation_ignored',
+  'workout_adjustment_opened',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

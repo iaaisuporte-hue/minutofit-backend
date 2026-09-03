@@ -124,6 +124,18 @@ export type DataAccessEventType =
   | 'health_connect.connected'
   | 'apple_health.connected'
   | 'widget.workout_started'
+  // ── Prontidão (SPEC Mobile P3 §71/§72) ──────────────────────────────────
+  // A §71 é literal: "não enviar health data bruto para ferramenta de
+  // analytics". O payload carrega estado, confiança e modo — nunca score
+  // exato, sono, dor, HRV ou componente. Isso responde às perguntas do §72
+  // (adoção, taxa de check-in, recomendação seguida) sem virar prontuário.
+  | 'readiness_viewed'
+  | 'readiness_details_opened'
+  | 'daily_checkin_started'
+  | 'daily_checkin_completed'
+  | 'recommendation_accepted'
+  | 'recommendation_ignored'
+  | 'workout_adjustment_opened'
   | 'identity.user_created'
   | 'identity.user_reused';
 

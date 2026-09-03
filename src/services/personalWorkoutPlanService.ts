@@ -207,17 +207,27 @@ function normalizePlanTitle(raw: unknown): string {
  * mídia, sem instruções, invisível para o Lab (QA 01/ago/2026, P2-2).
  * Não há FK em `personal_workout_plans` (o payload é JSONB), então a
  * verificação precisa ser explícita.
+ *
+ * Sprint P1 (D5): também checa PROPRIEDADE — um `exerciseId` só é utilizável
+ * na ficha se for do catálogo global (`owner_personal_id IS NULL`) ou da
+ * biblioteca do PRÓPRIO personal que está salvando. Sem isso, o personal A
+ * poderia referenciar por id um exercício privado do personal B (o uuid não
+ * é adivinhável na prática, mas nada impede tentar). Mesmo código de erro de
+ * sempre — para quem tenta, o efeito é idêntico a um id inexistente.
  */
 async function assertExercisesExist(
   client: PoolClient,
+  personalId: number,
   items: WorkoutPlanItemPayload[]
 ): Promise<void> {
   const ids = [...new Set(items.map((i) => i.exerciseId))];
   if (ids.length === 0) return;
 
   const { rows } = await client.query<{ id: string }>(
-    `SELECT id::text FROM exercises WHERE id = ANY($1::uuid[])`,
-    [ids]
+    `SELECT id::text FROM exercises
+      WHERE id = ANY($1::uuid[])
+        AND (owner_personal_id IS NULL OR owner_personal_id = $2)`,
+    [ids, personalId]
   );
   const found = new Set(rows.map((r) => r.id));
   const missing = ids.filter((id) => !found.has(id));
@@ -490,7 +500,7 @@ export async function createPersonalWorkoutPlanWithDays(
       days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
     }
 
-    await assertExercisesExist(client, days.flatMap((d) => d.items));
+    await assertExercisesExist(client, personalId, days.flatMap((d) => d.items));
 
     const requestedProtocolId = Number(input.sourceProtocolId);
     const sourceProtocolId = Number.isFinite(requestedProtocolId) && requestedProtocolId > 0
@@ -576,7 +586,7 @@ export async function createPersonalWorkoutPlan(
   try {
     await client.query('BEGIN');
 
-    await assertExercisesExist(client, items);
+    await assertExercisesExist(client, personalId, items);
 
     const requestedProtocolId = Number(input.sourceProtocolId);
     const sourceProtocolId = Number.isFinite(requestedProtocolId) && requestedProtocolId > 0
@@ -675,7 +685,7 @@ export async function updatePersonalWorkoutPlanWithDays(
       days.push({ index: i + 1, name: dayName, focus: dayFocus, items });
     }
 
-    await assertExercisesExist(client, days.flatMap((d) => d.items));
+    await assertExercisesExist(client, personalId, days.flatMap((d) => d.items));
 
     // Update parent
     await client.query(

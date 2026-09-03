@@ -105,6 +105,15 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'recommendation_accepted',
   'recommendation_ignored',
   'workout_adjustment_opened',
+  // Biblioteca de Exercícios Personalizados do Personal (Sprint P1). Emitidos
+  // pela tela "Meus Exercícios" e pelo builder de ficha — o personal também
+  // autentica contra `authMiddleware` e cai neste endpoint genérico (não há
+  // rota de eventos própria do módulo Personal).
+  'personal_custom_exercise_create_started',
+  'personal_custom_exercise_created',
+  'personal_custom_exercise_edited',
+  'personal_custom_exercise_archived',
+  'personal_custom_exercise_added_to_plan',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

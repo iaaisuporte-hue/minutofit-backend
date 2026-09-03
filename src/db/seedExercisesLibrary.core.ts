@@ -4,6 +4,9 @@
  * quanto pelo boot automático (seedExercisesIfEmpty.ts).
  *
  * Estratégia: ON CONFLICT (normalized_name, source) DO UPDATE — idempotente.
+ * O índice-alvo é PARCIAL desde a Sprint P1 (migration 1837000000000), então
+ * o ON CONFLICT precisa do predicado WHERE owner_personal_id IS NULL AND
+ * status = 'active' — sem ele o Postgres não acha índice para mirar.
  * Mídia: free-exercise-db snapshot para GIFs, youtubeId para YouTube.
  */
 
@@ -107,7 +110,11 @@ async function upsertExercise(
        equipment, tags, instructions, tips
      )
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
-     ON CONFLICT (normalized_name, source)
+     -- O índice único de (normalized_name, source) virou PARCIAL na Sprint P1
+     -- (migration 1837000000000, WHERE owner_personal_id IS NULL AND status =
+     -- 'active') — o seed só escreve no catálogo global, então o predicado
+     -- precisa repetir exatamente o do índice (ver exerciseLibraryService.ts).
+     ON CONFLICT (normalized_name, source) WHERE owner_personal_id IS NULL AND status = 'active'
      DO UPDATE SET
        name        = EXCLUDED.name,
        body_part   = EXCLUDED.body_part,

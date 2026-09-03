@@ -86,6 +86,21 @@ export async function deleteUserAccount(
     // XP já pago fica: ele é do titular de cada participante, não do desafio.
     await client.query(`DELETE FROM challenges WHERE personal_id = $1`, [userId]);
 
+    // Biblioteca de exercícios personalizados do personal (Sprint P1, D6).
+    // `owner_personal_id` é ON DELETE SET NULL — mas SOZINHO isso repetiria o
+    // bug do protocolo pessoal (linha acima, QA 02/ago): a linha viraria
+    // GLOBAL-visível para todo mundo, vazando nome/mídia/instruções privadas
+    // do personal excluído para o catálogo S2CORE inteiro. Arquivar ANTES do
+    // SET NULL disparar tira a linha de toda busca (dono ou não — `status`
+    // filtra igual para as duas), preservando resolução direta por id (ficha
+    // já salva, histórico, PR) exatamente como qualquer outro exercício
+    // arquivado — D10 já garante que isso não quebra.
+    await client.query(
+      `UPDATE exercises SET status = 'archived', updated_at = NOW()
+        WHERE owner_personal_id = $1 AND status = 'active'`,
+      [userId],
+    );
+
     // Fotos de progresso (LGPD art. 11): CASCADE apaga as LINHAS, não os binários.
     const photoRes = await client.query<{ storage_key: string }>(
       `SELECT storage_key FROM progress_photos WHERE user_id = $1`,

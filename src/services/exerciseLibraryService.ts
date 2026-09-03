@@ -1,10 +1,33 @@
 /**
- * Serviço de acesso à biblioteca global de exercícios CoreFit.
- * Exercícios são globais (sem academy_id) e cacheados em memória por 5 minutos.
+ * Serviço de acesso à biblioteca de exercícios CoreFit.
+ *
+ * A biblioteca não é 100% global desde a Sprint P1 (Biblioteca de Exercícios
+ * Personalizados do Personal): `exercises` ganhou `owner_personal_id` (dono)
+ * e `status` (active/archived) — ver migration 1837000000000. `source`
+ * continua sendo PROVENIÊNCIA de dado ('corefit'/'metacore'/'personal'),
+ * nunca autorização; quem pode editar é sempre `owner_personal_id`.
+ * Cacheado em memória por 5 minutos (só o universo global, ver
+ * `getExerciseCatalogForAI`).
  */
 
 import pool from '../config/database';
 import logger from '../lib/logger';
+import { getStorage, isStorageConfigured } from '../lib/storage';
+
+/**
+ * Normaliza um nome para comparação/dedup: minúsculo, sem acento, só
+ * alfanumérico + espaço. MESMA função usada na busca (`q`), no admin CRUD e
+ * na biblioteca do personal — extraída para não divergir entre os três.
+ */
+export function normalizeExerciseName(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 // ---------------------------------------------------------------------------
 // Tipos públicos
@@ -35,6 +58,9 @@ export type Exercise = {
   media: ExerciseMedia[];
   /** Perfil de captura do Lab de Movimento (Spec 022); null quando não mapeado. */
   movementLabExerciseId: string | null;
+  /** Dono (personal) do exercício; null = catálogo global S2CORE (Sprint P1). */
+  ownerPersonalId: string | null;
+  status: 'active' | 'archived';
   createdAt: string;
   updatedAt: string;
 };
@@ -77,6 +103,8 @@ function mapExerciseRow(r: Record<string, unknown>, media: ExerciseMedia[] = [])
     tips: Array.isArray(r.tips) ? (r.tips as string[]) : [],
     media,
     movementLabExerciseId: r.movement_lab_exercise_id != null ? String(r.movement_lab_exercise_id) : null,
+    ownerPersonalId: r.owner_personal_id != null ? String(r.owner_personal_id) : null,
+    status: (r.status === 'archived' ? 'archived' : 'active'),
     createdAt: new Date(r.created_at as string).toISOString(),
     updatedAt: new Date(r.updated_at as string).toISOString(),
   };
@@ -97,9 +125,59 @@ function mapSummaryRow(r: Record<string, unknown>): ExerciseSummary {
     primaryMediaUrl: r.primary_media_url != null ? String(r.primary_media_url) : null,
     primaryMediaType: r.primary_media_type != null ? String(r.primary_media_type) : null,
     movementLabExerciseId: r.movement_lab_exercise_id != null ? String(r.movement_lab_exercise_id) : null,
+    ownerPersonalId: r.owner_personal_id != null ? String(r.owner_personal_id) : null,
+    status: (r.status === 'archived' ? 'archived' : 'active'),
     createdAt: new Date(r.created_at as string).toISOString(),
     updatedAt: new Date(r.updated_at as string).toISOString(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Resolução de URL de mídia — o storage é SEMPRE privado (ver
+// `lib/storage/index.ts`): não geramos URL pública, só URLs assinadas sob
+// demanda. Mídia GLOBAL (`corefit`/`metacore`/`gifdotreino`) grava em
+// `exercise_media.url` uma URL pública de verdade (bucket público
+// `gifdotreino`) e sai crua, como sempre saiu. Mídia de PERSONAL
+// (`registerExerciseMedia`, Sprint P1) grava a `storageKey` PRIVADA — sem
+// assinar aqui, no limite da leitura, essa chave nunca vira uma URL
+// fetchável e a imagem simplesmente não carrega no cliente. TTL generoso
+// (1h, vs. 300s de `progressPhotoService.ts`) porque exercício não é dado
+// sensível como foto de progresso — reduz custo de reassinar a cada render
+// da tela de execução/detalhe sem risco adicional.
+// ---------------------------------------------------------------------------
+
+const PERSONAL_MEDIA_DOWNLOAD_TTL = 3600; // s
+
+async function resolvePersonalMediaUrl(storageKey: string): Promise<string | null> {
+  if (!isStorageConfigured()) {
+    logger.warn({ storageKey }, '[exercises] storage não configurado — mídia de personal não pôde ser assinada');
+    return null;
+  }
+  try {
+    return await getStorage().createDownloadUrl(storageKey, PERSONAL_MEDIA_DOWNLOAD_TTL);
+  } catch (err) {
+    // Efeito colateral de uma busca geral, não uma rota dedicada de storage —
+    // degrada o item (não quebra a busca inteira por causa de mídia opcional).
+    logger.warn({ err, storageKey }, '[exercises] falha ao assinar URL de mídia de personal');
+    return null;
+  }
+}
+
+/** Assina em paralelo só os itens `source === 'personal'`; mídia global passa direto, sem custo. */
+async function resolveMediaList(media: ExerciseMedia[]): Promise<ExerciseMedia[]> {
+  const personalItems = media.filter((m) => m.source === 'personal');
+  if (!personalItems.length) return media;
+
+  const signed = await Promise.all(personalItems.map((m) => resolvePersonalMediaUrl(m.url)));
+  const signedById = new Map(personalItems.map((m, i) => [m.id, signed[i]]));
+
+  return media.map((m) => {
+    if (m.source !== 'personal') return m;
+    const signedUrl = signedById.get(m.id);
+    // Storage indisponível: mantém a storageKey crua em vez de derrubar a
+    // leitura — o item já não carregava mesmo, mas o resto do exercício segue ok.
+    return signedUrl != null ? { ...m, url: signedUrl } : m;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +212,18 @@ export async function searchExercises(opts: {
   tags?: string[];
   limit?: number;
   offset?: number;
+  /**
+   * Personal "dono do contexto" de quem está vendo a busca (Sprint P1, D4).
+   * Resolvido no SERVIDOR pelo caller (o próprio personal logado, ou o
+   * personal atualmente atribuído ao aluno) — nunca aceito como input do
+   * cliente. `undefined`/`null` = só catálogo global (admin, aluno sem
+   * personal). Ignorado quando `ownerOnly` é informado.
+   */
+  viewerPersonalId?: number | null;
+  /** Inclui exercícios `status='archived'` — só a tela de gestão usa. */
+  includeArchived?: boolean;
+  /** Restringe à biblioteca de UM personal (tela "Meus Exercícios"). */
+  ownerOnly?: number;
 } = {}): Promise<ExerciseSummary[]> {
   const limit = Math.min(Math.max(opts.limit ?? 50, 1), 1000);
   const offset = Math.max(opts.offset ?? 0, 0);
@@ -142,7 +232,7 @@ export async function searchExercises(opts: {
   const conditions: string[] = [];
 
   if (opts.q?.trim()) {
-    const normalizedQuery = opts.q.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    const normalizedQuery = normalizeExerciseName(opts.q);
     const rawQuery = opts.q.trim().toLowerCase();
     params.push(`%${normalizedQuery}%`, `%${rawQuery}%`);
     conditions.push(`(
@@ -167,30 +257,55 @@ export async function searchExercises(opts: {
     conditions.push(`e.tags && $${params.length}::text[]`);
   }
 
+  if (!opts.includeArchived) {
+    conditions.push(`e.status != 'archived'`);
+  }
+
+  // Visibilidade (D4): "Meus Exercícios" (ownerOnly) vê só a própria
+  // biblioteca; senão, viewer autenticado vê global + a própria biblioteca
+  // (se for personal, ou aluno com personal atribuído); sem viewer, só global.
+  if (opts.ownerOnly != null) {
+    params.push(opts.ownerOnly);
+    conditions.push(`e.owner_personal_id = $${params.length}`);
+  } else if (opts.viewerPersonalId != null) {
+    params.push(opts.viewerPersonalId);
+    conditions.push(`(e.owner_personal_id IS NULL OR e.owner_personal_id = $${params.length})`);
+  } else {
+    conditions.push(`e.owner_personal_id IS NULL`);
+  }
+
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   params.push(limit, offset);
 
-  // Dedup por normalized_name: o banco tem dois conjuntos paralelos de exercícios
-  // (source 'corefit' e o legado 'metacore') com os mesmos nomes. O seletor deve
-  // mostrar UM card por exercício — a cópia mais capaz: preferir a que tem vínculo
-  // com o Lab de Movimento, depois a que tem mídia (gif), depois a canônica
-  // ('corefit'). Não-destrutivo: as duas linhas continuam no banco (histórico e
-  // fichas antigas referenciam ambas por id), só a busca colapsa a duplicata.
+  // Dedup por (normalized_name, owner_personal_id): o banco tem dois conjuntos
+  // paralelos de exercícios GLOBAIS (source 'corefit' e o legado 'metacore')
+  // com os mesmos nomes — o seletor deve mostrar UM card por exercício global,
+  // a cópia mais capaz: preferir a que tem vínculo com o Lab de Movimento,
+  // depois a que tem mídia (gif), depois a canônica ('corefit'). A partir da
+  // Sprint P1, `owner_personal_id` entra na chave do DISTINCT ON (D3):
+  // Postgres trata NULL como igual a NULL (`IS NOT DISTINCT FROM`), então as
+  // linhas globais continuam colapsando entre si exatamente como antes,
+  // enquanto um exercício de personal com nome igual a um global — ou a outro
+  // personal — nunca mais fica escondido atrás do outro. Não-destrutivo: as
+  // linhas continuam todas no banco (histórico e fichas antigas resolvem por
+  // id via getExerciseById/getExercisesBatch, que não fazem esse dedup), só a
+  // busca colapsa a duplicata.
   const result = await pool.query(
     `SELECT * FROM (
-       SELECT DISTINCT ON (e.normalized_name)
+       SELECT DISTINCT ON (e.normalized_name, e.owner_personal_id)
               e.*,
               m.url  AS primary_media_url,
-              m.media_type AS primary_media_type
+              m.media_type AS primary_media_type,
+              m.source AS primary_media_source
        FROM exercises e
        LEFT JOIN LATERAL (
-         SELECT url, media_type
+         SELECT url, media_type, source
          FROM exercise_media
          WHERE exercise_id = e.id AND is_primary = true
          LIMIT 1
        ) m ON true
        ${where}
-       ORDER BY e.normalized_name,
+       ORDER BY e.normalized_name, e.owner_personal_id,
                 (e.movement_lab_exercise_id IS NOT NULL) DESC,
                 (m.url IS NOT NULL) DESC,
                 (e.source = 'corefit') DESC,
@@ -201,7 +316,24 @@ export async function searchExercises(opts: {
     params
   );
 
-  return result.rows.map((r) => mapSummaryRow(r as Record<string, unknown>));
+  // `primary_media_source` só decide SE assina (não vai para o tipo público
+  // ExerciseSummary — é detalhe de resolução de URL, não campo de domínio).
+  // Mesmo raciocínio de `resolveMediaList`: assina em paralelo só o que é
+  // `personal`, mídia global (a maioria) não paga custo nenhum.
+  const rows = result.rows as Record<string, unknown>[];
+  const summaries = rows.map((r) => mapSummaryRow(r));
+  const personalIdxs = rows
+    .map((r, i) => (r.primary_media_source === 'personal' && summaries[i].primaryMediaUrl ? i : -1))
+    .filter((i) => i >= 0);
+  if (personalIdxs.length) {
+    const signed = await Promise.all(
+      personalIdxs.map((i) => resolvePersonalMediaUrl(summaries[i].primaryMediaUrl as string)),
+    );
+    personalIdxs.forEach((i, k) => {
+      if (signed[k] != null) summaries[i] = { ...summaries[i], primaryMediaUrl: signed[k] };
+    });
+  }
+  return summaries;
 }
 
 export async function getExerciseById(id: string): Promise<Exercise | null> {
@@ -216,7 +348,7 @@ export async function getExerciseById(id: string): Promise<Exercise | null> {
     [id]
   );
 
-  const media = mediaResult.rows.map((r) => mapMediaRow(r as Record<string, unknown>));
+  const media = await resolveMediaList(mediaResult.rows.map((r) => mapMediaRow(r as Record<string, unknown>)));
   return mapExerciseRow(exResult.rows[0] as Record<string, unknown>, media);
 }
 
@@ -242,10 +374,13 @@ export async function getExercisesBatch(ids: string[]): Promise<Exercise[]> {
     mediaByEx.get(exId)!.push(mapMediaRow(mRow as Record<string, unknown>));
   }
 
-  return exResult.rows.map((r) => {
-    const id = String(r.id);
-    return mapExerciseRow(r as Record<string, unknown>, mediaByEx.get(id) ?? []);
-  });
+  return Promise.all(
+    exResult.rows.map(async (r) => {
+      const id = String(r.id);
+      const media = await resolveMediaList(mediaByEx.get(id) ?? []);
+      return mapExerciseRow(r as Record<string, unknown>, media);
+    }),
+  );
 }
 
 /**
@@ -253,15 +388,13 @@ export async function getExercisesBatch(ids: string[]): Promise<Exercise[]> {
  * Retorna o primeiro match por normalized_name exato, depois prefix, depois contains.
  */
 export async function findExerciseByName(name: string): Promise<ExerciseSummary | null> {
-  const normalized = name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalized = normalizeExerciseName(name);
 
   if (!normalized) return null;
+
+  // D9: heurística de nome→id serve o backfill e o fallback da IA, ambos
+  // sobre dados/sugestões ANTERIORES à biblioteca do personal — restrita ao
+  // catálogo global para não casar (nem vazar) exercício privado de terceiro.
 
   // Exact match
   const exact = await pool.query(
@@ -270,7 +403,7 @@ export async function findExerciseByName(name: string): Promise<ExerciseSummary 
      LEFT JOIN LATERAL (
        SELECT url, media_type FROM exercise_media WHERE exercise_id = e.id AND is_primary = true LIMIT 1
      ) m ON true
-     WHERE e.normalized_name = $1
+     WHERE e.normalized_name = $1 AND e.owner_personal_id IS NULL
      LIMIT 1`,
     [normalized]
   );
@@ -283,7 +416,7 @@ export async function findExerciseByName(name: string): Promise<ExerciseSummary 
      LEFT JOIN LATERAL (
        SELECT url, media_type FROM exercise_media WHERE exercise_id = e.id AND is_primary = true LIMIT 1
      ) m ON true
-     WHERE e.normalized_name ILIKE $1
+     WHERE e.normalized_name ILIKE $1 AND e.owner_personal_id IS NULL
      ORDER BY length(e.normalized_name) ASC
      LIMIT 1`,
     [`%${normalized}%`]
@@ -341,14 +474,13 @@ export async function adminCreateExercise(input: {
   externalId?: string | null;
   source?: string;
 }): Promise<Exercise> {
-  const normalized = input.name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalized = normalizeExerciseName(input.name);
 
+  // O índice único de `(normalized_name, source)` virou PARCIAL na Sprint P1
+  // (migration 1837000000000, `WHERE owner_personal_id IS NULL AND status =
+  // 'active'`) — o admin só escreve no catálogo global, então o ON CONFLICT
+  // precisa repetir exatamente o predicado do índice, ou o Postgres não sabe
+  // qual índice mirar.
   const result = await pool.query(
     `INSERT INTO exercises (
        source, external_id, name, normalized_name,
@@ -356,7 +488,7 @@ export async function adminCreateExercise(input: {
        equipment, tags, instructions, tips
      )
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb)
-     ON CONFLICT (normalized_name, source)
+     ON CONFLICT (normalized_name, source) WHERE owner_personal_id IS NULL AND status = 'active'
      DO UPDATE SET
        name = EXCLUDED.name,
        body_part = EXCLUDED.body_part,
@@ -406,13 +538,7 @@ export async function adminPatchExercise(
 
   const cur = existing.rows[0] as Record<string, unknown>;
   const name = input.name ?? String(cur.name);
-  const normalized = name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
+  const normalized = normalizeExerciseName(name);
 
   const result = await pool.query(
     `UPDATE exercises

@@ -144,6 +144,14 @@ export type DataAccessEventType =
   | 'recommendation_accepted'
   | 'recommendation_ignored'
   | 'workout_adjustment_opened'
+  // Biblioteca de Exercícios Personalizados do Personal (Sprint P1). Payload
+  // só flags/contagens — nunca nome de exercício, mídia ou instrução (mesma
+  // regra de `workout.*` acima).
+  | 'personal_custom_exercise_create_started'
+  | 'personal_custom_exercise_created'
+  | 'personal_custom_exercise_edited'
+  | 'personal_custom_exercise_archived'
+  | 'personal_custom_exercise_added_to_plan'
   | 'identity.user_created'
   | 'identity.user_reused';
 

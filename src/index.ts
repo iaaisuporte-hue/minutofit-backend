@@ -16,6 +16,7 @@ import gamificationRoutes from './routes/gamification';
 import messagesRoutes from './routes/messages';
 import personalRoutes from './routes/personal';
 import personalFinanceRoutes from './routes/personalFinance';
+import personalExercisesRoutes from './routes/personalExercises';
 import videoRoutes from './routes/videos';
 import exercisesRoutes from './routes/exercises';
 import activitiesRoutes from './routes/activities';
@@ -242,6 +243,10 @@ app.use('/api/personal', personalRoutes);
 // `roleCheckMiddleware('personal')` de router responderia 403 ao admin em todo
 // /api/personal/*, que hoje ele alcança.
 app.use('/api/personal', personalFinanceRoutes);
+// Biblioteca de exercícios personalizados do personal (Sprint P1): mesmo
+// motivo/ordem da linha acima — router próprio, mesmo prefixo, DEPOIS de
+// personalRoutes.
+app.use('/api/personal', personalExercisesRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/exercises', exercisesRoutes);
 app.use('/api', planRoutes);

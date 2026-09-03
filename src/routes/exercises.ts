@@ -1,11 +1,11 @@
 /**
  * Rotas da biblioteca global de exercícios CoreFit.
  *
- * GET  /api/exercises          — search (autenticado)
- * GET  /api/exercises/batch    — batch by IDs (autenticado)
- * GET  /api/exercises/:id      — detalhe (autenticado)
- * POST /api/exercises          — criar (admin only)
- * PATCH /api/exercises/:id     — atualizar (admin only)
+ * GET  /api/exercises                          — search (autenticado)
+ * GET  /api/exercises/batch                    — batch by IDs (autenticado)
+ * GET  /api/exercises/:id                      — detalhe (autenticado)
+ * POST /api/exercises                          — criar (admin only)
+ * PATCH /api/exercises/:id                     — atualizar (admin only)
  */
 
 import { Router, Request, Response } from 'express';
@@ -18,9 +18,30 @@ import {
   adminCreateExercise,
   adminPatchExercise,
 } from '../services/exerciseLibraryService';
+import pool from '../config/database';
 import logger from '../lib/logger';
 
 const router = Router();
+
+/**
+ * Resolve o personal "dono do contexto" de quem está buscando (Sprint P1,
+ * D4) — SEMPRE no servidor, nunca por query param do cliente. Personal vê a
+ * própria biblioteca; aluno vê a do personal atualmente atribuído (no máximo
+ * um, por `uniq_active_personal_per_student`); qualquer outro caso (admin,
+ * aluno sem personal) devolve `null` — só catálogo global.
+ */
+async function resolveViewerPersonalId(req: Request): Promise<number | null> {
+  if (req.user!.role === 'personal') return req.user!.id;
+  if (req.user!.role !== 'user') return null;
+
+  const { rows } = await pool.query<{ personal_id: number }>(
+    `SELECT personal_id FROM personal_student_assignments
+      WHERE student_id = $1 AND status = 'active'
+      LIMIT 1`,
+    [req.user!.id],
+  );
+  return rows[0]?.personal_id ?? null;
+}
 
 // GET /api/exercises?q=supino&bodyPart=peito&equipment=barra&limit=50
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
@@ -38,7 +59,8 @@ router.get('/', authMiddleware, async (req: Request, res: Response) => {
         ? tagsRaw.split(',').filter(Boolean)
         : undefined;
 
-    const exercises = await searchExercises({ q, bodyPart, equipment, tags, limit, offset });
+    const viewerPersonalId = await resolveViewerPersonalId(req);
+    const exercises = await searchExercises({ q, bodyPart, equipment, tags, limit, offset, viewerPersonalId });
     // `total` era `exercises.length` — o tamanho da PÁGINA, não o total da
     // busca. Qualquer paginação construída em cima disso pararia na primeira
     // página. Enquanto `searchExercises` não devolve a contagem real, expomos

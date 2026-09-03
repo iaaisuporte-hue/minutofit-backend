@@ -152,6 +152,16 @@ export type DataAccessEventType =
   | 'personal_custom_exercise_edited'
   | 'personal_custom_exercise_archived'
   | 'personal_custom_exercise_added_to_plan'
+  // Motor de Substituições Inteligentes (Sprint P2A). Payload só
+  // flags/contagens — nunca nome de exercício, motivo textual livre ou dor
+  // (mesma regra de `workout.*` acima).
+  | 'replacement_suggestions_opened'
+  | 'replacement_suggestion_impression'
+  | 'replacement_suggestion_selected'
+  | 'replacement_suggestion_ignored'
+  | 'replacement_manual_search_selected'
+  | 'replacement_suggestions_empty'
+  | 'replacement_suggestions_error'
   | 'identity.user_created'
   | 'identity.user_reused';
 

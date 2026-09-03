@@ -4,6 +4,7 @@
  * GET  /api/exercises                          — search (autenticado)
  * GET  /api/exercises/batch                    — batch by IDs (autenticado)
  * GET  /api/exercises/:id                      — detalhe (autenticado)
+ * GET  /api/exercises/:id/replacement-suggestions — motor de substituições (Sprint P2A, autenticado)
  * POST /api/exercises                          — criar (admin only)
  * PATCH /api/exercises/:id                     — atualizar (admin only)
  */
@@ -18,6 +19,10 @@ import {
   adminCreateExercise,
   adminPatchExercise,
 } from '../services/exerciseLibraryService';
+import {
+  getReplacementSuggestions,
+  isReplacementReasonCategory,
+} from '../services/exerciseReplacementSuggestionService';
 import pool from '../config/database';
 import logger from '../lib/logger';
 
@@ -119,6 +124,40 @@ router.get('/:id', authMiddleware, async (req: Request, res: Response) => {
   } catch (err: unknown) {
     logger.error({ err }, 'GET /api/exercises/:id error');
     res.status(500).json({ error: 'Erro ao buscar exercício' });
+  }
+});
+
+// GET /api/exercises/:id/replacement-suggestions?reasonCategory=equipment_unavailable
+//
+// Motor de Substituições Inteligentes (Sprint P2A). Camada ANTES da busca
+// manual (`GET /api/exercises` acima) — nunca a substitui. Qualquer falha
+// aqui dentro devolve 500 sem afetar nenhuma outra rota: é um try/catch de
+// handler comum (não middleware), o padrão que já protege o resto deste
+// arquivo.
+router.get('/:id/replacement-suggestions', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidPattern.test(id)) {
+      return res.status(400).json({ error: 'ID inválido' });
+    }
+
+    // Query malformada não é motivo pra falhar a chamada (D4 do harness) —
+    // ignora silenciosamente e cai no ranking padrão, sem motivo.
+    const reasonCategoryRaw = req.query.reasonCategory;
+    const reasonCategory = isReplacementReasonCategory(reasonCategoryRaw) ? reasonCategoryRaw : undefined;
+
+    const viewerPersonalId = await resolveViewerPersonalId(req);
+    const result = await getReplacementSuggestions(req.user!.id, id, viewerPersonalId, { reasonCategory });
+
+    res.json(result);
+  } catch (err: unknown) {
+    const status = (err as { status?: number })?.status;
+    if (status === 404) {
+      return res.status(404).json({ error: 'Exercício não encontrado' });
+    }
+    logger.error({ err }, 'GET /api/exercises/:id/replacement-suggestions error');
+    res.status(500).json({ error: 'Erro ao buscar sugestões de substituição' });
   }
 });
 

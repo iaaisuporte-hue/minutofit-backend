@@ -114,6 +114,15 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'personal_custom_exercise_edited',
   'personal_custom_exercise_archived',
   'personal_custom_exercise_added_to_plan',
+  // Motor de Substituições Inteligentes (Sprint P2A). Emitidos pela folha de
+  // sugestões que abre ANTES da busca manual, durante a execução do treino.
+  'replacement_suggestions_opened',
+  'replacement_suggestion_impression',
+  'replacement_suggestion_selected',
+  'replacement_suggestion_ignored',
+  'replacement_manual_search_selected',
+  'replacement_suggestions_empty',
+  'replacement_suggestions_error',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

@@ -75,6 +75,12 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'workout.set_completed',
   'workout.exercise_skipped',
   'workout.exercise_reordered',
+  // Execução dinâmica — o aluno troca, desfaz, acrescenta e remove exercício
+  // durante a sessão.
+  'workout.exercise_substituted',
+  'workout.substitution_undone',
+  'workout.exercise_added',
+  'workout.exercise_removed',
   'workout.free_started',
   'workout.repeat_started',
   'workout.share_opened',

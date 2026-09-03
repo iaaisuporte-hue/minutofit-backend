@@ -104,6 +104,14 @@ export type DataAccessEventType =
   | 'workout.set_completed'
   | 'workout.exercise_skipped'
   | 'workout.exercise_reordered'
+  // Execução dinâmica: o aluno muda a ficha DURANTE o treino. `exercise_skipped`
+  // é outra coisa — pular é não fazer a série prescrita; remover tira o
+  // exercício da lista do dia. Medem quanto a ficha entregue diverge da
+  // executada, insumo da próxima revisão do personal.
+  | 'workout.exercise_substituted'
+  | 'workout.substitution_undone'
+  | 'workout.exercise_added'
+  | 'workout.exercise_removed'
   | 'workout.free_started'
   | 'workout.repeat_started'
   | 'workout.share_opened'

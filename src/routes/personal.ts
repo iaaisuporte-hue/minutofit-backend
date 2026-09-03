@@ -1106,7 +1106,10 @@ router.get(
 );
 
 // Resumo de EXECUÇÃO do aluno (Spec 010 V1.1) — aderência real (séries feitas ÷
-// prescritas) + frequência. Consent 'workouts' (mesma leitura de treino).
+// prescritas, contando substituição e ignorando exercício extra) + frequência,
+// com a procedência por sessão. Consent 'workouts' (mesma leitura de treino).
+// O objeto do serviço vai inteiro na resposta: campo novo lá aparece aqui sem
+// uma segunda lista para manter em sincronia.
 router.get(
   '/students/:studentId/training-summary',
   roleCheckMiddleware('personal', 'admin'),

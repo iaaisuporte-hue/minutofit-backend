@@ -63,6 +63,19 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 export type SessionSource = 'personal' | 'suggested' | 'academy' | 'free' | 'movement_lab' | 'user_retroactive';
 export type SessionStatus = 'started' | 'completed' | 'partial' | 'abandoned';
 
+/**
+ * Procedência da série dentro da sessão (migration 1836). `replacement` conta na
+ * aderência à ficha (o aluno cumpriu o estímulo com outro exercício);
+ * `user_added` não conta — mas segue contando em volume, frequência e recorde.
+ */
+export type ExecutionSource = 'prescribed' | 'replacement' | 'user_added';
+
+const EXECUTION_SOURCES: ReadonlySet<string> = new Set<ExecutionSource>([
+  'prescribed',
+  'replacement',
+  'user_added',
+]);
+
 /** Captura do Lab de Movimento para uma série (Spec 022). 1:1 com workout_set_logs. */
 export interface SetCaptureInput {
   /** Reps que a IA contou antes de qualquer correção manual. */
@@ -100,6 +113,11 @@ export interface SetLogInput {
   discomfort?: string | null;
   substitutedFromExerciseId?: string | null;
   substitutionReason?: string | null;
+  /**
+   * Procedência da série (migration 1836). Ausente = `prescribed`, que é o
+   * comportamento de todo cliente anterior a esta coluna.
+   */
+  executionSource?: ExecutionSource;
   status?: 'done' | 'skipped';
   /** Métricas do Lab de Movimento (Spec 022) — opcional; só no source movement_lab. */
   capture?: SetCaptureInput | null;
@@ -169,6 +187,21 @@ function parseSetCount(setsStr: unknown): number {
 
 function safeUuid(v: unknown): string | null {
   return typeof v === 'string' && UUID_RE.test(v) ? v : null;
+}
+
+/**
+ * Procedência da série. Valor desconhecido — ou ausente, que é o caso de todo
+ * cliente anterior à coluna — cai em `prescribed`: recusar a sessão por causa
+ * de um enum que não reconhecemos descartaria um treino já feito.
+ *
+ * A inferência olha o UUID que o CLIENTE mandou, não o que sobreviveu à
+ * checagem contra `exercises`. Um exercício apagado da biblioteca depois da
+ * troca zera o vínculo, mas a substituição continua tendo acontecido — e é o
+ * fato, não a FK, que decide se a série conta na aderência à ficha.
+ */
+function sanitizeExecutionSource(raw: unknown, substitutedFromRaw: unknown): ExecutionSource {
+  if (typeof raw === 'string' && EXECUTION_SOURCES.has(raw)) return raw as ExecutionSource;
+  return safeUuid(substitutedFromRaw) ? 'replacement' : 'prescribed';
 }
 
 function clampRpe(v: unknown): number | null {
@@ -576,8 +609,9 @@ export async function createSession(userId: number, academyId: number | null, in
         `INSERT INTO workout_set_logs
            (session_id, exercise_id, exercise_name, order_index, set_index,
             planned_reps, reps_done, planned_load_kg, load_done_kg, planned_rest_s, rest_done_s,
-            rpe, discomfort, substituted_from_exercise_id, substitution_reason, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+            rpe, discomfort, substituted_from_exercise_id, substitution_reason, status,
+            execution_source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
          RETURNING id`,
         [
           sessionId,
@@ -596,6 +630,7 @@ export async function createSession(userId: number, academyId: number | null, in
           knownUuid(r.substitutedFromExerciseId),
           r.substitutionReason ? String(r.substitutionReason).slice(0, 280) : null,
           setStatus,
+          sanitizeExecutionSource(r.executionSource, r.substitutedFromExerciseId),
         ],
       );
 
@@ -1063,8 +1098,29 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
   const { rows } = await pool.query(
     `SELECT ws.id, ws.started_at, ws.performed_at, ws.is_retroactive, ws.created_at,
             ws.status, ws.source, ws.readiness_level, ws.prescribed_snapshot,
-            (SELECT COUNT(*) FROM workout_set_logs sl WHERE sl.session_id = ws.id AND sl.status = 'done')::int AS sets_done
+            -- Séries que respondem pela ficha: a substituição conta (o aluno
+            -- cumpriu o estímulo com outro exercício), o extra não. Uma única
+            -- varredura por sessão devolve os três números — o N+1 aqui seria
+            -- uma consulta por sessão só para contar linhas da mesma tabela.
+            sl.sets_done, sl.substitutions, sl.extra_exercises
        FROM workout_sessions ws
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) FILTER (
+                  WHERE l.status = 'done' AND l.execution_source <> 'user_added'
+                )::int AS sets_done,
+                -- Conta EXERCÍCIOS, não séries. Cai no nome quando o vínculo
+                -- com a biblioteca está zerado (exercício removido do
+                -- catálogo): COUNT(DISTINCT exercise_id) puro ignora NULL e
+                -- devolveria zero troca numa sessão que teve troca.
+                COUNT(DISTINCT COALESCE(l.exercise_id::text, l.exercise_name)) FILTER (
+                  WHERE l.execution_source = 'replacement'
+                )::int AS substitutions,
+                COUNT(DISTINCT COALESCE(l.exercise_id::text, l.exercise_name)) FILTER (
+                  WHERE l.execution_source = 'user_added'
+                )::int AS extra_exercises
+           FROM workout_set_logs l
+          WHERE l.session_id = ws.id
+       ) sl ON TRUE
       WHERE ws.user_id = $1 AND ws.status IN ('completed', 'partial')
       ORDER BY ws.performed_at DESC
       LIMIT $2`,
@@ -1118,6 +1174,11 @@ export async function getStudentExecutionSummary(personalId: number, studentId: 
       readinessLevel: r.readiness_level,
       setsDone: r.sets_done,
       prescribedSets,
+      // Quanto a execução se afastou do prescrito. O personal lê "trocou 1,
+      // acrescentou 2" — não é desvio a punir, é informação de contexto para a
+      // próxima revisão da ficha.
+      substitutionsCount: r.substitutions ?? 0,
+      extraExercisesCount: r.extra_exercises ?? 0,
       discomfortExercises: discomfortMap.get(r.id) ?? [],
     };
   });
@@ -1190,7 +1251,15 @@ export async function getSession(userId: number, sessionId: number) {
   const head = await pool.query(`SELECT * FROM workout_sessions WHERE id = $1 AND user_id = $2`, [sessionId, userId]);
   if (head.rows.length === 0) return null;
   const sets = await pool.query(
-    `SELECT * FROM workout_set_logs WHERE session_id = $1 ORDER BY order_index, set_index`,
+    // O nome do exercício ORIGINAL da troca vem junto: sem ele o cliente teria
+    // um UUID e nada a mostrar, e "substituiu Supino Reto" só se escreve com o
+    // nome. `LEFT JOIN` porque o vínculo é `ON DELETE SET NULL` — exercício
+    // saído do catálogo devolve nome nulo, e a série continua na resposta.
+    `SELECT wsl.*, subst.name AS substituted_from_name
+       FROM workout_set_logs wsl
+       LEFT JOIN exercises subst ON subst.id = wsl.substituted_from_exercise_id
+      WHERE wsl.session_id = $1
+      ORDER BY wsl.order_index, wsl.set_index`,
     [sessionId],
   );
   return { ...head.rows[0], sets: sets.rows };

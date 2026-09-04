@@ -81,6 +81,9 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'workout.substitution_undone',
   'workout.exercise_added',
   'workout.exercise_removed',
+  // Lembrete de treino não finalizado (notificação local do app empacotado).
+  'workout.reminder_scheduled',
+  'workout.reminder_opened',
   'workout.free_started',
   'workout.repeat_started',
   'workout.share_opened',

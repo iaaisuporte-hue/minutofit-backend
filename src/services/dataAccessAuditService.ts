@@ -112,6 +112,11 @@ export type DataAccessEventType =
   | 'workout.substitution_undone'
   | 'workout.exercise_added'
   | 'workout.exercise_removed'
+  // Lembrete de treino não finalizado: mede se o mecanismo funciona (quantas
+  // sessões chegam a ser lembradas, quantas voltam pelo toque). Nenhum dado do
+  // treino viaja — nem exercício, nem carga, nem horário de treino.
+  | 'workout.reminder_scheduled'
+  | 'workout.reminder_opened'
   | 'workout.free_started'
   | 'workout.repeat_started'
   | 'workout.share_opened'

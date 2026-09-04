@@ -430,6 +430,32 @@ export async function getGamificationSummary(userId: number, alreadyCheckedIn = 
         [userId],
       );
 
+  // Condição do dia já respondida (P0.1). O check-in de bem-estar precisa
+  // sobreviver a refresh, reinstalação e troca de aparelho: o cliente guardava
+  // a resposta SÓ em localStorage, então qualquer contexto novo (outro
+  // aparelho, aba anônima, logout/login, storage limpo) reabria a pergunta no
+  // mesmo dia. A verdade mora aqui.
+  //
+  // `feeling IS NOT NULL` é o que separa "respondeu como está" de "a linha do
+  // dia existe": treino e atividade também fazem upsert em user_daily_checkins
+  // sem preencher sinal nenhum, e `todayCheckedIn` (que é fonte-agnóstico)
+  // marcaria o questionário como respondido por ter treinado.
+  const todayConditionResult = academyId
+    ? await pool.query(
+        `SELECT feeling, slept_well, in_pain, stressed, hydration_ok, nutrition_level, mental_load_level
+         FROM user_daily_checkins
+         WHERE user_id = $1 AND academy_id = $2 AND date_key = $3 AND feeling IS NOT NULL
+         LIMIT 1`,
+        [userId, academyId, todayDateKey()],
+      )
+    : await pool.query(
+        `SELECT feeling, slept_well, in_pain, stressed, hydration_ok, nutrition_level, mental_load_level
+         FROM user_daily_checkins
+         WHERE user_id = $1 AND date_key = $2 AND feeling IS NOT NULL
+         LIMIT 1`,
+        [userId, todayDateKey()],
+      );
+
   const lastWorkoutResult = academyId
     ? await pool.query(
         `SELECT workout_id, title, muscle_groups, completed_at
@@ -479,6 +505,7 @@ export async function getGamificationSummary(userId: number, alreadyCheckedIn = 
       (row: { date_key?: Date }) => toDateKey(row.date_key) === todayDateKey(),
     ),
     alreadyCheckedIn,
+    todayCondition: buildTodayCondition(todayConditionResult.rows[0]),
     heatmap: checkinResult.rows
       .map((row: { date_key?: Date }) => toDateKey(row.date_key))
       .filter(Boolean),
@@ -491,6 +518,40 @@ export async function getGamificationSummary(userId: number, alreadyCheckedIn = 
         }
       : null,
     rewardMicrocopy,
+  };
+}
+
+/**
+ * Linha de `user_daily_checkins` → condição do dia no formato que o app usa.
+ *
+ * `normal` no cliente é gravado como `neutral` no banco (o CHECK da coluna usa
+ * o segundo); a tradução volta aqui para o cliente não precisar conhecer as
+ * duas grafias. Sinais opcionais só viajam quando respondidos — `null` no banco
+ * significa "não respondeu", e virar `false` classificaria mal quem pulou.
+ */
+function buildTodayCondition(row: {
+  feeling?: string | null;
+  slept_well?: boolean | null;
+  in_pain?: boolean | null;
+  stressed?: boolean | null;
+  hydration_ok?: boolean | null;
+  nutrition_level?: string | null;
+  mental_load_level?: string | null;
+} | undefined) {
+  if (!row?.feeling) return null;
+  const feeling = row.feeling === 'neutral' ? 'normal' : row.feeling;
+  if (feeling !== 'tired' && feeling !== 'normal' && feeling !== 'energized') return null;
+  return {
+    date: todayDateKey(),
+    feeling,
+    details: {
+      sleptWell: row.slept_well ?? false,
+      inPain: row.in_pain ?? false,
+      stressed: row.stressed ?? false,
+      ...(row.hydration_ok === null || row.hydration_ok === undefined ? {} : { hydrationOk: row.hydration_ok }),
+      ...(row.nutrition_level ? { nutritionLevel: row.nutrition_level } : {}),
+      ...(row.mental_load_level ? { mentalLoadLevel: row.mental_load_level } : {}),
+    },
   };
 }
 

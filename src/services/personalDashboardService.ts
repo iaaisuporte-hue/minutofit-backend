@@ -168,6 +168,20 @@ function daysSinceOrNull(iso: string | null): number | null {
 }
 
 /**
+ * `adherencePct` usa denominador proporcional ao vínculo com piso de 7 dias
+ * (`resolveMonthlyTarget`) — um aluno de 1 dia de carteira com 1-2 treinos já
+ * bate >=100% contra esse piso. Qualquer elogio/reconhecimento que dependa de
+ * `adherencePct >= 100` precisa deste gate antes, ou vira "meta batida" no
+ * primeiro dia de vínculo (QA 04/set/2026). Exige 14+ dias de carteira OU
+ * volume absoluto real (>=8 treinos/30d) — o segundo caminho existe pra não
+ * penalizar quem já treina muito mas ainda não completou 14 dias.
+ */
+function hasStableAdherenceHistory(student: Pick<PersonalDashboardStudent, 'assignedAtISO' | 'workouts30d'>): boolean {
+  const daysSinceAssigned = daysSinceOrNull(student.assignedAtISO);
+  return (daysSinceAssigned !== null && daysSinceAssigned >= 14) || student.workouts30d >= 8;
+}
+
+/**
  * Janela de carência do aluno recém-atribuído (QA 01/ago/2026, P1-1).
  *
  * `resolveRisk` já tratava o caso ("começando" ≠ "sumido"), mas os scores
@@ -528,7 +542,7 @@ export function buildIntelligentAlerts(
   }
 
   const fullAdherence = [...students]
-    .filter((student) => student.adherencePct >= 100)
+    .filter((student) => student.adherencePct >= 100 && hasStableAdherenceHistory(student))
     .sort((a, b) => b.streakDays - a.streakDays)[0];
   if (fullAdherence) {
     alerts.push({
@@ -747,7 +761,7 @@ function recognitionPeriodKey(): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
-function computeRecognitionMilestones(
+export function computeRecognitionMilestones(
   students: PersonalDashboardStudent[],
   alreadyRecognized: Set<string>
 ): RecognitionMilestone[] {
@@ -800,8 +814,10 @@ function computeRecognitionMilestones(
       });
     }
 
-    // Meta mensal batida
-    if (s.adherencePct >= 100) {
+    // Meta mensal batida — exige janela mínima de histórico (ver
+    // hasStableAdherenceHistory). Sem isso, virava "meta do mês batida" no
+    // primeiro dia de vínculo (QA 04/set/2026).
+    if (s.adherencePct >= 100 && hasStableAdherenceHistory(s)) {
       candidates.push({
         key: `full_adherence:${period}`,
         label: 'Meta do mês batida',

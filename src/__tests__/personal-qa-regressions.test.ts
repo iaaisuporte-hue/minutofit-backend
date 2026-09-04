@@ -15,7 +15,9 @@ import {
   resolveMonthlyTarget,
   weeklyTargetFromPreset,
   daysSinceLastWorkout,
+  computeRecognitionMilestones,
 } from '../services/personalDashboardService';
+import type { PersonalDashboardStudent } from '../shared/types/personal-dashboard';
 import { sanitizeWorkoutPlanItem } from '../services/personalWorkoutPlanService';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -182,5 +184,66 @@ describe('P0-2 · transições de revisão não podem reusar $3 sem cast', () =>
     const update = src.slice(src.indexOf('UPDATE workout_reviews'));
     expect(update).toContain('status = $3::varchar');
     expect(update).toContain("$3::text IN ('approved', 'changes_requested')");
+  });
+});
+
+describe('QA 04/set/2026 · reconhecimento exige janela mínima de histórico', () => {
+  /**
+   * `adherencePct` usa denominador proporcional ao vínculo com piso de 7 dias
+   * (resolveMonthlyTarget) — um aluno de 1 dia de carteira com 1-2 treinos já
+   * bate >=100% contra esse piso. Sem o gate abaixo, a Máquina de
+   * Reconhecimento anunciava "meta do mês batida" no primeiro dia.
+   */
+  const baseStudent: PersonalDashboardStudent = {
+    id: '1',
+    name: 'Aluno Teste',
+    plan: 'basic',
+    workouts7d: 2,
+    workouts30d: 2,
+    streakDays: 2,
+    lastWorkoutISO: agoDays(1),
+    adherencePct: 100,
+    adherenceScore: 100,
+    engagementScore: 60,
+    riskScore: 20,
+    riskFactors: [],
+    risk: 'ok',
+    goal: 'hipertrofia',
+    notes: null,
+    engagementStatus: 'on_track',
+    lastCheckinISO: agoDays(1),
+    checkins7d: 2,
+    metabolismScore: null,
+    metabolismBand: 'unknown',
+    metabolismTrend: 'unknown',
+    metabolismDelta7d: null,
+    latestSleptWell: null,
+    lastTechnicalNoteAt: null,
+    assignedAtISO: agoDays(1),
+  };
+
+  it('NÃO reconhece "meta batida" com 1 dia de vínculo e volume baixo', () => {
+    const milestones = computeRecognitionMilestones([baseStudent], new Set());
+    expect(milestones.find((m) => m.milestoneKey.startsWith('full_adherence'))).toBeUndefined();
+  });
+
+  it('reconhece quando o vínculo já tem 14+ dias, mesmo com poucos treinos no mês', () => {
+    const veteran: PersonalDashboardStudent = {
+      ...baseStudent,
+      assignedAtISO: agoDays(20),
+      workouts30d: 4,
+    };
+    const milestones = computeRecognitionMilestones([veteran], new Set());
+    expect(milestones.find((m) => m.milestoneKey.startsWith('full_adherence'))).toBeDefined();
+  });
+
+  it('reconhece com vínculo recente SE o volume absoluto já é real (>=8 treinos/30d)', () => {
+    const highVolume: PersonalDashboardStudent = {
+      ...baseStudent,
+      assignedAtISO: agoDays(1),
+      workouts30d: 8,
+    };
+    const milestones = computeRecognitionMilestones([highVolume], new Set());
+    expect(milestones.find((m) => m.milestoneKey.startsWith('full_adherence'))).toBeDefined();
   });
 });

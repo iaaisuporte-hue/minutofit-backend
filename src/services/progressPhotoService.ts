@@ -15,6 +15,7 @@ import pool from '../config/database';
 import { getStorage, assertStorageConfigured, isStorageConfigured } from '../lib/storage';
 import { hasActiveConsent, type ProfessionalRole } from './consentService';
 import { recordStorageOrphan } from './storageOrphanService';
+import { logDataAccessEvent } from './dataAccessAuditService';
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10MB
 const UPLOAD_URL_TTL = 300; // s
@@ -127,7 +128,18 @@ export async function listPhotosForProfessional(
     (err as any).code = 'CONSENT_REQUIRED';
     throw err;
   }
-  return listPhotosBySubject(subjectUserId);
+  const photos = await listPhotosBySubject(subjectUserId);
+  // SPEC 035 / NUTRI-SEC-03: fotos de progresso — o dado mais sensível do
+  // produto — não deixavam rastro de acesso profissional nenhum. Fix vive
+  // aqui (não só no Nutri) porque este é o único caminho de leitura
+  // profissional, compartilhado com o Personal.
+  await logDataAccessEvent({
+    actorId: professionalId,
+    subjectUserId,
+    eventType: 'progress_photos.read',
+    eventPayload: { role, count: photos.length },
+  });
+  return photos;
 }
 
 /**

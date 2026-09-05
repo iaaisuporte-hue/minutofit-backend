@@ -27,6 +27,7 @@ import {
   computePatientInsights,
 } from '../services/nutritionVoiceNoteService';
 import { listActiveConsentScopes } from '../services/consentService';
+import { logDataAccessEvent } from '../services/dataAccessAuditService';
 import { listMetabolicCheckins } from '../services/metabolicCheckinService';
 import { getWorkoutStats } from '../services/workoutSessionService';
 import {
@@ -125,12 +126,21 @@ router.get(
       const checkins = await listMetabolicCheckins(patientId, 100);
       const scopes = await listActiveConsentScopes(patientId, req.user!.id, 'nutri');
       const workoutStats = scopes.has('workouts') ? await getWorkoutStats(patientId) : null;
+      // SPEC 035 / NUTRI-SEC-03: evolução metabólica (checkins + composição
+      // corporal) não deixava rastro nenhum de acesso.
+      await logDataAccessEvent({
+        actorId: req.user!.id,
+        subjectUserId: patientId,
+        eventType: 'nutri.evolution.read',
+        eventPayload: { workouts: scopes.has('workouts') },
+      });
       res.json({
         success: true,
         data: { checkins, workoutStats, scopes: { bodyMetrics: true, workouts: scopes.has('workouts') } },
       });
     } catch (error: any) {
-      res.status(500).json({ success: false, error: error.message || 'Failed to load patient evolution' });
+      logger.error({ err: error }, '[nutri] evolution error');
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -403,14 +413,23 @@ router.delete('/direct-invites/:id', roleCheckMiddleware('nutri'), async (req: R
 // Patients list (enriched with plan summary + adherence + riskFlag)
 // ===========================================================================
 
-router.get('/patients', async (req: Request, res: Response) => {
+// SPEC 035 / NUTRI-SEC-10: única rota do router sem `roleCheckMiddleware`
+// (o produto `nutri` também é concedido ao PACIENTE via `bonus_nutri` —
+// `requireProduct('nutri')` sozinho não distinguia os dois papéis).
+router.get('/patients', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
   try {
     const nutriId = req.user!.id;
+    // SPEC 035 / NUTRI-SEC-02 e NUTRI-16: esta era a única leitura de dado do
+    // paciente no módulo fora do gate de consent do prefixo
+    // `/patients/:patientId` — plano, aderência e e-mail continuavam
+    // visíveis mesmo com consentimento totalmente revogado, sem nenhum
+    // registro de auditoria. A redação por consentimento e a auditoria por
+    // paciente agora vivem em `getPatientsWithSummary`.
     const data = await getPatientsWithSummary(nutriId);
     res.json({ success: true, data });
   } catch (err: any) {
     logger.error({ err }, '[nutri] list patients error');
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
@@ -488,10 +507,18 @@ router.get(
         getActivePlan(nutriId, patientId),
         getPlanHistory(nutriId, patientId),
       ]);
+      // SPEC 035 / NUTRI-SEC-03: leitura do plano alimentar não deixava
+      // rastro (só create/update/end logavam).
+      await logDataAccessEvent({
+        actorId: nutriId,
+        subjectUserId: patientId,
+        eventType: 'nutri.plan.read',
+        eventPayload: {},
+      });
       res.json({ success: true, data: { active, history } });
     } catch (err: any) {
       logger.error({ err }, '[nutri] get plans error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -725,8 +752,12 @@ router.post(
       const body: string = typeof req.body.body === 'string' ? req.body.body.trim() : '';
       if (!body) return res.status(400).json({ success: false, error: 'body_required' });
 
-      const anchorMealId: string | undefined =
-        typeof req.body.anchorMealId === 'string' ? req.body.anchorMealId : undefined;
+      // SPEC 035: anchorMealId agora referencia nutrition_plan_meals.id
+      // (integer) — era uuid, tipo incompatível (migration 1839).
+      const anchorMealId: number | undefined =
+        Number.isFinite(Number(req.body.anchorMealId)) && req.body.anchorMealId != null
+          ? Number(req.body.anchorMealId)
+          : undefined;
 
       const note = await publishVoiceNote({
         nutriId,
@@ -763,6 +794,9 @@ router.get(
 
 router.get(
   '/patients/:patientId/insights',
+  // SPEC 035 / NUTRI-SEC-05: era a única rota sob /patients/:patientId que
+  // lia dado de aderência alimentar exigindo só o `profile` do prefixo.
+  requireActiveConsent('nutrition'),
   async (req: Request, res: Response) => {
     try {
       const nutriId   = req.user!.id;
@@ -774,7 +808,7 @@ router.get(
       res.json({ success: true, data: insights });
     } catch (err: any) {
       logger.error({ err }, '[nutri] compute insights error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );

@@ -1,8 +1,18 @@
 import pkg from 'pg';
 import dotenv from 'dotenv';
 import logger from '../lib/logger';
+import { assertSafeQaDatabase } from '../utils/qaSafety';
 
 dotenv.config();
+
+// Guard opt-in (SPEC 035): scripts de QA/fixture setam QA_SAFE_MODE=1 junto
+// com DATABASE_URL explícito. Roda ANTES do Pool ser construído — o único
+// choke point que toda query atravessa — porque o Pool baked a connection
+// string no momento da construção; reatribuir a env var depois não desfaz.
+// Nunca ativo por padrão: um falso positivo aqui não pode travar o boot real.
+if (process.env.QA_SAFE_MODE === '1') {
+  assertSafeQaDatabase(process.env.DATABASE_URL);
+}
 
 const { Pool } = pkg;
 

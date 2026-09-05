@@ -6,7 +6,9 @@ export interface VoiceNote {
   nutriId: number;
   patientId: number;
   body: string;
-  anchorMealId: string | null;
+  /** SPEC 035: `integer` (id de `nutrition_plan_meals`) — era `uuid`, tipo
+   * incompatível com a tabela que deveria referenciar (migration 1839). */
+  anchorMealId: number | null;
   publishedAt: string;
   readAt: string | null;
   nutriName?: string;
@@ -25,16 +27,33 @@ export async function publishVoiceNote(opts: {
   nutriId: number;
   patientId: number;
   body: string;
-  anchorMealId?: string;
+  anchorMealId?: number;
   ip?: string;
 }): Promise<VoiceNote> {
   const { nutriId, patientId, body, anchorMealId = null, ip } = opts;
   const trimmed = body.trim().slice(0, 240);
   if (!trimmed) throw Object.assign(new Error('body_required'), { status: 400 });
 
+  // A âncora precisa pertencer a uma refeição REAL do plano ativo deste
+  // paciente com este nutri — sem isso, o campo aceitava qualquer inteiro
+  // (SPEC 035 §8: IDOR latente de escrita cruzada, nunca explorado só porque
+  // o cliente nunca enviou o campo).
+  if (anchorMealId != null) {
+    const owned = await pool.query(
+      `SELECT 1 FROM nutrition_plan_meals npm
+        JOIN nutrition_plans np ON np.id = npm.plan_id
+       WHERE npm.id = $1 AND npm.deleted_at IS NULL
+         AND np.patient_id = $2 AND np.nutri_id = $3 AND np.status = 'active'`,
+      [anchorMealId, patientId, nutriId],
+    );
+    if (owned.rows.length === 0) {
+      throw Object.assign(new Error('anchor_meal_not_found'), { status: 400 });
+    }
+  }
+
   const { rows } = await pool.query<{
     id: string; nutri_id: number; patient_id: number; body: string;
-    anchor_meal_id: string | null; published_at: string; read_at: string | null;
+    anchor_meal_id: number | null; published_at: string; read_at: string | null;
   }>(
     `INSERT INTO nutrition_voice_notes (nutri_id, patient_id, body, anchor_meal_id)
      VALUES ($1, $2, $3, $4)
@@ -60,7 +79,7 @@ export async function listVoiceNotesForNutri(
 ): Promise<VoiceNote[]> {
   const { rows } = await pool.query<{
     id: string; nutri_id: number; patient_id: number; body: string;
-    anchor_meal_id: string | null; published_at: string; read_at: string | null;
+    anchor_meal_id: number | null; published_at: string; read_at: string | null;
   }>(
     `SELECT * FROM nutrition_voice_notes
      WHERE nutri_id = $1 AND patient_id = $2
@@ -68,6 +87,13 @@ export async function listVoiceNotesForNutri(
      LIMIT 20`,
     [nutriId, patientId],
   );
+  // SPEC 035 / NUTRI-SEC-03: leitura do histórico de notas não deixava rastro.
+  await logDataAccessEvent({
+    actorId: nutriId,
+    subjectUserId: patientId,
+    eventType: 'nutri.voice_notes.read',
+    eventPayload: { count: rows.length },
+  });
   return rows.map(rowToVoiceNote);
 }
 
@@ -77,7 +103,7 @@ export async function listPendingVoiceNotesForPatient(
 ): Promise<VoiceNote[]> {
   const { rows } = await pool.query<{
     id: string; nutri_id: number; patient_id: number; body: string;
-    anchor_meal_id: string | null; published_at: string; read_at: string | null;
+    anchor_meal_id: number | null; published_at: string; read_at: string | null;
     nutri_name: string; nutri_photo: string | null;
   }>(
     `SELECT vn.*, u.name AS nutri_name, u.avatar_url AS nutri_photo
@@ -86,6 +112,13 @@ export async function listPendingVoiceNotesForPatient(
      WHERE vn.patient_id = $1
        AND vn.published_at >= now() - interval '72 hours'
        AND vn.read_at IS NULL
+       -- SPEC 035 §7 (vínculo): uma nota de uma nutri já desvinculada não
+       -- deve continuar chegando ao aluno.
+       AND EXISTS (
+         SELECT 1 FROM nutri_patient_assignments npa
+          WHERE npa.nutri_id = vn.nutri_id AND npa.patient_id = vn.patient_id
+            AND npa.status = 'active'
+       )
      ORDER BY vn.published_at DESC`,
     [patientId],
   );
@@ -131,6 +164,15 @@ export async function computePatientInsights(
   const insights: NutriInsight[] = [];
 
   // 1. Sumiço silencioso: 0 check-ins em 72h
+  //
+  // SPEC 035 / NUTRI-03: as 4 queries desta função consultavam
+  // `nmc.checked_at` e `nmc.hunger_score` — colunas que NUNCA existiram (a
+  // migration 1791400000000 criou `recorded_at` e `hunger`). A rota
+  // respondia 500 em 100% das chamadas, e o cliente (`fetchPatientInsights`)
+  // não checava `res.ok`, então o erro virava lista vazia — a aba mostrava
+  // "Paciente em rota estável" para qualquer paciente, inclusive um que
+  // sumiu há 5 dias. Corrigido, e com `np.status = 'active'` explícito nas
+  // 3 queries que não tinham (só a de tendência já filtrava, via CTE).
   const { rows: recentCheckins } = await pool.query<{ cnt: string }>(
     `SELECT COUNT(*) AS cnt
      FROM nutrition_meal_checkins nmc
@@ -138,7 +180,8 @@ export async function computePatientInsights(
      JOIN nutrition_plans np ON np.id = npm.plan_id
      WHERE np.patient_id = $1
        AND np.nutri_id = $2
-       AND nmc.checked_at >= now() - interval '72 hours'`,
+       AND np.status = 'active'
+       AND nmc.recorded_at >= now() - interval '72 hours'`,
     [patientId, nutriId],
   );
   if (parseInt(recentCheckins[0]?.cnt ?? '0', 10) === 0) {
@@ -161,27 +204,27 @@ export async function computePatientInsights(
        SELECT COUNT(*) AS done
        FROM nutrition_meal_checkins nmc
        JOIN plan_meals pm ON pm.meal_id = nmc.meal_id
-       WHERE nmc.checked_at >= now() - interval '7 days'
+       WHERE nmc.recorded_at >= now() - interval '7 days'
          AND nmc.status IN ('done','partial')
      ),
      total_7d AS (
        SELECT COUNT(*) AS total
        FROM nutrition_meal_checkins nmc
        JOIN plan_meals pm ON pm.meal_id = nmc.meal_id
-       WHERE nmc.checked_at >= now() - interval '7 days'
+       WHERE nmc.recorded_at >= now() - interval '7 days'
      ),
      checkins_30d AS (
        SELECT COUNT(*) AS done
        FROM nutrition_meal_checkins nmc
        JOIN plan_meals pm ON pm.meal_id = nmc.meal_id
-       WHERE nmc.checked_at >= now() - interval '30 days'
+       WHERE nmc.recorded_at >= now() - interval '30 days'
          AND nmc.status IN ('done','partial')
      ),
      total_30d AS (
        SELECT COUNT(*) AS total
        FROM nutrition_meal_checkins nmc
        JOIN plan_meals pm ON pm.meal_id = nmc.meal_id
-       WHERE nmc.checked_at >= now() - interval '30 days'
+       WHERE nmc.recorded_at >= now() - interval '30 days'
      )
      SELECT
        CASE WHEN (SELECT total FROM total_7d) > 0
@@ -210,9 +253,10 @@ export async function computePatientInsights(
      JOIN nutrition_plans np ON np.id = npm.plan_id
      WHERE np.patient_id = $1
        AND np.nutri_id = $2
-       AND nmc.checked_at >= now() - interval '7 days'
-       AND nmc.hunger_score >= 4
-       AND EXTRACT(HOUR FROM nmc.checked_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN 15 AND 18`,
+       AND np.status = 'active'
+       AND nmc.recorded_at >= now() - interval '7 days'
+       AND nmc.hunger >= 4
+       AND EXTRACT(HOUR FROM nmc.recorded_at AT TIME ZONE 'America/Sao_Paulo') BETWEEN 15 AND 18`,
     [patientId, nutriId],
   );
   if (parseInt(lateHunger[0]?.cnt ?? '0', 10) >= 3) {
@@ -231,7 +275,8 @@ export async function computePatientInsights(
      JOIN nutrition_plans np ON np.id = npm.plan_id
      WHERE np.patient_id = $1
        AND np.nutri_id = $2
-       AND nmc.checked_at >= now() - interval '7 days'
+       AND np.status = 'active'
+       AND nmc.recorded_at >= now() - interval '7 days'
        AND nmc.status IN ('skipped','substituted')
      GROUP BY npm.name
      HAVING COUNT(*) >= 4`,
@@ -252,7 +297,7 @@ export async function computePatientInsights(
 
 function rowToVoiceNote(r: {
   id: string; nutri_id: number; patient_id: number; body: string;
-  anchor_meal_id: string | null; published_at: string; read_at: string | null;
+  anchor_meal_id: number | null; published_at: string; read_at: string | null;
 }): VoiceNote {
   return {
     id: r.id,

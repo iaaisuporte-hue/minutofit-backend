@@ -1,7 +1,16 @@
+import type { PoolClient } from 'pg';
 import pool from '../config/database';
-import { hasActiveConsent } from './consentService';
+import { hasActiveConsent, listActiveConsentScopesForProfessional } from './consentService';
 import { getMetabolismForUser } from '../modules/metabolism/metabolic.service';
 import { logDataAccessEvent } from './dataAccessAuditService';
+import { dayKey, dayKeyDiff, minutesSinceMidnight } from '../utils/appDay';
+import {
+  type MealCheckinStatus as CanonicalMealCheckinStatus,
+  weightedAdherenceSum,
+  computeAdherence,
+  computeStreak as computeCanonicalStreak,
+  buildCanonicalAdherenceBlock,
+} from './nutriAdherence';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -21,6 +30,15 @@ export type MealCheckinStatus = 'done' | 'partial' | 'skipped' | 'substituted' |
 export type MealStatus = 'upcoming' | 'due_now' | 'done' | 'partial' | 'skipped' | 'substituted' | 'delayed' | 'missed_window' | 'no_time';
 
 export interface MealInput {
+  /**
+   * Identidade da refeição já existente no plano (SPEC 035 / P1A.1). Presente
+   * → reconcilia por UPDATE, preservando `id` e portanto todo histórico de
+   * check-in e as notas de voz ancoradas nela. Ausente → INSERT (refeição
+   * nova). Uma refeição existente que sai da lista sem seu `id` presente é
+   * tratada como removida (soft-delete se tiver histórico, hard-delete se
+   * nunca teve check-in).
+   */
+  id?: number;
   name: string;
   orientation: string;
   order_index: number;
@@ -31,7 +49,7 @@ export interface MealInput {
   workout_relation?: string | null;
   hydration_note?: string | null;
   supplement_note?: string | null;
-  alternatives?: Array<{ description: string; order_index: number }>;
+  alternatives?: Array<{ id?: number; description: string; order_index: number }>;
 }
 
 export interface CreatePlanInput {
@@ -147,7 +165,7 @@ export async function getActivePlan(nutriId: number, patientId: number) {
             ) AS alternatives
      FROM nutrition_plan_meals npm
      LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
-     WHERE npm.plan_id = $1
+     WHERE npm.plan_id = $1 AND npm.deleted_at IS NULL
      GROUP BY npm.id
      ORDER BY npm.order_index, npm.id`,
     [plan.id]
@@ -168,12 +186,17 @@ export async function getPlanHistory(nutriId: number, patientId: number) {
 }
 
 export async function endPlan(nutriId: number, planId: number, patientId: number) {
+  // SPEC 035 / NUTRI-02 (IDOR): o filtro precisa cruzar o recurso com o
+  // PACIENTE, não só com o nutri. Sem `patient_id` aqui, um nutri conseguia
+  // encerrar/ler o plano de um paciente qualquer roteando pelo `:patientId`
+  // de outro paciente ainda vinculado — o `planId` nunca era confirmado como
+  // pertencente ao titular que os gates de vínculo/consent validaram.
   const result = await pool.query(
     `UPDATE nutrition_plans
      SET status = 'ended', ended_at = NOW(), updated_at = NOW()
-     WHERE id = $1 AND nutri_id = $2 AND status = 'active'
+     WHERE id = $1 AND nutri_id = $2 AND patient_id = $3 AND status = 'active'
      RETURNING *`,
-    [planId, nutriId]
+    [planId, nutriId, patientId]
   );
   if (result.rows[0]) {
     await logDataAccessEvent({
@@ -184,6 +207,152 @@ export async function endPlan(nutriId: number, planId: number, patientId: number
     });
   }
   return result.rows[0] ?? null;
+}
+
+/**
+ * Reconcilia as alternativas de UMA refeição contra o payload da nutri
+ * (SPEC 035 / P1A.1). Nunca apaga uma alternativa referenciada por um
+ * check-in "substituted" — perder essa linha perderia o registro de QUAL
+ * alternativa o paciente escolheu, mesmo com o check-in em si preservado.
+ */
+async function reconcileMealAlternatives(
+  client: PoolClient,
+  mealId: number,
+  alternatives: Array<{ id?: number; description: string; order_index: number }> | undefined,
+): Promise<void> {
+  const incoming = Array.isArray(alternatives) ? alternatives : [];
+  const existingRes = await client.query<{ id: number }>(
+    `SELECT id FROM nutrition_meal_alternatives WHERE meal_id = $1`,
+    [mealId]
+  );
+  const existingIds = new Set(existingRes.rows.map((r) => r.id));
+  const incomingIds = new Set(incoming.filter((a) => a.id != null).map((a) => a.id as number));
+
+  for (const existingId of existingIds) {
+    if (incomingIds.has(existingId)) continue;
+    const used = await client.query(
+      `SELECT 1 FROM nutrition_meal_checkins WHERE substituted_alternative_id = $1 LIMIT 1`,
+      [existingId]
+    );
+    if (used.rows.length === 0) {
+      await client.query(`DELETE FROM nutrition_meal_alternatives WHERE id = $1`, [existingId]);
+    }
+  }
+
+  for (const alt of incoming) {
+    if (alt.id != null && existingIds.has(alt.id)) {
+      await client.query(
+        `UPDATE nutrition_meal_alternatives SET description = $2, order_index = $3 WHERE id = $1`,
+        [alt.id, alt.description.trim(), alt.order_index ?? 0]
+      );
+    } else {
+      await client.query(
+        `INSERT INTO nutrition_meal_alternatives (meal_id, description, order_index)
+         VALUES ($1, $2, $3)`,
+        [mealId, alt.description.trim(), alt.order_index ?? 0]
+      );
+    }
+  }
+}
+
+/**
+ * Reconcilia as refeições do plano contra o payload da nutri (SPEC 035 /
+ * P1A.1 — a correção do BLOCKER NUTRI-01).
+ *
+ * O padrão anterior era `DELETE FROM nutrition_plan_meals WHERE plan_id = $1`
+ * seguido de reinserção completa. Como `nutrition_meal_checkins.meal_id` é
+ * `ON DELETE CASCADE`, editar QUALQUER campo do plano — inclusive só o título
+ * — apagava todo o histórico de adesão do paciente. Reproduzido em navegador
+ * real na P0: 97 check-ins → 0.
+ *
+ * Regra: refeição com `id` presente no payload → UPDATE (preserva a
+ * identidade, e com ela o histórico e as alternativas). Sem `id` → INSERT
+ * (refeição nova). Existente que sai do payload → soft-delete
+ * (`deleted_at`) se tem check-in histórico; hard-delete só se nunca teve
+ * nenhum (nada a preservar).
+ */
+async function reconcileMeals(
+  client: PoolClient,
+  planId: number,
+  meals: MealInput[]
+): Promise<void> {
+  const existingRes = await client.query<{ id: number }>(
+    `SELECT id FROM nutrition_plan_meals WHERE plan_id = $1 AND deleted_at IS NULL`,
+    [planId]
+  );
+  const existingIds = new Set(existingRes.rows.map((r) => r.id));
+  const incomingIds = new Set(meals.filter((m) => m.id != null).map((m) => m.id as number));
+
+  for (const existingId of existingIds) {
+    if (incomingIds.has(existingId)) continue;
+    const used = await client.query(
+      `SELECT 1 FROM nutrition_meal_checkins WHERE meal_id = $1 LIMIT 1`,
+      [existingId]
+    );
+    if (used.rows.length > 0) {
+      await client.query(
+        `UPDATE nutrition_plan_meals SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`,
+        [existingId]
+      );
+    } else {
+      await client.query(`DELETE FROM nutrition_plan_meals WHERE id = $1`, [existingId]);
+    }
+  }
+
+  for (const meal of meals) {
+    let mealId: number;
+    if (meal.id != null && existingIds.has(meal.id)) {
+      await client.query(
+        `UPDATE nutrition_plan_meals
+            SET name = $2, orientation = $3, order_index = $4,
+                meal_time = $5, tolerance_minutes = $6, reminder_minutes = $7,
+                metabolic_goal = $8, workout_relation = $9,
+                hydration_note = $10, supplement_note = $11,
+                updated_at = NOW()
+          WHERE id = $1 AND plan_id = $12`,
+        [
+          meal.id,
+          meal.name.trim(),
+          meal.orientation.trim(),
+          meal.order_index,
+          meal.meal_time ?? null,
+          meal.tolerance_minutes ?? null,
+          meal.reminder_minutes ?? null,
+          meal.metabolic_goal ?? null,
+          meal.workout_relation ?? null,
+          meal.hydration_note?.trim().slice(0, 200) ?? null,
+          meal.supplement_note?.trim().slice(0, 200) ?? null,
+          planId,
+        ]
+      );
+      mealId = meal.id;
+    } else {
+      const inserted = await client.query<{ id: number }>(
+        `INSERT INTO nutrition_plan_meals
+           (plan_id, name, orientation, order_index,
+            meal_time, tolerance_minutes, reminder_minutes,
+            metabolic_goal, workout_relation, hydration_note, supplement_note,
+            created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
+         RETURNING id`,
+        [
+          planId,
+          meal.name.trim(),
+          meal.orientation.trim(),
+          meal.order_index,
+          meal.meal_time ?? null,
+          meal.tolerance_minutes ?? null,
+          meal.reminder_minutes ?? null,
+          meal.metabolic_goal ?? null,
+          meal.workout_relation ?? null,
+          meal.hydration_note?.trim().slice(0, 200) ?? null,
+          meal.supplement_note?.trim().slice(0, 200) ?? null,
+        ]
+      );
+      mealId = inserted.rows[0].id;
+    }
+    await reconcileMealAlternatives(client, mealId, meal.alternatives);
+  }
 }
 
 export async function updatePlan(
@@ -203,15 +372,19 @@ export async function updatePlan(
   try {
     await client.query('BEGIN');
 
+    // SPEC 035 / NUTRI-02 (IDOR): `AND patient_id = $6` é o que impede um
+    // nutri de reescrever/encerrar o plano de um paciente diferente do
+    // `:patientId` já validado pelos gates de vínculo/consent da rota,
+    // roteando pelo `planId` de outro paciente ainda em sua carteira.
     const updated = await client.query(
       `UPDATE nutrition_plans
           SET title         = COALESCE(NULLIF(TRIM($3), ''), title),
               objective     = COALESCE($4, objective),
               general_notes = COALESCE($5, general_notes),
               updated_at    = NOW()
-        WHERE id = $1 AND nutri_id = $2 AND status = 'active'
+        WHERE id = $1 AND nutri_id = $2 AND patient_id = $6 AND status = 'active'
         RETURNING *`,
-      [planId, nutriId, title ?? null, objective ?? null, general_notes ?? null]
+      [planId, nutriId, title ?? null, objective ?? null, general_notes ?? null, patientId]
     );
 
     if (!updated.rows[0]) {
@@ -220,41 +393,7 @@ export async function updatePlan(
     }
 
     if (meals !== undefined) {
-      await client.query(`DELETE FROM nutrition_plan_meals WHERE plan_id = $1`, [planId]);
-      for (const meal of meals) {
-        const mealRes = await client.query(
-          `INSERT INTO nutrition_plan_meals
-             (plan_id, name, orientation, order_index,
-              meal_time, tolerance_minutes, reminder_minutes,
-              metabolic_goal, workout_relation, hydration_note, supplement_note,
-              created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW(),NOW())
-           RETURNING id`,
-          [
-            planId,
-            meal.name.trim(),
-            meal.orientation.trim(),
-            meal.order_index,
-            meal.meal_time ?? null,
-            meal.tolerance_minutes ?? null,
-            meal.reminder_minutes ?? null,
-            meal.metabolic_goal ?? null,
-            meal.workout_relation ?? null,
-            meal.hydration_note?.trim().slice(0, 200) ?? null,
-            meal.supplement_note?.trim().slice(0, 200) ?? null,
-          ]
-        );
-        const mealId = mealRes.rows[0].id;
-        if (Array.isArray(meal.alternatives) && meal.alternatives.length > 0) {
-          for (const alt of meal.alternatives) {
-            await client.query(
-              `INSERT INTO nutrition_meal_alternatives (meal_id, description, order_index)
-               VALUES ($1, $2, $3)`,
-              [mealId, alt.description.trim(), alt.order_index ?? 0]
-            );
-          }
-        }
-      }
+      await reconcileMeals(client, planId, meals);
     }
 
     await client.query('COMMIT');
@@ -273,7 +412,7 @@ export async function updatePlan(
               ) AS alternatives
        FROM nutrition_plan_meals npm
        LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
-       WHERE npm.plan_id = $1
+       WHERE npm.plan_id = $1 AND npm.deleted_at IS NULL
        GROUP BY npm.id
        ORDER BY npm.order_index, npm.id`,
       [planId]
@@ -294,9 +433,9 @@ export async function listAdherenceHistory(patientId: number, days = 30) {
        FROM nutrition_adherence_checkins nac
        JOIN nutrition_plans np ON np.id = nac.plan_id
       WHERE nac.patient_id = $1
-        AND nac.check_date >= CURRENT_DATE - ($2 - 1)
+        AND nac.check_date >= $3::date - ($2 - 1)
       ORDER BY nac.check_date DESC`,
-    [patientId, days]
+    [patientId, days, dayKey()]
   );
   return result.rows;
 }
@@ -320,7 +459,10 @@ export async function createAdherenceCheckin(
     return { error: 'plan_not_found', status: 404 };
   }
 
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // SPEC 035 / NUTRI-07: dia do ALUNO (BRT), não o dia UTC do processo — um
+  // check-in às 21h30 não pode cair no dia seguinte e sobrescrever/perder o
+  // registro daquele dia.
+  const today = dayKey();
 
   try {
     const result = await pool.query(
@@ -349,9 +491,9 @@ export async function getAdherenceForPeriod(
     `SELECT check_date, adherence, note
      FROM nutrition_adherence_checkins
      WHERE patient_id = $1 AND plan_id = $2
-       AND check_date >= CURRENT_DATE - ($3 - 1)
+       AND check_date >= $4::date - ($3 - 1)
      ORDER BY check_date DESC`,
-    [patientId, planId, days]
+    [patientId, planId, days, dayKey()]
   );
   if (nutriId) {
     await logDataAccessEvent({
@@ -435,9 +577,9 @@ export async function getPatientContext(nutriId: number, patientId: number) {
     const checkins = await pool.query(
       `SELECT date_key AS check_date, feeling, slept_well, in_pain, stressed, notes
        FROM user_daily_checkins
-       WHERE user_id = $1 AND date_key >= CURRENT_DATE - 6
+       WHERE user_id = $1 AND date_key >= $2::date - 6
        ORDER BY date_key DESC`,
-      [patientId]
+      [patientId, dayKey()]
     );
     context.dailyCheckins = checkins.rows;
   }
@@ -470,7 +612,7 @@ function computeMealStatus(
   mealTime: string | null,
   toleranceMinutes: number,
   checkin: { status: string } | null,
-  nowMinutes: number // minutes since midnight
+  nowMinutes: number // minutes since midnight, no fuso do ALUNO — ver minutesSinceMidnight()
 ): MealStatus {
   if (checkin) {
     return checkin.status as MealStatus;
@@ -489,22 +631,6 @@ function computeMealStatus(
   return 'upcoming'; // passed window but inside 4h grace — keep upcoming
 }
 
-function computeStreak(checkinDates: string[]): number {
-  const dateSet = new Set(checkinDates);
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  // Start from today if it has a checkin, else from yesterday
-  const startOffset = dateSet.has(todayStr) ? 0 : 1;
-  let streak = 0;
-  for (let i = startOffset; i < 60; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    if (!dateSet.has(d.toISOString().slice(0, 10))) break;
-    streak++;
-  }
-  return streak;
-}
-
 export async function getMealTimeline(userId: number) {
   const planResult = await pool.query(
     `SELECT np.id AS plan_id, np.title, np.objective, np.general_notes,
@@ -518,7 +644,8 @@ export async function getMealTimeline(userId: number) {
   );
   if (planResult.rows.length === 0) return null;
   const plan = planResult.rows[0];
-  const today = new Date().toISOString().slice(0, 10);
+  // SPEC 035 / NUTRI-07: dia do aluno (BRT), não o dia UTC do processo.
+  const today = dayKey();
 
   const [mealsResult, workoutResult, streakResult] = await Promise.all([
     pool.query(
@@ -529,29 +656,28 @@ export async function getMealTimeline(userId: number) {
               ) AS alternatives
        FROM nutrition_plan_meals npm
        LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
-       WHERE npm.plan_id = $1
+       WHERE npm.plan_id = $1 AND npm.deleted_at IS NULL
        GROUP BY npm.id
        ORDER BY npm.meal_time NULLS LAST, npm.order_index, npm.id`,
       [plan.plan_id]
     ),
-    // Workout logged today — drives pre/post meal context
+    // Workout logged today (no fuso do aluno) — drives pre/post meal context
     pool.query(
       `SELECT title, muscle_groups
        FROM user_workout_logs
-       WHERE user_id = $1 AND DATE(completed_at) = CURRENT_DATE
+       WHERE user_id = $1 AND (completed_at AT TIME ZONE $2)::date = $3::date
        ORDER BY completed_at DESC
        LIMIT 1`,
-      [userId]
+      [userId, 'America/Sao_Paulo', today]
     ),
-    // Distinct dates with non-skip checkin for streak (last 60 days)
+    // Status por dia dos últimos 60 dias — insumo do streak canônico
+    // (SPEC 035 / NUTRI-15: única definição, compartilhada com a tela da nutri).
     pool.query(
-      `SELECT DISTINCT check_date::text
+      `SELECT check_date::text AS check_date, status
        FROM nutrition_meal_checkins
-       WHERE patient_id = $1
-         AND check_date >= CURRENT_DATE - 59
-         AND status IN ('done', 'partial', 'substituted')
+       WHERE patient_id = $1 AND check_date >= $2::date - 59
        ORDER BY check_date DESC`,
-      [userId]
+      [userId, today]
     ),
   ]);
 
@@ -572,10 +698,15 @@ export async function getMealTimeline(userId: number) {
     ? { title: workoutResult.rows[0].title as string, muscleGroups: workoutResult.rows[0].muscle_groups as string[] }
     : null;
 
-  const streak = computeStreak(streakResult.rows.map((r) => r.check_date as string));
+  const statusesByDay = new Map<string, CanonicalMealCheckinStatus[]>();
+  for (const row of streakResult.rows) {
+    const list = statusesByDay.get(row.check_date) ?? [];
+    list.push(row.status as CanonicalMealCheckinStatus);
+    statusesByDay.set(row.check_date, list);
+  }
+  const streak = computeCanonicalStreak(statusesByDay, today);
 
-  const now = new Date();
-  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+  const nowMinutes = minutesSinceMidnight(new Date());
 
   const meals = mealsResult.rows.map((m) => {
     const checkin = checkinsMap.get(m.id) ?? null;
@@ -607,12 +738,12 @@ export async function createMealCheckin(
     substitutedAlternativeId?: number | null;
   }
 ) {
-  // Validate meal belongs to user's active plan
+  // Validate meal belongs to user's active plan (e não foi removida — SPEC 035)
   const mealCheck = await pool.query(
     `SELECT npm.id, npm.plan_id
      FROM nutrition_plan_meals npm
      JOIN nutrition_plans np ON np.id = npm.plan_id
-     WHERE npm.id = $1 AND np.patient_id = $2 AND np.status = 'active'`,
+     WHERE npm.id = $1 AND np.patient_id = $2 AND np.status = 'active' AND npm.deleted_at IS NULL`,
     [mealId, userId]
   );
   if (mealCheck.rows.length === 0) {
@@ -634,7 +765,11 @@ export async function createMealCheckin(
     }
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  // SPEC 035 / NUTRI-07: dia do aluno (BRT). Antes, um check-in às 21h30
+  // caía no dia UTC seguinte e, por causa do UNIQUE(patient_id, meal_id,
+  // check_date), o UPDATE-on-conflict abaixo SOBRESCREVIA o registro de outro
+  // dia real — o jantar de segunda virava o de terça, apagando o de segunda.
+  const today = dayKey();
 
   try {
     const result = await pool.query(
@@ -682,32 +817,80 @@ export async function getMealHeatmap(
   patientId: number,
   days = 14
 ) {
+  const today = dayKey();
+
+  // SPEC 035 / NUTRI-34: `ORDER BY started_at DESC, id DESC` — sem isso, se
+  // algum dia existirem dois planos 'active' para o mesmo par (nada no schema
+  // impedia), o `LIMIT 1` escolhia uma linha indefinida a critério do
+  // planejador, podendo variar entre chamadas.
   const planResult = await pool.query(
-    `SELECT np.id AS plan_id, np.title
+    `SELECT np.id AS plan_id, np.title, np.started_at
      FROM nutrition_plans np
      WHERE np.nutri_id = $1 AND np.patient_id = $2 AND np.status = 'active'
+     ORDER BY np.started_at DESC, np.id DESC
      LIMIT 1`,
     [nutriId, patientId]
   );
-  if (planResult.rows.length === 0) return { plan: null, meals: [], checkins: [] };
+  if (planResult.rows.length === 0) return { plan: null, meals: [], checkins: [], adherence: null };
   const plan = planResult.rows[0];
 
   const mealsResult = await pool.query(
     `SELECT id, name, meal_time, order_index
      FROM nutrition_plan_meals
-     WHERE plan_id = $1
+     WHERE plan_id = $1 AND deleted_at IS NULL
      ORDER BY meal_time NULLS LAST, order_index, id`,
     [plan.plan_id]
   );
+  const mealsPerDay = mealsResult.rows.length;
 
-  const checkinsResult = await pool.query(
-    `SELECT meal_id, check_date, status
-     FROM nutrition_meal_checkins
-     WHERE patient_id = $1 AND plan_id = $2
-       AND check_date >= CURRENT_DATE - ($3 - 1)
-     ORDER BY check_date DESC, meal_id`,
-    [patientId, plan.plan_id, days]
-  );
+  // `checkins` (janela pedida pelo cliente, para o grid visual) e o par de
+  // janelas CANÔNICAS de 14/60 dias (para o bloco de verdade — sempre fixo,
+  // independente do `days` que a UI pediu) são consultas separadas de
+  // propósito: a UI pode pedir 7 no mobile, mas o cálculo de verdade nunca
+  // pode variar com o viewport (SPEC 035 / NUTRI-04 — 46% no desktop, 93% no
+  // celular, mesmo paciente, mesmo instante).
+  const [checkinsResult, canonical14dResult, canonical60dResult] = await Promise.all([
+    pool.query(
+      `SELECT meal_id, check_date, status
+       FROM nutrition_meal_checkins
+       WHERE patient_id = $1 AND plan_id = $2
+         AND check_date >= $4::date - ($3 - 1)
+       ORDER BY check_date DESC, meal_id`,
+      [patientId, plan.plan_id, days, today]
+    ),
+    pool.query(
+      `SELECT check_date::text AS check_date, status
+       FROM nutrition_meal_checkins
+       WHERE patient_id = $1 AND plan_id = $2 AND check_date >= $3::date - 13
+       ORDER BY check_date DESC`,
+      [patientId, plan.plan_id, today]
+    ),
+    pool.query(
+      `SELECT check_date::text AS check_date, status
+       FROM nutrition_meal_checkins
+       WHERE patient_id = $1 AND plan_id = $2 AND check_date >= $3::date - 59
+       ORDER BY check_date DESC`,
+      [patientId, plan.plan_id, today]
+    ),
+  ]);
+
+  const daysSincePlanStart = dayKeyDiff(dayKey(new Date(plan.started_at)), today);
+  const statusesByDay60d = new Map<string, CanonicalMealCheckinStatus[]>();
+  for (const row of canonical60dResult.rows) {
+    const list = statusesByDay60d.get(row.check_date) ?? [];
+    list.push(row.status);
+    statusesByDay60d.set(row.check_date, list);
+  }
+
+  const adherence = mealsPerDay > 0
+    ? buildCanonicalAdherenceBlock({
+        checkins14d: canonical14dResult.rows.map((r) => ({ checkDate: r.check_date, status: r.status })),
+        mealsPerDay,
+        daysSincePlanStart,
+        todayKey: today,
+        statusesByDay60d,
+      })
+    : null;
 
   await logDataAccessEvent({
     actorId: nutriId,
@@ -719,6 +902,7 @@ export async function getMealHeatmap(
     plan: { id: plan.plan_id, title: plan.title },
     meals: mealsResult.rows,
     checkins: checkinsResult.rows,
+    adherence,
   };
 }
 
@@ -726,6 +910,16 @@ export async function getMealHeatmap(
 // Enriched patients list (nutri dashboard)
 // ---------------------------------------------------------------------------
 
+/**
+ * Carteira enriquecida do nutri — SPEC 035 / P1A.4 (definição canônica de
+ * aderência, streak, tendência e risco).
+ *
+ * Antes: SEIS definições de "aderência" coexistiam no módulo, com denominador
+ * fixo (÷7, ÷30) que ignorava quando o plano/vínculo começou — um paciente de
+ * 2 dias com 100% de adesão real lia "29%" e nascia marcado "Atenção". Esta
+ * versão usa `nutriAdherence.ts` (mesma função que `getMealHeatmap` usa no
+ * detalhe) para que a carteira e a tela do paciente NUNCA mais divirjam.
+ */
 export async function getPatientsWithSummary(nutriId: number) {
   const patientsResult = await pool.query(
     `SELECT u.id, u.name, u.email, u.photo_url,
@@ -740,8 +934,34 @@ export async function getPatientsWithSummary(nutriId: number) {
   if (patientsResult.rows.length === 0) return [];
 
   const patientIds = patientsResult.rows.map((r) => r.id);
+  const today = dayKey();
 
-  // Active plans per patient
+  // SPEC 035 / NUTRI-SEC-02: a listagem agregada é a única leitura do módulo
+  // fora do gate de consent do prefixo `/patients/:patientId` — sem isso, um
+  // paciente com TODOS os escopos revogados continuava aparecendo com plano,
+  // e-mail e aderência visíveis. `profile` cobre identidade/plano; `nutrition`
+  // cobre o conteúdo nutricional propriamente dito.
+  const consentByPatient = await listActiveConsentScopesForProfessional(nutriId, 'nutri');
+  const consentedPatientIds: number[] = [];
+  for (const id of patientIds) {
+    const scopes = consentByPatient.get(id);
+    if (scopes?.has('profile')) consentedPatientIds.push(id);
+  }
+  if (consentedPatientIds.length > 0) {
+    await Promise.all(
+      consentedPatientIds.map((id) =>
+        logDataAccessEvent({
+          actorId: nutriId,
+          subjectUserId: id,
+          eventType: 'nutri.patients_list.read',
+          eventPayload: {},
+        })
+      )
+    );
+  }
+
+  // Plano ativo por paciente — precisa de `started_at` para o denominador
+  // proporcional (SPEC 035 / NUTRI-13).
   const plansResult = await pool.query(
     `SELECT patient_id, id AS plan_id, title, started_at
      FROM nutrition_plans
@@ -749,86 +969,173 @@ export async function getPatientsWithSummary(nutriId: number) {
     [nutriId, patientIds]
   );
   const plansByPatient = new Map(plansResult.rows.map((r) => [r.patient_id, r]));
-
-  // Adherence per patient: 7d + 30d
-  const adherenceResult = await pool.query(
-    `SELECT nac.patient_id,
-            COUNT(*) FILTER (WHERE nac.check_date >= CURRENT_DATE - 6)  AS checkins_7d,
-            COUNT(*) FILTER (WHERE nac.check_date >= CURRENT_DATE - 29) AS checkins_30d,
-            MAX(nac.check_date) AS last_checkin_date
-     FROM nutrition_adherence_checkins nac
-     WHERE nac.patient_id = ANY($1)
-     GROUP BY nac.patient_id`,
-    [patientIds]
-  );
-  const adherenceByPatient = new Map(adherenceResult.rows.map((r) => [r.patient_id, r]));
-
-  // Aderência REAL por refeição (P1-6): sobre nutrition_meal_checkins (granular),
-  // não sobre o modelo diário legado nutrition_adherence_checkins (que só mede
-  // "apareceu no dia"). Aderente = done+substituted (=1), partial = 0.5, resto = 0.
-  // Denominador = refeições do plano × dias da janela. Só computa quando há dado
-  // granular na janela; senão fica null e o frontend cai no proxy legado.
   const activePlanIds = plansResult.rows.map((r) => r.plan_id);
+
   const mealCountByPlan = new Map<number, number>();
   if (activePlanIds.length > 0) {
     const mealCountRes = await pool.query(
       `SELECT plan_id, COUNT(*)::int AS meal_count
-         FROM nutrition_plan_meals WHERE plan_id = ANY($1) GROUP BY plan_id`,
+         FROM nutrition_plan_meals WHERE plan_id = ANY($1) AND deleted_at IS NULL GROUP BY plan_id`,
       [activePlanIds]
     );
     for (const r of mealCountRes.rows) mealCountByPlan.set(r.plan_id, Number(r.meal_count));
   }
-  const mealAdherenceRes = await pool.query(
-    `SELECT patient_id,
-            SUM(CASE WHEN status IN ('done','substituted') THEN 1 WHEN status = 'partial' THEN 0.5 ELSE 0 END)
-              FILTER (WHERE check_date >= CURRENT_DATE - 6)  AS adherent_7d,
-            COUNT(*) FILTER (WHERE check_date >= CURRENT_DATE - 6)  AS n_7d,
-            SUM(CASE WHEN status IN ('done','substituted') THEN 1 WHEN status = 'partial' THEN 0.5 ELSE 0 END)
-              FILTER (WHERE check_date >= CURRENT_DATE - 29) AS adherent_30d,
-            COUNT(*) FILTER (WHERE check_date >= CURRENT_DATE - 29) AS n_30d
-       FROM nutrition_meal_checkins
-      WHERE patient_id = ANY($1)
-      GROUP BY patient_id`,
-    [patientIds]
-  );
-  const mealAdherenceByPatient = new Map(mealAdherenceRes.rows.map((r) => [r.patient_id, r]));
+
+  // Check-ins LEGADOS (modelo diário) — SPEC 035 / NUTRI-32: filtrados por
+  // `plan_id = ANY(activePlanIds)`, não só `patient_id`, para não misturar
+  // check-ins de um plano encerrado/trocado com a métrica do plano vigente.
+  // Contagens mantidas (não só a última data) porque o frontend usa
+  // `adherence7d`/`adherence30d` como proxy legado quando não há dado
+  // granular ainda.
+  const legacyRes = activePlanIds.length > 0
+    ? await pool.query<{ patient_id: number; checkins_7d: string; checkins_30d: string; last_checkin_date: string | null }>(
+        `SELECT patient_id,
+                COUNT(*) FILTER (WHERE check_date >= $3::date - 6)  AS checkins_7d,
+                COUNT(*) FILTER (WHERE check_date >= $3::date - 29) AS checkins_30d,
+                MAX(check_date)::text AS last_checkin_date
+           FROM nutrition_adherence_checkins
+          WHERE patient_id = ANY($1) AND plan_id = ANY($2)
+          GROUP BY patient_id`,
+        [patientIds, activePlanIds, today]
+      )
+    : { rows: [] as Array<{ patient_id: number; checkins_7d: string; checkins_30d: string; last_checkin_date: string | null }> };
+  const legacyByPatient = new Map(legacyRes.rows.map((r) => [r.patient_id, r]));
+
+  // Check-ins granulares dos últimos 30 dias — cobre a janela de 7d (pct e
+  // trend) e a de 30d (campo legado, hoje não exibido em tela nenhuma —
+  // NUTRI-46), tudo restrito ao plano ATIVO de cada paciente (NUTRI-32).
+  const granular30dRes = activePlanIds.length > 0
+    ? await pool.query<{ patient_id: number; check_date: string; status: CanonicalMealCheckinStatus }>(
+        `SELECT patient_id, check_date::text AS check_date, status
+           FROM nutrition_meal_checkins
+          WHERE patient_id = ANY($1) AND plan_id = ANY($2) AND check_date >= $3::date - 29
+          ORDER BY check_date DESC`,
+        [patientIds, activePlanIds, today]
+      )
+    : { rows: [] as Array<{ patient_id: number; check_date: string; status: CanonicalMealCheckinStatus }> };
+
+  const checkins30dByPatient = new Map<number, Array<{ checkDate: string; status: CanonicalMealCheckinStatus }>>();
+  const statusesByDay60dByPatient = new Map<number, Map<string, CanonicalMealCheckinStatus[]>>();
+  const granularLastByPatient = new Map<number, string>();
+  for (const row of granular30dRes.rows) {
+    const list = checkins30dByPatient.get(row.patient_id) ?? [];
+    list.push({ checkDate: row.check_date, status: row.status });
+    checkins30dByPatient.set(row.patient_id, list);
+
+    const byDay = statusesByDay60dByPatient.get(row.patient_id) ?? new Map<string, CanonicalMealCheckinStatus[]>();
+    const dayList = byDay.get(row.check_date) ?? [];
+    dayList.push(row.status);
+    byDay.set(row.check_date, dayList);
+    statusesByDay60dByPatient.set(row.patient_id, byDay);
+
+    const prevMax = granularLastByPatient.get(row.patient_id);
+    if (!prevMax || row.check_date > prevMax) granularLastByPatient.set(row.patient_id, row.check_date);
+  }
 
   return patientsResult.rows.map((p) => {
-    const plan = plansByPatient.get(p.id) ?? null;
-    const adherence = adherenceByPatient.get(p.id) ?? null;
-    const checkins7d  = Number(adherence?.checkins_7d  ?? 0);
-    const checkins30d = Number(adherence?.checkins_30d ?? 0);
-    const lastCheckin = adherence?.last_checkin_date ?? null;
+    const scopes = consentByPatient.get(p.id);
+    const hasProfileConsent = scopes?.has('profile') ?? false;
+    const hasNutritionConsent = scopes?.has('nutrition') ?? false;
 
-    const daysSinceLastCheckin = lastCheckin
-      ? Math.floor((Date.now() - new Date(lastCheckin).getTime()) / 86400000)
+    // Sem `profile`: o paciente aparece na carteira (o vínculo é real e o
+    // nutri precisa saber quem tem), mas nada de identidade/plano/aderência
+    // é exposto. Antes deste fix, revogar TODO o consentimento não mudava
+    // nada nesta rota (SPEC 035 / NUTRI-SEC-02).
+    if (!hasProfileConsent) {
+      return {
+        id: p.id,
+        name: p.name,
+        email: null,
+        photo_url: null,
+        academy_id: p.academy_id,
+        activePlan: null,
+        adherence7d: 0,
+        adherence30d: 0,
+        mealAdherence7dPct: null,
+        mealAdherence30dPct: null,
+        lastCheckinDate: null,
+        riskFlag: false,
+        adherenceDropFlag: false,
+        adherenceState: null,
+        streakDays: 0,
+        trend: null,
+        consentRevoked: true,
+      };
+    }
+
+    const plan = plansByPatient.get(p.id) ?? null;
+
+    // Perfil concedido, mas nutrição não: mantém identidade, redige plano e
+    // aderência — mesma fronteira que `requireActiveConsent('nutrition')`
+    // aplica nas rotas individuais de plano/heatmap.
+    if (!hasNutritionConsent) {
+      return {
+        id: p.id,
+        name: p.name,
+        email: p.email,
+        photo_url: p.photo_url,
+        academy_id: p.academy_id,
+        activePlan: null,
+        adherence7d: 0,
+        adherence30d: 0,
+        mealAdherence7dPct: null,
+        mealAdherence30dPct: null,
+        lastCheckinDate: null,
+        riskFlag: false,
+        adherenceDropFlag: false,
+        adherenceState: null,
+        streakDays: 0,
+        trend: null,
+        consentRevoked: true,
+      };
+    }
+
+    const mealsPerDay = plan ? mealCountByPlan.get(plan.plan_id) ?? 0 : 0;
+    const daysSincePlanStart = plan ? dayKeyDiff(dayKey(new Date(plan.started_at)), today) : null;
+
+    const checkins30d = checkins30dByPatient.get(p.id) ?? [];
+    const statusesByDay60d = statusesByDay60dByPatient.get(p.id) ?? new Map();
+
+    const canonical = mealsPerDay > 0
+      ? buildCanonicalAdherenceBlock({
+          checkins14d: checkins30d, // superset de 30d — a função só olha as janelas de 7/14 que precisa
+          mealsPerDay,
+          daysSincePlanStart,
+          todayKey: today,
+          statusesByDay60d,
+        })
       : null;
 
-    const pct7d  = Math.round((checkins7d  / 7)  * 100);
-    const pct30d = Math.round((checkins30d / 30) * 100);
-    // adherenceDropFlag: 7d adherence fell ≥20pp vs 30d average
-    const adherenceDropFlag = checkins30d >= 5 && pct7d < pct30d - 20;
+    const sum30d = weightedAdherenceSum(checkins30d.map((c) => c.status));
+    const a30 = mealsPerDay > 0 ? computeAdherence(sum30d, mealsPerDay, 30, daysSincePlanStart) : null;
 
-    // Aderência real por refeição — null quando não há plano/refeições ou nenhum
-    // check-in granular na janela (frontend cai no proxy legado).
-    const mealsPerDay = plan ? mealCountByPlan.get(plan.plan_id) ?? 0 : 0;
-    const ma = mealAdherenceByPatient.get(p.id);
-    const mealPct = (adherent: unknown, n: unknown, days: number): number | null => {
-      if (mealsPerDay <= 0 || Number(n ?? 0) <= 0) return null;
-      return Math.min(100, Math.round((Number(adherent ?? 0) / (mealsPerDay * days)) * 100));
-    };
-    const mealAdherence7dPct = mealPct(ma?.adherent_7d, ma?.n_7d, 7);
-    const mealAdherence30dPct = mealPct(ma?.adherent_30d, ma?.n_30d, 30);
+    // Última atividade REAL do paciente — combina os dois modelos de
+    // check-in (SPEC 035 / NUTRI-14: antes, um paciente que só usava a
+    // timeline granular tinha `lastCheckinDate: null` e nascia com risco
+    // permanente mesmo com 100% de adesão real no mesmo card).
+    const legacy = legacyByPatient.get(p.id) ?? null;
+    const legacyLast = legacy?.last_checkin_date ?? null;
+    const granularLast = granularLastByPatient.get(p.id) ?? null;
+    const lastActivity = [legacyLast, granularLast].filter((d): d is string => !!d).sort().pop() ?? null;
+    const daysSinceLastActivity = lastActivity ? dayKeyDiff(lastActivity, today) : null;
 
-    // riskFlag: sem plano ativo, OU sem check-in há >3 dias, OU aderência real às
-    // refeições baixa (<40% na semana). O último critério dá utilidade ao sinal
-    // do P1-6: um paciente que faz check-in mas NÃO segue o plano também está em
-    // risco — antes passava despercebido (o proxy legado só via "apareceu").
+    // riskFlag: sem plano ativo é sempre digno de atenção, independente de
+    // calibração. Com plano, os demais critérios só valem depois que o
+    // vínculo tem sinal suficiente para significar algo (SPEC 035 / NUTRI-13
+    // e NUTRI-14) — um paciente de 1-2 dias, por definição, não tem "3 dias
+    // sem check-in" nem "adesão baixa" que façam sentido.
+    const calibrating = canonical?.adherenceState === 'calibrating';
     const riskFlag =
       !plan ||
-      daysSinceLastCheckin === null ||
-      daysSinceLastCheckin > 3 ||
-      (mealAdherence7dPct !== null && mealAdherence7dPct < 40);
+      (!calibrating && (
+        daysSinceLastActivity === null ||
+        daysSinceLastActivity > 3 ||
+        (canonical?.adherencePct !== null && canonical !== null && canonical.adherencePct! < 40)
+      ));
+
+    // adherenceDropFlag agora É a tendência canônica — mesma função que a
+    // aba Adesão do detalhe, nunca mais um segundo cálculo (SPEC 035 / NUTRI-09/33).
+    const adherenceDropFlag = canonical?.trend === 'down';
 
     return {
       id: p.id,
@@ -837,13 +1144,24 @@ export async function getPatientsWithSummary(nutriId: number) {
       photo_url: p.photo_url,
       academy_id: p.academy_id,
       activePlan: plan ?? null,
-      adherence7d: checkins7d,
-      adherence30d: checkins30d,
-      mealAdherence7dPct,
-      mealAdherence30dPct,
-      lastCheckinDate: lastCheckin,
+      // Campos legados mantidos por compatibilidade de contrato com o
+      // frontend atual (fallback quando não há dado granular) — não usados
+      // para cálculo interno de risco/tendência, que agora vêm 100% de
+      // `canonical`.
+      adherence7d: Number(legacy?.checkins_7d ?? 0),
+      adherence30d: Number(legacy?.checkins_30d ?? 0),
+      mealAdherence7dPct: canonical?.adherencePct ?? null,
+      mealAdherence30dPct: a30?.pct ?? null,
+      lastCheckinDate: lastActivity,
       riskFlag,
       adherenceDropFlag,
+      // Campos canônicos novos (SPEC 035) — a UI deve migrar para eles;
+      // ver relatório de conclusão P1A para o plano de descontinuação dos
+      // campos legados acima.
+      adherenceState: canonical?.adherenceState ?? (plan ? 'calibrating' : null),
+      streakDays: canonical?.streakDays ?? 0,
+      trend: canonical?.trend ?? null,
+      consentRevoked: false,
     };
   });
 }
@@ -860,7 +1178,7 @@ export async function getUserActivePlan(userId: number) {
      FROM nutrition_plans np
      JOIN users u ON u.id = np.nutri_id
      WHERE np.patient_id = $1 AND np.status = 'active'
-     ORDER BY np.started_at DESC
+     ORDER BY np.started_at DESC, np.id DESC
      LIMIT 1`,
     [userId]
   );
@@ -875,14 +1193,14 @@ export async function getUserActivePlan(userId: number) {
             ) AS alternatives
      FROM nutrition_plan_meals npm
      LEFT JOIN nutrition_meal_alternatives nma ON nma.meal_id = npm.id
-     WHERE npm.plan_id = $1
+     WHERE npm.plan_id = $1 AND npm.deleted_at IS NULL
      GROUP BY npm.id
      ORDER BY npm.order_index, npm.id`,
     [plan.id]
   );
 
-  // Today's checkin
-  const today = new Date().toISOString().slice(0, 10);
+  // Today's checkin — SPEC 035 / NUTRI-07: dia do aluno (BRT).
+  const today = dayKey();
   const checkinResult = await pool.query(
     `SELECT id, adherence, note, created_at
      FROM nutrition_adherence_checkins

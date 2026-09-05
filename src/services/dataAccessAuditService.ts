@@ -46,6 +46,12 @@ export type DataAccessEventType =
   | 'nutri.clinical_profile.read'
   | 'nutri.clinical_profile.updated'
   | 'nutri.data.patient_deletion'
+  // SPEC 035 — leituras que não deixavam rastro nenhum (NUTRI-SEC-03/NUTRI-16)
+  | 'nutri.evolution.read'
+  | 'nutri.plan.read'
+  | 'nutri.patients_list.read'
+  | 'nutri.voice_notes.read'
+  | 'progress_photos.read'
   | 'parq.signed'
   | 'parq.medical_release_declared'
   | 'training.adaptation.applied'

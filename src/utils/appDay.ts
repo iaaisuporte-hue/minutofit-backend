@@ -32,6 +32,26 @@ export function dayKey(date: Date = new Date(), timeZone: string = APP_TIMEZONE)
   }).format(date);
 }
 
+/**
+ * Minutos desde a meia-noite LOCAL (fuso do aluno) de um instante.
+ *
+ * Existe porque `date.getHours()*60 + date.getMinutes()` lê o relógio do
+ * PROCESSO — UTC na Render, 3h à frente de Brasília — e fazia o Nutri marcar o
+ * café da manhã como "passou" e o almoço como "agora" às 9h da manhã (SPEC 035 /
+ * NUTRI-08). Mesma lição do `dayKey()`: o deslocamento sai do Intl, nunca do
+ * fuso da máquina que executou o código.
+ */
+export function minutesSinceMidnight(date: Date = new Date(), timeZone: string = APP_TIMEZONE): number {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? 0);
+  return (get('hour') % 24) * 60 + get('minute');
+}
+
 /** Diferença em dias inteiros entre duas chaves 'YYYY-MM-DD'. */
 export function dayKeyDiff(fromKey: string, toKey: string): number {
   const ms = (key: string): number => {
@@ -39,6 +59,17 @@ export function dayKeyDiff(fromKey: string, toKey: string): number {
     return Date.UTC(y, m - 1, d);
   };
   return Math.round((ms(toKey) - ms(fromKey)) / 86_400_000);
+}
+
+/**
+ * Desloca uma chave 'YYYY-MM-DD' por N dias de CALENDÁRIO. Aritmética pura
+ * sobre os componentes ano/mês/dia — sem conversão de fuso, porque uma chave
+ * de dia já é um dia de calendário, não um instante.
+ */
+export function shiftDayKey(key: string, deltaDays: number): string {
+  const [y, m, d] = key.slice(0, 10).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
 }
 
 /**

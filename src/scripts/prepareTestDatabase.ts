@@ -15,25 +15,23 @@
 import pool from '../config/database';
 import logger from '../lib/logger';
 import { runBootChain } from '../db/bootChain';
-
-const NOMES_PERMITIDOS = /(test|ci|local|verify)/i;
+import { assertSafeQaDatabase, UnsafeQaDatabaseError } from '../utils/qaSafety';
 
 async function main(): Promise<void> {
-  const url = process.env.DATABASE_URL ?? '';
-  if (!url) {
-    console.error('[prepare-test-db] DATABASE_URL ausente.');
-    process.exit(1);
+  // SPEC 035: checagem consolidada em `qaSafety.ts` (fonte única) — este
+  // script fazia sua própria checagem inline; agora reusa a mesma regra que
+  // `config/database.ts` aplica quando QA_SAFE_MODE=1.
+  try {
+    assertSafeQaDatabase(process.env.DATABASE_URL);
+  } catch (err) {
+    if (err instanceof UnsafeQaDatabaseError) {
+      console.error(`[prepare-test-db] ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
   }
 
-  const nomeDoBanco = url.split('/').pop()?.split('?')[0] ?? '';
-  if (!NOMES_PERMITIDOS.test(nomeDoBanco)) {
-    console.error(
-      `[prepare-test-db] recusado: "${nomeDoBanco}" não parece banco de teste. ` +
-        'O nome precisa conter test, ci, local ou verify. Este script faz DDL.',
-    );
-    process.exit(1);
-  }
-
+  const nomeDoBanco = new URL(process.env.DATABASE_URL as string).pathname.replace(/^\//, '');
   logger.info({ banco: nomeDoBanco }, '[prepare-test-db] montando schema');
   await runBootChain();
   logger.info('[prepare-test-db] schema pronto');

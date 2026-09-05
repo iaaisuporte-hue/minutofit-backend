@@ -12,6 +12,7 @@
 import webpush from 'web-push';
 import pool from '../config/database';
 import logger from '../lib/logger';
+import { dayKey, minutesSinceMidnight } from '../utils/appDay';
 
 let _initialized = false;
 
@@ -95,10 +96,15 @@ export async function dispatchMealReminders(windowMinutes = 30): Promise<{ dispa
     return { dispatched: 0 };
   }
 
-  const now = new Date();
-  const nowMin = now.getHours() * 60 + now.getMinutes();
+  // SPEC 035 / NUTRI-08 e NUTRI-09: `getHours()` lia o relógio do PROCESSO
+  // (UTC na Render, 3h à frente de Brasília) — a janela de disparo inteira
+  // rodava adiantada. E `npm.id::uuid` nunca funcionou: `nutrition_plan_meals
+  // .id` é `integer`; o cast lançava erro de tipo antes de qualquer linha,
+  // então esta função NUNCA despachou um lembrete sequer (migration 1839
+  // corrigiu `nutrition_meal_reminders.meal_id` para `integer`).
+  const nowMin = minutesSinceMidnight(new Date());
   const windowEnd = nowMin + windowMinutes;
-  const today = now.toISOString().slice(0, 10);
+  const today = dayKey();
 
   // Meals due in [nowMin, windowEnd], not yet dispatched today, not already checked-in
   const { rows: dueMeals } = await pool.query(
@@ -107,12 +113,13 @@ export async function dispatchMealReminders(windowMinutes = 30): Promise<{ dispa
      FROM nutrition_plan_meals npm
      JOIN nutrition_plans np ON np.id = npm.plan_id
      WHERE np.status = 'active'
+       AND npm.deleted_at IS NULL
        AND npm.meal_time IS NOT NULL
        AND EXTRACT(HOUR FROM npm.meal_time::time) * 60 + EXTRACT(MINUTE FROM npm.meal_time::time)
            BETWEEN $1 AND $2
        AND NOT EXISTS (
          SELECT 1 FROM nutrition_meal_reminders nmr
-         WHERE nmr.patient_id = np.patient_id AND nmr.meal_id = npm.id::uuid
+         WHERE nmr.patient_id = np.patient_id AND nmr.meal_id = npm.id
            AND nmr.reminder_date = $3
        )
        AND NOT EXISTS (
@@ -134,7 +141,7 @@ export async function dispatchMealReminders(windowMinutes = 30): Promise<{ dispa
     // Record dispatch to prevent duplicates
     await pool.query(
       `INSERT INTO nutrition_meal_reminders (patient_id, meal_id, reminder_date, sent_at)
-       VALUES ($1, $2::uuid, $3, now())
+       VALUES ($1, $2, $3, now())
        ON CONFLICT (patient_id, meal_id, reminder_date) DO NOTHING`,
       [meal.patient_id, meal.meal_id, today],
     );

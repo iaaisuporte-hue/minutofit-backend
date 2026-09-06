@@ -185,7 +185,7 @@ router.get('/dietary-catalog', roleCheckMiddleware('nutri'), async (req: Request
     res.json({ success: true, data: { catalog } });
   } catch (err: any) {
     logger.error({ err }, '[nutri] list dietary-catalog error');
-    res.status(500).json({ success: false, error: err.message || 'Failed to load catalog' });
+    res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
@@ -201,7 +201,7 @@ router.get(
       res.json({ success: true, data });
     } catch (err: any) {
       logger.error({ err }, '[nutri] get clinical-profile error');
-      res.status(500).json({ success: false, error: err.message || 'Failed to load profile' });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   },
 );
@@ -219,10 +219,11 @@ router.post(
       res.status(201).json({ success: true, data: { item } });
     } catch (err: any) {
       if (err instanceof ValidationError) {
+        // Mensagem própria do app (não é erro cru de banco) — segura para o cliente.
         return res.status(400).json({ success: false, error: err.message });
       }
       logger.error({ err }, '[nutri] add clinical-profile item error');
-      res.status(500).json({ success: false, error: err.message || 'Failed to add item' });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   },
 );
@@ -247,7 +248,7 @@ router.patch(
         return res.status(status).json({ success: false, error: err.message });
       }
       logger.error({ err }, '[nutri] update clinical-profile item error');
-      res.status(500).json({ success: false, error: err.message || 'Failed to update item' });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   },
 );
@@ -269,7 +270,7 @@ router.delete(
       res.json({ success: true });
     } catch (err: any) {
       logger.error({ err }, '[nutri] delete clinical-profile item error');
-      res.status(500).json({ success: false, error: err.message || 'Failed to delete item' });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   },
 );
@@ -286,7 +287,7 @@ router.post(
       res.json({ success: true, data: { alerts } });
     } catch (err: any) {
       logger.error({ err }, '[nutri] clinical-profile check error');
-      res.status(500).json({ success: false, error: err.message || 'Failed to check diet' });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   },
 );
@@ -308,7 +309,7 @@ router.post(
       res.json({ success: true, data: suggestion });
     } catch (err: any) {
       logger.error({ err }, '[nutri] clinical-profile suggest error');
-      res.status(500).json({ success: false, error: err.message || 'Failed to suggest substitutions' });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   },
 );
@@ -342,7 +343,7 @@ router.post('/direct-invites', roleCheckMiddleware('nutri'), inviteLimiter, asyn
     res.status(201).json({ success: true, data: { ...row, inviteUrl } });
   } catch (err: any) {
     logger.error({ err }, '[nutri] create direct-invite error');
-    res.status(500).json({ success: false, error: err.message || 'Failed to create invite' });
+    res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
@@ -378,7 +379,7 @@ router.get('/direct-invites', roleCheckMiddleware('nutri'), async (req: Request,
     res.json({ success: true, data: rows });
   } catch (err: any) {
     logger.error({ err }, '[nutri] list direct-invites error');
-    res.status(500).json({ success: false, error: err.message || 'Failed to list invites' });
+    res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
@@ -405,7 +406,7 @@ router.delete('/direct-invites/:id', roleCheckMiddleware('nutri'), async (req: R
     res.json({ success: true });
   } catch (err: any) {
     logger.error({ err }, '[nutri] revoke direct-invite error');
-    res.status(500).json({ success: false, error: err.message || 'Failed to revoke invite' });
+    res.status(500).json({ success: false, error: 'internal_error' });
   }
 });
 
@@ -486,7 +487,7 @@ router.post(
       res.status(201).json({ success: true, data: plan });
     } catch (err: any) {
       logger.error({ err }, '[nutri] create plan error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -569,7 +570,7 @@ router.patch(
       res.json({ success: true, data: plan });
     } catch (err: any) {
       logger.error({ err }, '[nutri] update plan error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -594,7 +595,7 @@ router.delete(
       res.json({ success: true, data: plan });
     } catch (err: any) {
       logger.error({ err }, '[nutri] end plan error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -620,7 +621,7 @@ router.get(
       res.json({ success: true, data });
     } catch (err: any) {
       logger.error({ err }, '[nutri] get meal heatmap error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -651,7 +652,7 @@ router.get(
       res.json({ success: true, data: { plan: { id: plan.id, title: plan.title }, checkins } });
     } catch (err: any) {
       logger.error({ err }, '[nutri] get adherence error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -675,7 +676,7 @@ router.get(
       res.json({ success: true, data: context });
     } catch (err: any) {
       logger.error({ err }, '[nutri] get context error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -708,7 +709,7 @@ router.post(
       res.status(201).json({ success: true, data: obs });
     } catch (err: any) {
       logger.error({ err }, '[nutri] create observation error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -730,7 +731,7 @@ router.get(
       res.json({ success: true, data: result.rows, meta: { total: result.total, limit, offset } });
     } catch (err: any) {
       logger.error({ err }, '[nutri] list observations error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );
@@ -769,7 +770,11 @@ router.post(
       res.status(201).json({ success: true, data: note });
     } catch (err: any) {
       logger.error({ err }, '[nutri] publish voice note error');
-      res.status(err.status ?? 500).json({ success: false, error: err.message });
+      // SPEC 036: `err.status` presente = erro CONTROLADO (`body_required`,
+      // `anchor_meal_not_found`) — a mensagem é segura e intencional para o
+      // cliente. Sem `status`, é uma falha inesperada (500): redige.
+      const status = err.status ?? 500;
+      res.status(status).json({ success: false, error: status < 500 ? err.message : 'internal_error' });
     }
   }
 );
@@ -787,7 +792,7 @@ router.get(
       res.json({ success: true, data: notes });
     } catch (err: any) {
       logger.error({ err }, '[nutri] list voice notes error');
-      res.status(500).json({ success: false, error: err.message });
+      res.status(500).json({ success: false, error: 'internal_error' });
     }
   }
 );

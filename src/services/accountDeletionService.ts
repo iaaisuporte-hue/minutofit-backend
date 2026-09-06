@@ -101,6 +101,18 @@ export async function deleteUserAccount(
       [userId],
     );
 
+    // Alimentos customizados do nutri (SPEC 038, P3A). Mesmo desenho e MESMA
+    // lição do bug de 02/ago acima: `owner_nutri_id` é ON DELETE SET NULL
+    // (migration 1840000000000), e sozinho isso vazaria nome/marca/notas de
+    // um alimento privado como "sem dono" — que a busca de custom food trata
+    // como inexistente hoje, mas arquivar ANTES garante que a linha nunca
+    // fica em estado ambíguo, igual `exercises`.
+    await client.query(
+      `UPDATE nutrition_custom_foods SET status = 'archived', updated_at = NOW()
+        WHERE owner_nutri_id = $1 AND status = 'active'`,
+      [userId],
+    );
+
     // Fotos de progresso (LGPD art. 11): CASCADE apaga as LINHAS, não os binários.
     const photoRes = await client.query<{ storage_key: string }>(
       `SELECT storage_key FROM progress_photos WHERE user_id = $1`,

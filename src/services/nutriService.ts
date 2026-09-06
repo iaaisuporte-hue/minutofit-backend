@@ -11,6 +11,14 @@ import {
   computeStreak as computeCanonicalStreak,
   buildCanonicalAdherenceBlock,
 } from './nutriAdherence';
+import {
+  getCatalogFoodById,
+  listCatalogFoodMeasures,
+  getOwnedCustomFoodNutrients,
+  listCustomFoodMeasures,
+  ValidationError as FoodValidationError,
+} from './nutritionFoodService';
+import { resolveGrams, calculateNutrition, sumNutrients, type CalculatedNutrients } from './nutritionCalculation';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -28,6 +36,19 @@ export type Adherence = 'full' | 'partial' | 'skipped';
 export type MealCheckinStatus = 'done' | 'partial' | 'skipped' | 'substituted' | 'delayed';
 
 export type MealStatus = 'upcoming' | 'due_now' | 'done' | 'partial' | 'skipped' | 'substituted' | 'delayed' | 'missed_window' | 'no_time';
+
+export interface MealItemInput {
+  /** Presente → UPDATE/soft-delete por reconciliação; ausente → item novo (SPEC 038 / P3A). */
+  id?: number;
+  foodId?: number;
+  customFoodId?: number;
+  quantity: number;
+  unitType: 'grams' | 'measure';
+  measureId?: number;
+  customMeasureId?: number;
+  orderIndex?: number;
+  notes?: string | null;
+}
 
 export interface MealInput {
   /**
@@ -50,6 +71,8 @@ export interface MealInput {
   hydration_note?: string | null;
   supplement_note?: string | null;
   alternatives?: Array<{ id?: number; description: string; order_index: number }>;
+  /** SPEC 038 (P3A) — itens estruturados, aditivos a `orientation`. Refeição pode não ter nenhum. */
+  items?: MealItemInput[];
 }
 
 export interface CreatePlanInput {
@@ -123,6 +146,9 @@ export async function createPlan(
             );
           }
         }
+        if (Array.isArray(m.items) && m.items.length > 0) {
+          await reconcileMealItems(client, nutriId, mealId, m.items);
+        }
       }
     }
 
@@ -170,7 +196,8 @@ export async function getActivePlan(nutriId: number, patientId: number) {
      ORDER BY npm.order_index, npm.id`,
     [plan.id]
   );
-  return { ...plan, meals: mealsResult.rows };
+  const meals = await attachMealItemsAndTotals(mealsResult.rows);
+  return { ...plan, meals, dayTotals: sumNutrients(meals.map((m) => m.totals)) };
 }
 
 export async function getPlanHistory(nutriId: number, patientId: number) {
@@ -256,6 +283,227 @@ async function reconcileMealAlternatives(
 }
 
 /**
+ * SPEC 038 (P3A) — resolve UM item de refeição contra a composição OFICIAL
+ * (catálogo TACO ou alimento customizado do próprio nutri) e calcula os
+ * nutrientes. Nunca aceita kcal/macro vindos do cliente: o corpo da
+ * requisição só informa `foodId`/`customFoodId` + quantidade/unidade.
+ * `getOwnedCustomFoodNutrients` já barra IDOR (nutri B referenciando
+ * alimento de nutri A) lançando `ForbiddenError`.
+ */
+async function resolveMealItem(nutriId: number, item: MealItemInput): Promise<{
+  foodId: number | null;
+  customFoodId: number | null;
+  measureId: number | null;
+  customMeasureId: number | null;
+  grams: number;
+  foodName: string;
+  nutrients: CalculatedNutrients;
+}> {
+  const hasFood = item.foodId != null;
+  const hasCustom = item.customFoodId != null;
+  if (hasFood === hasCustom) throw new FoodValidationError('item_must_reference_exactly_one_food');
+
+  let foodName: string;
+  let per100g: { energyKcal: number; proteinG: number; carbohydrateG: number; fatG: number; fiberG: number | null; sodiumMg: number | null };
+  let measureGrams: number | null = null;
+
+  if (hasFood) {
+    const food = await getCatalogFoodById(item.foodId as number);
+    if (!food) throw new FoodValidationError('food_not_found');
+    foodName = food.name;
+    per100g = food;
+    if (item.unitType === 'measure') {
+      if (item.measureId == null) throw new FoodValidationError('measure_id_required');
+      const measures = await listCatalogFoodMeasures(item.foodId as number);
+      const measure = measures.find((m) => m.id === item.measureId);
+      if (!measure) throw new FoodValidationError('measure_not_found');
+      measureGrams = measure.grams;
+    }
+  } else {
+    const custom = await getOwnedCustomFoodNutrients(nutriId, item.customFoodId as number);
+    foodName = custom.name;
+    per100g = { ...custom, fiberG: custom.fiberG ?? null, sodiumMg: custom.sodiumMg ?? null };
+    if (item.unitType === 'measure') {
+      if (item.customMeasureId == null) throw new FoodValidationError('measure_id_required');
+      const measures = await listCustomFoodMeasures(item.customFoodId as number);
+      const measure = measures.find((m) => m.id === item.customMeasureId);
+      if (!measure) throw new FoodValidationError('measure_not_found');
+      measureGrams = measure.grams;
+    }
+  }
+
+  const grams = resolveGrams(item.quantity, item.unitType, measureGrams);
+  const nutrients = calculateNutrition(per100g, grams);
+
+  return {
+    foodId: hasFood ? (item.foodId as number) : null,
+    customFoodId: hasCustom ? (item.customFoodId as number) : null,
+    measureId: hasFood ? (item.measureId ?? null) : null,
+    customMeasureId: hasCustom ? (item.customMeasureId ?? null) : null,
+    grams,
+    foodName,
+    nutrients,
+  };
+}
+
+/**
+ * Reconcilia os itens estruturados de UMA refeição (SPEC 038 / P3A) — mesmo
+ * padrão de `reconcileMealAlternatives`: item sem `id` é inserido, ausente
+ * do payload é soft-deletado (nunca hard-delete — preserva o histórico do
+ * que foi prescrito, mesmo que a refeição seja editada depois).
+ *
+ * Item com `id` presente só é RECALCULADO se a REFERÊNCIA mudou de verdade
+ * (alimento, quantidade ou medida diferentes do que já estava salvo).
+ * Reenviar o mesmo item inalterado (ex.: nutri só editou outro item da
+ * mesma refeição, ou só a orientação) NÃO pode tocar o snapshot — repetir
+ * aqui o item com `id` sempre recalculando quebraria a própria regra de
+ * histórico da SPEC 038 (§18-19): salvar de novo uma refeição, sem mexer
+ * num item específico, já bastaria para ele herdar silenciosamente o
+ * catálogo atual em vez do que foi de fato prescrito.
+ */
+async function reconcileMealItems(
+  client: PoolClient,
+  nutriId: number,
+  mealId: number,
+  items: MealItemInput[] | undefined,
+): Promise<void> {
+  const incoming = Array.isArray(items) ? items : [];
+  const existingRes = await client.query(
+    `SELECT id, food_id, custom_food_id, quantity, unit_type, measure_id, custom_measure_id
+       FROM nutrition_meal_items WHERE meal_id = $1 AND deleted_at IS NULL`,
+    [mealId],
+  );
+  const existingById = new Map<number, any>(existingRes.rows.map((r) => [r.id, r]));
+  const incomingIds = new Set(incoming.filter((i) => i.id != null).map((i) => i.id as number));
+
+  for (const existingId of existingById.keys()) {
+    if (incomingIds.has(existingId)) continue;
+    await client.query(
+      `UPDATE nutrition_meal_items SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [existingId],
+    );
+  }
+
+  for (const item of incoming) {
+    const existing = item.id != null ? existingById.get(item.id) : undefined;
+
+    if (existing) {
+      const referenceUnchanged =
+        (existing.food_id ?? null) === (item.foodId ?? null) &&
+        (existing.custom_food_id ?? null) === (item.customFoodId ?? null) &&
+        Number(existing.quantity) === item.quantity &&
+        existing.unit_type === item.unitType &&
+        (existing.measure_id ?? null) === (item.measureId ?? null) &&
+        (existing.custom_measure_id ?? null) === (item.customMeasureId ?? null);
+
+      if (referenceUnchanged) {
+        // Só metadado (ordem/observação) pode mudar — snapshot intocado.
+        await client.query(
+          `UPDATE nutrition_meal_items SET order_index = $2, notes = $3, updated_at = NOW() WHERE id = $1`,
+          [item.id, item.orderIndex ?? 0, item.notes?.trim().slice(0, 200) || null],
+        );
+        continue;
+      }
+    }
+
+    const resolved = await resolveMealItem(nutriId, item);
+    if (existing) {
+      await client.query(
+        `UPDATE nutrition_meal_items SET
+           food_id = $2, custom_food_id = $3, quantity = $4, unit_type = $5,
+           measure_id = $6, custom_measure_id = $7, grams = $8, order_index = $9, notes = $10,
+           food_name_snapshot = $11, energy_kcal_snapshot = $12, protein_g_snapshot = $13,
+           carbohydrate_g_snapshot = $14, fat_g_snapshot = $15, fiber_g_snapshot = $16,
+           sodium_mg_snapshot = $17, updated_at = NOW()
+         WHERE id = $1`,
+        [
+          item.id, resolved.foodId, resolved.customFoodId, item.quantity, item.unitType,
+          resolved.measureId, resolved.customMeasureId, resolved.grams, item.orderIndex ?? 0,
+          item.notes?.trim().slice(0, 200) || null,
+          resolved.foodName, resolved.nutrients.energyKcal, resolved.nutrients.proteinG,
+          resolved.nutrients.carbohydrateG, resolved.nutrients.fatG, resolved.nutrients.fiberG,
+          resolved.nutrients.sodiumMg,
+        ],
+      );
+    } else {
+      await client.query(
+        `INSERT INTO nutrition_meal_items
+           (meal_id, food_id, custom_food_id, quantity, unit_type, measure_id, custom_measure_id,
+            grams, order_index, notes, food_name_snapshot, energy_kcal_snapshot, protein_g_snapshot,
+            carbohydrate_g_snapshot, fat_g_snapshot, fiber_g_snapshot, sodium_mg_snapshot)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+        [
+          mealId, resolved.foodId, resolved.customFoodId, item.quantity, item.unitType,
+          resolved.measureId, resolved.customMeasureId, resolved.grams, item.orderIndex ?? 0,
+          item.notes?.trim().slice(0, 200) || null,
+          resolved.foodName, resolved.nutrients.energyKcal, resolved.nutrients.proteinG,
+          resolved.nutrients.carbohydrateG, resolved.nutrients.fatG, resolved.nutrients.fiberG,
+          resolved.nutrients.sodiumMg,
+        ],
+      );
+    }
+  }
+}
+
+/**
+ * SPEC 038 (P3A) — anexa itens + totais (refeição e dia) a uma lista de
+ * refeições já carregadas. Totais são SEMPRE derivados na leitura, nunca
+ * uma coluna própria — reflete instantaneamente qualquer edição de item.
+ */
+async function attachMealItemsAndTotals<T extends { id: number }>(
+  meals: T[],
+): Promise<Array<T & { items: unknown[]; totals: ReturnType<typeof sumNutrients> }>> {
+  if (meals.length === 0) return [];
+  const mealIds = meals.map((m) => m.id);
+  const { rows } = await pool.query(
+    `SELECT id, meal_id, food_id, custom_food_id, quantity, unit_type, measure_id, custom_measure_id,
+            grams, order_index, notes, food_name_snapshot, energy_kcal_snapshot, protein_g_snapshot,
+            carbohydrate_g_snapshot, fat_g_snapshot, fiber_g_snapshot, sodium_mg_snapshot
+       FROM nutrition_meal_items
+      WHERE meal_id = ANY($1) AND deleted_at IS NULL
+      ORDER BY order_index, id`,
+    [mealIds],
+  );
+
+  const itemsByMeal = new Map<number, any[]>();
+  const calcByMeal = new Map<number, CalculatedNutrients[]>();
+  for (const r of rows) {
+    const item = {
+      id: r.id,
+      foodId: r.food_id,
+      customFoodId: r.custom_food_id,
+      quantity: Number(r.quantity),
+      unitType: r.unit_type,
+      measureId: r.measure_id,
+      customMeasureId: r.custom_measure_id,
+      grams: Number(r.grams),
+      orderIndex: r.order_index,
+      notes: r.notes,
+      foodName: r.food_name_snapshot,
+      energyKcal: Number(r.energy_kcal_snapshot),
+      proteinG: Number(r.protein_g_snapshot),
+      carbohydrateG: Number(r.carbohydrate_g_snapshot),
+      fatG: Number(r.fat_g_snapshot),
+      fiberG: r.fiber_g_snapshot == null ? null : Number(r.fiber_g_snapshot),
+      sodiumMg: r.sodium_mg_snapshot == null ? null : Number(r.sodium_mg_snapshot),
+    };
+    if (!itemsByMeal.has(r.meal_id)) itemsByMeal.set(r.meal_id, []);
+    itemsByMeal.get(r.meal_id)!.push(item);
+    if (!calcByMeal.has(r.meal_id)) calcByMeal.set(r.meal_id, []);
+    calcByMeal.get(r.meal_id)!.push({
+      energyKcal: item.energyKcal, proteinG: item.proteinG, carbohydrateG: item.carbohydrateG,
+      fatG: item.fatG, fiberG: item.fiberG, sodiumMg: item.sodiumMg,
+    });
+  }
+
+  return meals.map((m) => ({
+    ...m,
+    items: itemsByMeal.get(m.id) ?? [],
+    totals: sumNutrients(calcByMeal.get(m.id) ?? []),
+  }));
+}
+
+/**
  * Reconcilia as refeições do plano contra o payload da nutri (SPEC 035 /
  * P1A.1 — a correção do BLOCKER NUTRI-01).
  *
@@ -273,6 +521,7 @@ async function reconcileMealAlternatives(
  */
 async function reconcileMeals(
   client: PoolClient,
+  nutriId: number,
   planId: number,
   meals: MealInput[]
 ): Promise<void> {
@@ -352,6 +601,7 @@ async function reconcileMeals(
       mealId = inserted.rows[0].id;
     }
     await reconcileMealAlternatives(client, mealId, meal.alternatives);
+    await reconcileMealItems(client, nutriId, mealId, meal.items);
   }
 }
 
@@ -393,7 +643,7 @@ export async function updatePlan(
     }
 
     if (meals !== undefined) {
-      await reconcileMeals(client, planId, meals);
+      await reconcileMeals(client, nutriId, planId, meals);
     }
 
     await client.query('COMMIT');
@@ -417,7 +667,8 @@ export async function updatePlan(
        ORDER BY npm.order_index, npm.id`,
       [planId]
     );
-    return { ...updated.rows[0], meals: mealsResult.rows };
+    const mealsWithItems = await attachMealItemsAndTotals(mealsResult.rows);
+    return { ...updated.rows[0], meals: mealsWithItems, dayTotals: sumNutrients(mealsWithItems.map((m) => m.totals)) };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -1209,9 +1460,11 @@ export async function getUserActivePlan(userId: number) {
     [userId, plan.id, today]
   );
 
+  const meals = await attachMealItemsAndTotals(mealsResult.rows);
   return {
     ...plan,
-    meals: mealsResult.rows,
+    meals,
+    dayTotals: sumNutrients(meals.map((m) => m.totals)),
     todayCheckin: checkinResult.rows[0] ?? null,
   };
 }

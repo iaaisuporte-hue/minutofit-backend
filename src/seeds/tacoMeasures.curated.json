@@ -1,0 +1,86 @@
+[
+  {
+    "foodSourceId": "3",
+    "foodName": "Arroz, tipo 1, cozido",
+    "name": "colher de sopa cheia",
+    "grams": 25
+  },
+  {
+    "foodSourceId": "3",
+    "foodName": "Arroz, tipo 1, cozido",
+    "name": "concha média",
+    "grams": 90
+  },
+  {
+    "foodSourceId": "561",
+    "foodName": "Feijão, carioca, cozido",
+    "name": "concha média",
+    "grams": 80
+  },
+  {
+    "foodSourceId": "561",
+    "foodName": "Feijão, carioca, cozido",
+    "name": "colher de sopa cheia",
+    "grams": 40
+  },
+  {
+    "foodSourceId": "567",
+    "foodName": "Feijão, preto, cozido",
+    "name": "concha média",
+    "grams": 80
+  },
+  {
+    "foodSourceId": "567",
+    "foodName": "Feijão, preto, cozido",
+    "name": "colher de sopa cheia",
+    "grams": 40
+  },
+  {
+    "foodSourceId": "410",
+    "foodName": "Frango, peito, sem pele, grelhado",
+    "name": "filé médio",
+    "grams": 100
+  },
+  {
+    "foodSourceId": "410",
+    "foodName": "Frango, peito, sem pele, grelhado",
+    "name": "unidade pequena",
+    "grams": 120
+  },
+  {
+    "foodSourceId": "488",
+    "foodName": "Ovo, de galinha, inteiro, cozido",
+    "name": "unidade",
+    "grams": 50
+  },
+  {
+    "foodSourceId": "492",
+    "foodName": "Açúcar, cristal",
+    "name": "colher de sopa",
+    "grams": 12
+  },
+  {
+    "foodSourceId": "492",
+    "foodName": "Açúcar, cristal",
+    "name": "colher de chá",
+    "grams": 4
+  },
+  {
+    "foodSourceId": "182",
+    "foodName": "Banana, prata, crua",
+    "name": "unidade média",
+    "grams": 70
+  },
+  {
+    "foodSourceId": "91",
+    "foodName": "Batata, inglesa, cozida",
+    "name": "unidade média",
+    "grams": 100
+  },
+  {
+    "foodSourceId": "461",
+    "foodName": "Queijo, minas, frescal",
+    "name": "fatia média",
+    "grams": 30
+  }
+]

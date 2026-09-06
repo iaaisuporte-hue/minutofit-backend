@@ -40,10 +40,44 @@ import {
   suggestSubstitutions,
   ValidationError,
 } from '../services/dietaryProfileService';
+import {
+  searchCatalogFoods,
+  getCatalogFoodById,
+  listCatalogFoodMeasures,
+  listCustomFoods,
+  createCustomFood,
+  updateCustomFood,
+  archiveCustomFood,
+  listCustomFoodMeasures,
+  addCustomFoodMeasure,
+  ValidationError as FoodValidationError,
+  ForbiddenError as FoodForbiddenError,
+} from '../services/nutritionFoodService';
 import { registerNumericParams } from '../middleware/numericParam';
 
 const router = Router();
 registerNumericParams(router, ['patientId', 'planId', 'itemId', 'id']);
+
+/**
+ * SPEC 038 (P3A) — validação de FORMA (não de composição — isso é
+ * `resolveMealItem`, no service). Rejeita cedo um payload estruturalmente
+ * inválido antes de abrir transação.
+ */
+function validateMealItemsShape(items: unknown): string | null {
+  if (items === undefined) return null;
+  if (!Array.isArray(items)) return 'items must be an array';
+  for (const it of items) {
+    const hasFood = it?.foodId != null;
+    const hasCustom = it?.customFoodId != null;
+    if (hasFood === hasCustom) return 'each item must reference exactly one of foodId/customFoodId';
+    if (typeof it.quantity !== 'number' || it.quantity <= 0) return 'item quantity must be a positive number';
+    if (it.unitType !== 'grams' && it.unitType !== 'measure') return 'item unitType must be grams or measure';
+    if (it.unitType === 'measure' && it.measureId == null && it.customMeasureId == null) {
+      return 'item with unitType measure requires measureId or customMeasureId';
+    }
+  }
+  return null;
+}
 
 const INVITE_EXPIRY_DAYS = 14;
 
@@ -435,6 +469,125 @@ router.get('/patients', roleCheckMiddleware('nutri'), async (req: Request, res: 
 });
 
 // ===========================================================================
+// Foods — catálogo (TACO) + alimentos customizados do nutri (SPEC 038, P3A)
+// ===========================================================================
+
+router.get('/foods', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const limit = Number(req.query.limit) || 20;
+    const foods = await searchCatalogFoods(q, limit);
+    res.json({ success: true, data: foods });
+  } catch (err: any) {
+    logger.error({ err }, '[nutri] search foods error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.get('/foods/:id', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    const food = await getCatalogFoodById(id);
+    if (!food) return res.status(404).json({ success: false, error: 'not_found' });
+    res.json({ success: true, data: food });
+  } catch (err: any) {
+    logger.error({ err }, '[nutri] get food error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.get('/foods/:id/measures', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    const measures = await listCatalogFoodMeasures(id);
+    res.json({ success: true, data: measures });
+  } catch (err: any) {
+    logger.error({ err }, '[nutri] list food measures error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.get('/custom-foods', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const foods = await listCustomFoods(req.user!.id);
+    res.json({ success: true, data: foods });
+  } catch (err: any) {
+    logger.error({ err }, '[nutri] list custom foods error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.post('/custom-foods', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const food = await createCustomFood(req.user!.id, req.body);
+    res.status(201).json({ success: true, data: food });
+  } catch (err: any) {
+    if (err instanceof FoodValidationError) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    logger.error({ err }, '[nutri] create custom food error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.patch('/custom-foods/:id', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    const food = await updateCustomFood(req.user!.id, id, req.body);
+    res.json({ success: true, data: food });
+  } catch (err: any) {
+    if (err instanceof FoodForbiddenError) return res.status(403).json({ success: false, error: err.message });
+    if (err instanceof FoodValidationError) return res.status(400).json({ success: false, error: err.message });
+    logger.error({ err }, '[nutri] update custom food error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.delete('/custom-foods/:id', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    await archiveCustomFood(req.user!.id, id);
+    res.json({ success: true });
+  } catch (err: any) {
+    if (err instanceof FoodForbiddenError) return res.status(403).json({ success: false, error: err.message });
+    if (err instanceof FoodValidationError) return res.status(404).json({ success: false, error: err.message });
+    logger.error({ err }, '[nutri] archive custom food error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.get('/custom-foods/:id/measures', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    const measures = await listCustomFoodMeasures(id);
+    res.json({ success: true, data: measures });
+  } catch (err: any) {
+    logger.error({ err }, '[nutri] list custom food measures error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+router.post('/custom-foods/:id/measures', roleCheckMiddleware('nutri'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'invalid_id' });
+    const { name, grams } = req.body;
+    const measure = await addCustomFoodMeasure(req.user!.id, id, name, Number(grams));
+    res.status(201).json({ success: true, data: measure });
+  } catch (err: any) {
+    if (err instanceof FoodForbiddenError) return res.status(403).json({ success: false, error: err.message });
+    if (err instanceof FoodValidationError) return res.status(400).json({ success: false, error: err.message });
+    logger.error({ err }, '[nutri] add custom food measure error');
+    res.status(500).json({ success: false, error: 'internal_error' });
+  }
+});
+
+// ===========================================================================
 // Nutrition Plans — /patients/:patientId/nutrition-plans
 // (profile consent already enforced at router level; nutrition consent here)
 // ===========================================================================
@@ -479,6 +632,8 @@ router.post(
         if (m.workout_relation && !validRelations.includes(m.workout_relation)) {
           return res.status(400).json({ success: false, error: `Invalid workout_relation: ${m.workout_relation}` });
         }
+        const itemsError = validateMealItemsShape(m.items);
+        if (itemsError) return res.status(400).json({ success: false, error: itemsError });
       }
 
       const plan = await createPlan(nutriId, patientId, academyId, {
@@ -486,6 +641,8 @@ router.post(
       });
       res.status(201).json({ success: true, data: plan });
     } catch (err: any) {
+      if (err instanceof FoodForbiddenError) return res.status(403).json({ success: false, error: err.message });
+      if (err instanceof FoodValidationError) return res.status(400).json({ success: false, error: err.message });
       logger.error({ err }, '[nutri] create plan error');
       res.status(500).json({ success: false, error: 'internal_error' });
     }
@@ -560,6 +717,8 @@ router.patch(
           if (m.workout_relation && !validRelations.includes(m.workout_relation)) {
             return res.status(400).json({ success: false, error: `Invalid workout_relation: ${m.workout_relation}` });
           }
+          const itemsError = validateMealItemsShape(m.items);
+          if (itemsError) return res.status(400).json({ success: false, error: itemsError });
         }
       }
 
@@ -569,6 +728,8 @@ router.patch(
       }
       res.json({ success: true, data: plan });
     } catch (err: any) {
+      if (err instanceof FoodForbiddenError) return res.status(403).json({ success: false, error: err.message });
+      if (err instanceof FoodValidationError) return res.status(400).json({ success: false, error: err.message });
       logger.error({ err }, '[nutri] update plan error');
       res.status(500).json({ success: false, error: 'internal_error' });
     }

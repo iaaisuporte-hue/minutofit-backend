@@ -44,6 +44,7 @@ import { ensureExercisesSchema } from './ensureExercisesSchema';
 import { seedExercisesIfEmpty } from './seedExercisesIfEmpty';
 import { ensureProductsSchema } from './ensureProductsSchema';
 import { backfillUserProducts } from './backfillUserProducts';
+import { seedNutritionFoodsIfEmpty } from './seedNutritionFoodsIfEmpty';
 import { runMigrations } from './runMigrations';
 
 /**
@@ -148,6 +149,7 @@ function buildSchemaSteps(): Array<[string, () => Promise<unknown>]> {
     ['seedExercisesIfEmpty', seedExercisesIfEmpty],
     ['ensureProductsSchema', ensureProductsSchema],
     ['backfillUserProducts', backfillUserProducts],
+    ['seedNutritionFoodsIfEmpty', seedNutritionFoodsIfEmpty],
   ];
 
   return steps;

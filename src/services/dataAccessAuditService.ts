@@ -51,6 +51,9 @@ export type DataAccessEventType =
   | 'nutri.plan.read'
   | 'nutri.patients_list.read'
   | 'nutri.voice_notes.read'
+  // SPEC 038 — alimento customizado do nutri (P3A)
+  | 'nutri.custom_food.created'
+  | 'nutri.custom_food.archived'
   | 'progress_photos.read'
   | 'parq.signed'
   | 'parq.medical_release_declared'
@@ -183,6 +186,11 @@ export type DataAccessEventType =
   | 'personal_plan_review_started'
   | 'personal_plan_review_cancelled'
   | 'personal_plan_updated_from_insight'
+  // Denúncia de conversa no chat, emitida pelo aluno OU pelo personal. Requisito
+  // de compliance de loja (guideline 1.2 da Apple): app com mensagem entre
+  // pessoas precisa de um caminho de report. Sem tabela nova — a trilha de
+  // auditoria já é o registro.
+  | 'chat.conversation_reported'
   | 'identity.user_created'
   | 'identity.user_reused';
 

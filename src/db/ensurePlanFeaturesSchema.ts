@@ -21,6 +21,7 @@ const featureCatalog = [
   ['challenges', 'Desafios', 'Participar de desafio criado pelo personal (Spec 034 C2). Liberada no Free por decisao de produto: cobrar do aluno para participar de um desafio que o personal dele criou quebraria o compromisso assumido com a turma.'],
   ['free_workout', 'Treino Livre', 'Aluno monta treino ad-hoc e executa com a engine de series. Kill-switch; liberada no Free.'],
   ['readiness', 'Prontidao (S2CORE Readiness)', 'Motor de prontidao diaria: score, motivos, confianca e recomendacao de intensidade (SPEC P3). NAO liberada por padrao — rollout gradual exigido pela SPEC §74/§75.'],
+  ['voice_workout', 'Voice Workout', 'Registrar series por comando de voz durante o treino (P5A, MVP push-to-talk). Kill-switch de UI; liberada no Free durante o beta — custo variavel por comando e proximo de zero (parser determinístico, TTS/STT nativos, sem wake word nesta fase).'],
 ] as const;
 
 /**
@@ -48,7 +49,7 @@ const featureCatalog = [
  * própria SPEC — e um motor de decisão fisiológica é a última coisa que se
  * solta sem observar comportamento antes.
  */
-const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges', 'free_workout'];
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges', 'free_workout', 'voice_workout'];
 
 const PRO_PRODUCT_FEATURES: string[] = [
   'today',
@@ -67,6 +68,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
   'retro_workout_enabled',
   'challenges',
   'free_workout',
+  'voice_workout',
 ];
 
 /**

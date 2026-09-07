@@ -137,6 +137,18 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'personal_plan_review_started',
   'personal_plan_review_cancelled',
   'personal_plan_updated_from_insight',
+  // Denúncia de conversa no chat (compliance de loja). Chega pelos dois papéis:
+  // o personal também autentica aqui, como nos demais eventos `personal_*`.
+  'chat.conversation_reported',
+  // Voice Workout (P5A) — só metadados de uso do loop, nunca transcript/carga/
+  // reps/nome de exercício.
+  'voice.activated',
+  'voice.deactivated',
+  'voice.listen_started',
+  'voice.stt_success',
+  'voice.stt_failure',
+  'voice.command_success',
+  'voice.command_failure',
 ]);
 
 router.post('/events', authMiddleware, (req: Request, res: Response) => {

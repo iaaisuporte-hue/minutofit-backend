@@ -191,6 +191,16 @@ export type DataAccessEventType =
   // pessoas precisa de um caminho de report. Sem tabela nova — a trilha de
   // auditoria já é o registro.
   | 'chat.conversation_reported'
+  // Voice Workout (P5A). Só metadados de uso do loop (ativou/ouviu/reconheceu/
+  // executou) — nunca transcript, carga, reps, nome de exercício ou observação
+  // (pacto de dados, ver `voiceEvents.ts` no frontend).
+  | 'voice.activated'
+  | 'voice.deactivated'
+  | 'voice.listen_started'
+  | 'voice.stt_success'
+  | 'voice.stt_failure'
+  | 'voice.command_success'
+  | 'voice.command_failure'
   | 'identity.user_created'
   | 'identity.user_reused';
 

@@ -201,6 +201,12 @@ export type DataAccessEventType =
   | 'voice.stt_failure'
   | 'voice.command_success'
   | 'voice.command_failure'
+  // P5B — máquina de confirmação, desfazer e substituição por voz.
+  | 'voice.confirmation_requested'
+  | 'voice.confirmation_accepted'
+  | 'voice.confirmation_rejected'
+  | 'voice.undo_used'
+  | 'voice.substitution_requested'
   | 'identity.user_created'
   | 'identity.user_reused';
 

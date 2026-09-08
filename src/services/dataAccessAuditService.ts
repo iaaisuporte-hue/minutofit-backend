@@ -207,8 +207,9 @@ export type DataAccessEventType =
   | 'voice.confirmation_rejected'
   | 'voice.undo_used'
   | 'voice.substitution_requested'
-  // P5C — spike técnico de wake word (Picovoice/Porcupine, sem fornecedor
-  // definitivo; ver docs/produto/voice_workout_wake_word_decision.md).
+  // P5C — spike aberto de wake word (Picovoice Porcupine × motor ONNX
+  // estilo openWakeWord, sem fornecedor definitivo; ver
+  // docs/produto/voice_workout_wake_word_spike_onnx.md).
   | 'voice.wake_started'
   | 'voice.wake_detected'
   | 'voice.wake_error'

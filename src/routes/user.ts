@@ -29,6 +29,13 @@ import pool from '../config/database';
 import { registerNumericParams } from '../middleware/numericParam';
 import { parseLimit } from '../utils/parseId';
 import { listReviewsForStudent } from '../services/workoutReviewsService';
+import { requireFeature } from '../middleware/featureGate';
+import {
+  estimateNutritionTarget,
+  resolveNutritionTarget,
+  type NutritionObjective,
+  type ActivityLevel,
+} from '../services/nutritionTarget';
 
 const router = Router();
 registerNumericParams(router, ['planId', 'mealId', 'id']);
@@ -75,6 +82,9 @@ const ALLOWED_FRONTEND_EVENTS = new Set<DataAccessEventType>([
   'workout.set_completed',
   'workout.exercise_skipped',
   'workout.exercise_reordered',
+  'workout.repeat_set',
+  'workout.rpe_selected',
+  'workout.rpe_skipped',
   // Execução dinâmica — o aluno troca, desfaz, acrescenta e remove exercício
   // durante a sessão.
   'workout.exercise_substituted',
@@ -278,6 +288,165 @@ router.get('/dietary-profile', authMiddleware, async (req: Request, res: Respons
   } catch (err: any) {
     logger.error({ err: err }, '[user/dietary-profile]');
     res.status(500).json({ success: false, error: 'Failed to load dietary profile' });
+  }
+});
+
+// ===========================================================================
+// Meta diária de macros (PLAN_NUTRITION_QUICK_MACROS, P1A)
+// ===========================================================================
+
+const NUTRITION_OBJECTIVES: NutritionObjective[] = ['weight_loss', 'maintenance', 'muscle_gain'];
+const ACTIVITY_LEVELS: ActivityLevel[] = ['low', 'moderate', 'high'];
+
+function parseTargetInputs(body: any): { objective: NutritionObjective; activity: ActivityLevel; mealsPerDay: number } | null {
+  const objective = body?.objective;
+  const activity = body?.activity;
+  const mealsPerDay = Number(body?.mealsPerDay);
+  if (!NUTRITION_OBJECTIVES.includes(objective)) return null;
+  if (!ACTIVITY_LEVELS.includes(activity)) return null;
+  if (!Number.isInteger(mealsPerDay) || mealsPerDay < 3 || mealsPerDay > 6) return null;
+  return { objective, activity, mealsPerDay };
+}
+
+/** Último peso conhecido (checkin metabólico ≤90 dias, senão o do perfil). Nunca aceita peso do cliente sem alternativa. */
+async function resolveWeightKgForUser(userId: number): Promise<number | null> {
+  const checkin = await pool.query(
+    `SELECT weight_kg FROM user_metabolic_checkins
+     WHERE user_id = $1 AND weight_kg IS NOT NULL AND recorded_at >= NOW() - INTERVAL '90 days'
+     ORDER BY recorded_at DESC LIMIT 1`,
+    [userId]
+  );
+  if (checkin.rows[0]?.weight_kg != null) return Number(checkin.rows[0].weight_kg);
+
+  const profile = await pool.query(`SELECT weight_kg FROM users WHERE id = $1 LIMIT 1`, [userId]);
+  return profile.rows[0]?.weight_kg != null ? Number(profile.rows[0].weight_kg) : null;
+}
+
+router.post('/nutrition-target/estimate', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const inputs = parseTargetInputs(req.body);
+    if (!inputs) {
+      return res.status(400).json({ success: false, error: 'objective, activity e mealsPerDay (3-6) são obrigatórios' });
+    }
+
+    const bodyWeight = Number(req.body?.weightKg);
+    const weightKg = Number.isFinite(bodyWeight) && bodyWeight > 0 ? bodyWeight : await resolveWeightKgForUser(userId);
+    if (!weightKg) {
+      return res.status(400).json({ success: false, error: 'weightKg não informado e nenhum peso encontrado no perfil' });
+    }
+
+    const target = estimateNutritionTarget({ weightKg, ...inputs });
+    res.json({ success: true, data: { ...target, weightKgUsed: weightKg } });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-target/estimate]');
+    res.status(500).json({ success: false, error: 'Failed to estimate nutrition target' });
+  }
+});
+
+router.get('/nutrition-target', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const [plan, selfRow] = await Promise.all([
+      getUserActivePlan(userId),
+      pool.query(
+        `SELECT energy_kcal, protein_g, carbohydrate_g, fat_g, meals_per_day, inputs
+         FROM user_nutrition_targets WHERE user_id = $1 LIMIT 1`,
+        [userId]
+      ),
+    ]);
+
+    const selfTarget = selfRow.rows[0]
+      ? {
+          energyKcal: Number(selfRow.rows[0].energy_kcal),
+          proteinG: Number(selfRow.rows[0].protein_g),
+          carbohydrateG: Number(selfRow.rows[0].carbohydrate_g),
+          fatG: Number(selfRow.rows[0].fat_g),
+          mealsPerDay: Number(selfRow.rows[0].meals_per_day),
+        }
+      : null;
+
+    const resolved = resolveNutritionTarget({
+      planDayTotals: plan?.dayTotals ?? null,
+      planMealsCount: plan?.meals?.length ?? null,
+      selfTarget,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        target: resolved,
+        selfEstimateInputs: selfRow.rows[0]?.inputs ?? null,
+        nutriName: resolved?.source === 'plan_items' ? plan?.nutri_name ?? null : null,
+      },
+    });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-target GET]');
+    res.status(500).json({ success: false, error: 'Failed to load nutrition target' });
+  }
+});
+
+router.put('/nutrition-target', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const inputs = parseTargetInputs(req.body);
+    if (!inputs) {
+      return res.status(400).json({ success: false, error: 'objective, activity e mealsPerDay (3-6) são obrigatórios' });
+    }
+
+    const bodyWeight = Number(req.body?.weightKg);
+    const weightKg = Number.isFinite(bodyWeight) && bodyWeight > 0 ? bodyWeight : await resolveWeightKgForUser(userId);
+    if (!weightKg) {
+      return res.status(400).json({ success: false, error: 'weightKg não informado e nenhum peso encontrado no perfil' });
+    }
+
+    // Backend recalcula do zero a partir dos inputs — nunca aceita kcal/macro enviado pelo cliente.
+    const target = estimateNutritionTarget({ weightKg, ...inputs });
+
+    const upserted = await pool.query(
+      `INSERT INTO user_nutrition_targets (user_id, source, energy_kcal, protein_g, carbohydrate_g, fat_g, meals_per_day, formula_version, inputs)
+       VALUES ($1, 'self_estimate', $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (user_id) DO UPDATE SET
+         source = 'self_estimate',
+         energy_kcal = EXCLUDED.energy_kcal,
+         protein_g = EXCLUDED.protein_g,
+         carbohydrate_g = EXCLUDED.carbohydrate_g,
+         fat_g = EXCLUDED.fat_g,
+         meals_per_day = EXCLUDED.meals_per_day,
+         formula_version = EXCLUDED.formula_version,
+         inputs = EXCLUDED.inputs,
+         updated_at = NOW()
+       RETURNING energy_kcal, protein_g, carbohydrate_g, fat_g, meals_per_day`,
+      [
+        userId,
+        target.energyKcal,
+        target.proteinG,
+        target.carbohydrateG,
+        target.fatG,
+        target.mealsPerDay,
+        target.formulaVersion,
+        JSON.stringify({ weightKg, objective: inputs.objective, activity: inputs.activity }),
+      ]
+    );
+
+    const plan = await getUserActivePlan(userId);
+    const row = upserted.rows[0];
+    const resolved = resolveNutritionTarget({
+      planDayTotals: plan?.dayTotals ?? null,
+      planMealsCount: plan?.meals?.length ?? null,
+      selfTarget: {
+        energyKcal: Number(row.energy_kcal),
+        proteinG: Number(row.protein_g),
+        carbohydrateG: Number(row.carbohydrate_g),
+        fatG: Number(row.fat_g),
+        mealsPerDay: Number(row.meals_per_day),
+      },
+    });
+
+    res.json({ success: true, data: { target: resolved } });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-target PUT]');
+    res.status(500).json({ success: false, error: 'Failed to save nutrition target' });
   }
 });
 

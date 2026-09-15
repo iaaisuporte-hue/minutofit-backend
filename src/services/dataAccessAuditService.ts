@@ -113,6 +113,10 @@ export type DataAccessEventType =
   | 'workout.set_completed'
   | 'workout.exercise_skipped'
   | 'workout.exercise_reordered'
+  // Fast Workout Input (set/2026) — só o USO do atalho, nunca carga/reps/RPE.
+  | 'workout.repeat_set'
+  | 'workout.rpe_selected'
+  | 'workout.rpe_skipped'
   // Execução dinâmica: o aluno muda a ficha DURANTE o treino. `exercise_skipped`
   // é outra coisa — pular é não fazer a série prescrita; remover tira o
   // exercício da lista do dia. Medem quanto a ficha entregue diverge da

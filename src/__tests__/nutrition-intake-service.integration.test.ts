@@ -10,30 +10,39 @@ import {
   finishSuite,
   createUser,
   describeWithDb,
+  hasTestDb,
   type FixtureTag,
 } from './helpers/integrationDb';
 import type { Client } from 'pg';
-import {
-  parseAndResolve,
-  persistIntakeLog,
-  getDayLogs,
-  softDeleteLog,
-  setFavorite,
-  classifyDayCoverage,
-  ValidationError,
-} from '../services/nutritionIntakeService';
+
+// Defesa em profundidade (mesmo padrão de nutri-p1a.integration.test.ts): o
+// pool de `config/database.ts` lê `DATABASE_URL` do `.env` no import, que
+// aponta para PRODUÇÃO. Isso só funciona porque o serviço é importado
+// DINAMICAMENTE dentro do `beforeAll` — um `import` estático no topo deste
+// arquivo seria hoisted pelo compilador e rodaria ANTES desta linha,
+// instanciando o pool contra produção mesmo assim.
+if (hasTestDb) process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
+
+type IntakeSvc = typeof import('../services/nutritionIntakeService');
+
+// Sem isto, o `beforeAll` pode exceder os 5s padrão do Jest quando várias
+// suítes de integração disputam o MESMO advisory lock em paralelo — não é
+// flakiness real, é fila (ver `acquireSuiteLock` em `integrationDb.ts`).
+jest.setTimeout(120_000);
 
 const TAG: FixtureTag = 'nutriintake';
 
 describeWithDb('nutritionIntakeService (integration)', () => {
   let client: Client;
   let userId: number;
+  let svc: IntakeSvc;
 
   beforeAll(async () => {
     client = await connect();
     await acquireSuiteLock(client);
     await client.query(`DELETE FROM users WHERE email LIKE $1`, [`${TAG}-%@test.local`]);
     userId = await createUser(client, TAG, 'aluno');
+    svc = await import('../services/nutritionIntakeService');
   });
 
   afterAll(async () => {
@@ -41,6 +50,8 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [userId]);
       await client.query(`DELETE FROM users WHERE email LIKE $1`, [`${TAG}-%@test.local`]);
     });
+    const pool = (await import('../config/database')).default;
+    await pool.end();
   });
 
   afterEach(async () => {
@@ -49,7 +60,7 @@ describeWithDb('nutritionIntakeService (integration)', () => {
 
   describe('parseAndResolve — resolução contra o catálogo real', () => {
     it('resolve "200g de arroz" com match forte (confiança high)', async () => {
-      const preview = await parseAndResolve('200g de arroz tipo 1 cozido');
+      const preview = await svc.parseAndResolve('200g de arroz tipo 1 cozido');
       expect(preview.items).toHaveLength(1);
       expect(preview.items[0].resolved).toBe(true);
       expect(preview.items[0].grams).toBe(200);
@@ -58,19 +69,19 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
 
     it('resolve "2 ovos" via medida caseira cadastrada no catálogo (colher/unidade)', async () => {
-      const preview = await parseAndResolve('2 ovos');
+      const preview = await svc.parseAndResolve('2 ovos');
       expect(preview.items[0].resolved).toBe(true);
       expect(preview.items[0].grams).toBeGreaterThan(0);
     });
 
     it('alimento inexistente fica não resolvido, nunca "meta 0"', async () => {
-      const preview = await parseAndResolve('200g de xyzalimentoinexistente123');
+      const preview = await svc.parseAndResolve('200g de xyzalimentoinexistente123');
       expect(preview.items[0].resolved).toBe(false);
       expect(preview.needsConfirmation).toBe(true);
     });
 
     it('totais somam só os itens resolvidos', async () => {
-      const preview = await parseAndResolve('200g de arroz tipo 1 cozido + 200g de xyznada123');
+      const preview = await svc.parseAndResolve('200g de arroz tipo 1 cozido + 200g de xyznada123');
       expect(preview.items).toHaveLength(2);
       expect(preview.totals.energyKcal).toBeGreaterThan(0);
       expect(preview.items[1].resolved).toBe(false);
@@ -80,16 +91,16 @@ describeWithDb('nutritionIntakeService (integration)', () => {
   describe('persistIntakeLog — nunca persiste item não resolvido', () => {
     it('rejeita foodId inexistente', async () => {
       await expect(
-        persistIntakeLog({
+        svc.persistIntakeLog({
           userId, label: 'Teste', items: [{ kind: 'food', foodId: 999999999, quantity: 100, unitType: 'grams' }], source: 'manual',
         })
-      ).rejects.toThrow(ValidationError);
+      ).rejects.toThrow(svc.ValidationError);
     });
 
     it('persiste item de catálogo em grams e recalcula os nutrientes no servidor (ignora kcal que o cliente mandaria)', async () => {
-      const found = await parseAndResolve('100g de arroz tipo 1 cozido');
+      const found = await svc.parseAndResolve('100g de arroz tipo 1 cozido');
       const foodId = found.items[0].foodId!;
-      const log = await persistIntakeLog({
+      const log = await svc.persistIntakeLog({
         userId, label: 'Almoço', items: [{ kind: 'food', foodId, quantity: 100, unitType: 'grams' }], source: 'manual',
       });
       expect(log.energyKcal).toBeCloseTo(found.items[0].energyKcal!, 1);
@@ -98,22 +109,22 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
 
     it('rejeita item de catálogo com medida ausente (measureId e fallbackMeasureKey ausentes)', async () => {
-      const found = await parseAndResolve('100g de arroz tipo 1 cozido');
+      const found = await svc.parseAndResolve('100g de arroz tipo 1 cozido');
       const foodId = found.items[0]?.foodId;
       if (!foodId) throw new Error('fixture: catálogo sem arroz');
       await expect(
-        persistIntakeLog({
+        svc.persistIntakeLog({
           userId, label: 'Teste', items: [{ kind: 'food', foodId, quantity: 1, unitType: 'measure' }], source: 'manual',
         })
       ).rejects.toThrow('measure_required');
     });
 
     it('IDOR: measureId de OUTRO alimento é rejeitado', async () => {
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
-      const feijao = (await parseAndResolve('1 concha de feijao carioca cozido')).items[0];
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const feijao = (await svc.parseAndResolve('1 concha de feijao carioca cozido')).items[0];
       // measureId encontrado na resolução do feijão, usado contra o foodId do arroz.
       await expect(
-        persistIntakeLog({
+        svc.persistIntakeLog({
           userId, label: 'Teste',
           items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 1, unitType: 'measure', measureId: feijao.measureId ?? -1 }],
           source: 'manual',
@@ -125,9 +136,9 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       // "pao" tende a casar com um item cujo primeiro segmento não é exatamente "pao"
       // dependendo do catálogo — simulamos low confidence diretamente via rawText
       // ambíguo que não bate com o nome do alimento escolhido.
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
       await expect(
-        persistIntakeLog({
+        svc.persistIntakeLog({
           userId, label: 'Teste',
           items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams', rawText: 'um pouco de comida qualquer', confirmed: false }],
           source: 'parse',
@@ -136,8 +147,8 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
 
     it('item de baixa confiança COM confirmação é aceito', async () => {
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
-      const log = await persistIntakeLog({
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
         userId, label: 'Teste',
         items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams', rawText: 'um pouco de comida qualquer', confirmed: true }],
         source: 'parse',
@@ -147,8 +158,8 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
 
     it('item escolhido por busca explícita (sem rawText) é sempre high, mesmo com nome ambíguo', async () => {
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
-      const log = await persistIntakeLog({
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
         userId, label: 'Teste',
         items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 50, unitType: 'grams' }],
         source: 'manual',
@@ -157,7 +168,7 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
 
     it('item manual aceita macros diretos e valida faixa de kcal', async () => {
-      const log = await persistIntakeLog({
+      const log = await svc.persistIntakeLog({
         userId, label: 'Barra proteica',
         items: [{ kind: 'manual', name: 'Barra proteica', energyKcal: 200, proteinG: 20, carbohydrateG: 15, fatG: 5 }],
         source: 'manual',
@@ -166,7 +177,7 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       expect(log.confidenceScore).toBeCloseTo(0.8, 2);
 
       await expect(
-        persistIntakeLog({
+        svc.persistIntakeLog({
           userId, label: 'Exagero',
           items: [{ kind: 'manual', name: 'X', energyKcal: 5000, proteinG: 0, carbohydrateG: 0, fatG: 0 }],
           source: 'manual',
@@ -175,8 +186,8 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
 
     it('confidence_score do log é a média ponderada por kcal dos itens (nunca aceito do cliente)', async () => {
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
-      const log = await persistIntakeLog({
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
         userId, label: 'Mix',
         items: [
           { kind: 'food', foodId: arroz.foodId!, quantity: 200, unitType: 'grams' }, // resolver catalog, peso 1.0
@@ -226,12 +237,12 @@ describeWithDb('nutritionIntakeService (integration)', () => {
 
     it('rejeita cópia de item de plano de OUTRO usuário (IDOR)', async () => {
       await expect(
-        persistIntakeLog({ userId, label: 'Como no plano', items: [{ kind: 'plan', planMealItemId }], source: 'plan' })
+        svc.persistIntakeLog({ userId, label: 'Como no plano', items: [{ kind: 'plan', planMealItemId }], source: 'plan' })
       ).rejects.toThrow('plan_meal_item_not_found');
     });
 
     it('copia o snapshot corretamente para o dono do plano', async () => {
-      const log = await persistIntakeLog({
+      const log = await svc.persistIntakeLog({
         userId: otherPatientId, label: 'Como no plano', items: [{ kind: 'plan', planMealItemId }], source: 'plan',
       });
       expect(log.items[0].name).toBe('Arroz snapshot');
@@ -243,40 +254,40 @@ describeWithDb('nutritionIntakeService (integration)', () => {
 
   describe('CRUD do dia + favorito + soft delete', () => {
     it('getDayLogs devolve só logs não apagados do dia', async () => {
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
-      const log = await persistIntakeLog({
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
         userId, label: 'Café', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 50, unitType: 'grams' }], source: 'manual',
       });
       const today = log.dateKey;
-      const logsBefore = await getDayLogs(userId, today);
+      const logsBefore = await svc.getDayLogs(userId, today);
       expect(logsBefore.map((l) => l.id)).toContain(log.id);
 
-      const deleted = await softDeleteLog(userId, log.id);
+      const deleted = await svc.softDeleteLog(userId, log.id);
       expect(deleted).toBe(true);
-      const logsAfter = await getDayLogs(userId, today);
+      const logsAfter = await svc.getDayLogs(userId, today);
       expect(logsAfter.map((l) => l.id)).not.toContain(log.id);
     });
 
     it('soft delete de log de OUTRO usuário não faz nada (IDOR)', async () => {
       const other = await createUser(client, TAG, 'outro-delete');
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
-      const log = await persistIntakeLog({
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
         userId: other, label: 'Café', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 50, unitType: 'grams' }], source: 'manual',
       });
-      const deleted = await softDeleteLog(userId, log.id);
+      const deleted = await svc.softDeleteLog(userId, log.id);
       expect(deleted).toBe(false);
       await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [other]);
       await client.query(`DELETE FROM users WHERE id = $1`, [other]);
     });
 
     it('favoritar marca is_favorite', async () => {
-      const arroz = (await parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
-      const log = await persistIntakeLog({
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
         userId, label: 'Omelete', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 50, unitType: 'grams' }], source: 'manual',
       });
-      const ok = await setFavorite(userId, log.id, true);
+      const ok = await svc.setFavorite(userId, log.id, true);
       expect(ok).toBe(true);
-      const logs = await getDayLogs(userId, log.dateKey);
+      const logs = await svc.getDayLogs(userId, log.dateKey);
       expect(logs.find((l) => l.id === log.id)?.isFavorite).toBe(true);
     });
   });
@@ -286,23 +297,23 @@ describeWithDb('nutritionIntakeService (integration)', () => {
 
     it('high requer cobertura >= 0.75 E confiança >= 0.80', () => {
       const logs = [mkLog(500, 1), mkLog(500, 1), mkLog(500, 1)];
-      expect(classifyDayCoverage(logs, 4).level).toBe('high');
+      expect(svc.classifyDayCoverage(logs, 4).level).toBe('high');
     });
 
     it('cobertura alta mas confiança baixa cai para partial/low, nunca high', () => {
       const logs = [mkLog(500, 0.5), mkLog(500, 0.5), mkLog(500, 0.5), mkLog(500, 0.5)];
-      expect(classifyDayCoverage(logs, 4).level).not.toBe('high');
+      expect(svc.classifyDayCoverage(logs, 4).level).not.toBe('high');
     });
 
     it('um único lanche de baixa cobertura fica low, não puxa média nenhuma', () => {
       const logs = [mkLog(200, 1)];
-      const c = classifyDayCoverage(logs, 4);
+      const c = svc.classifyDayCoverage(logs, 4);
       expect(c.level).toBe('low');
       expect(c.coverageRatio).toBe(0.25);
     });
 
     it('sem logs no dia é low com coverageRatio 0', () => {
-      const c = classifyDayCoverage([], 4);
+      const c = svc.classifyDayCoverage([], 4);
       expect(c.level).toBe('low');
       expect(c.coverageRatio).toBe(0);
     });

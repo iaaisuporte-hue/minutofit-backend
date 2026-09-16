@@ -1,5 +1,8 @@
 import pool from '../config/database';
+import logger from '../lib/logger';
 import { logDataAccessEvent } from './dataAccessAuditService';
+import { getIntakeSignalForPatient } from './nutriService';
+import type { IntakeExceptionType } from './nutritionIntake';
 
 export interface VoiceNote {
   id: string;
@@ -16,10 +19,19 @@ export interface VoiceNote {
 }
 
 export interface NutriInsight {
-  type: 'adherence_drop' | 'late_hunger' | 'ghost_meal' | 'silent_absence';
+  type: 'adherence_drop' | 'late_hunger' | 'ghost_meal' | 'silent_absence' | IntakeExceptionType;
   label: string;
   detail: string;
 }
+
+// PLAN_NUTRITION_QUICK_MACROS (P1C) — texto do card, um por tipo de exceção
+// de ingestão. Sem diagnóstico nem recomendação de dieta: só o fato.
+const INTAKE_INSIGHT_LABEL: Record<IntakeExceptionType, string> = {
+  intake_kcal_drop: 'Queda de ingestão',
+  intake_protein_low: 'Proteína abaixo da meta',
+  intake_silent: 'Parou de registrar refeições',
+  intake_over: 'Ingestão acima da meta',
+};
 
 // ── Voice notes ─────────────────────────────────────────────────────────────
 
@@ -288,6 +300,23 @@ export async function computePatientInsights(
       label: `Refeição frequentemente pulada`,
       detail: `"${row.meal_name}" foi pulada ou substituída ${row.cnt}× nos últimos 7 dias. Considere ajustar.`,
     });
+  }
+
+  // 5. Ingestão registrada (PLAN_NUTRITION_QUICK_MACROS P1C) — entra DEPOIS
+  // dos 4 insights canônicos de check-in, nunca reordena "Próxima atenção".
+  // Mesma `deriveIntakeSignal` que alimenta o badge "Atenção · Ingestão" da
+  // carteira — uma fórmula, dois consumidores.
+  try {
+    const intake = await getIntakeSignalForPatient(patientId);
+    if (intake.exception) {
+      insights.push({
+        type: intake.exception.type,
+        label: INTAKE_INSIGHT_LABEL[intake.exception.type],
+        detail: intake.exception.detail,
+      });
+    }
+  } catch (err) {
+    logger.error({ err }, '[nutri] compute intake insight error');
   }
 
   return insights;

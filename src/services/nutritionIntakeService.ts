@@ -512,19 +512,42 @@ export interface DayCoverage {
  * nutri (P1C) reaplica as MESMAS regras em `nutritionIntake.ts`, nunca uma
  * segunda fórmula.
  */
-export function classifyDayCoverage(logs: IntakeLogRecord[], expectedMeals: number): DayCoverage {
-  const loggedMeals = logs.length;
+export interface DayLogSummary {
+  loggedMeals: number;
+  totalKcal: number;
+  /** Média ponderada por kcal do `confidence_score` dos logs do dia (0..1). */
+  weightedConfidence: number;
+}
+
+/**
+ * Núcleo puro da classificação de cobertura/confiança de UM dia (PLAN §11).
+ * Recebe o dia já resumido — reusado tanto para o dia único do aluno
+ * (`classifyDayCoverage` abaixo, a partir de logs reais) quanto para os 14
+ * dias pré-agregados por SQL que o nutri vê (`nutritionIntake.ts`, P1C) —
+ * MESMA fórmula, nunca duas.
+ */
+export function classifyDaySummary(day: DayLogSummary, expectedMeals: number): DayCoverage {
+  const { loggedMeals, weightedConfidence } = day;
   const coverageRatio = expectedMeals > 0 ? Math.min(loggedMeals / expectedMeals, 1) : 0;
-  const totalKcal = logs.reduce((s, l) => s + l.energyKcal, 0);
-  const confidence = totalKcal > 0
-    ? logs.reduce((s, l) => s + l.energyKcal * l.confidenceScore, 0) / totalKcal
-    : (loggedMeals > 0 ? logs.reduce((s, l) => s + l.confidenceScore, 0) / loggedMeals : 0);
 
   let level: DayCoverageLevel = 'low';
-  if (coverageRatio >= 0.75 && confidence >= 0.8) level = 'high';
+  if (coverageRatio >= 0.75 && weightedConfidence >= 0.8) level = 'high';
   else if (coverageRatio >= 0.5) level = 'partial';
 
-  return { loggedMeals, expectedMeals, coverageRatio, confidence: Math.round(confidence * 100) / 100, level };
+  return { loggedMeals, expectedMeals, coverageRatio, confidence: Math.round(weightedConfidence * 100) / 100, level };
+}
+
+export function summarizeDayLogs(logs: Array<{ energyKcal: number; confidenceScore: number }>): DayLogSummary {
+  const loggedMeals = logs.length;
+  const totalKcal = logs.reduce((s, l) => s + l.energyKcal, 0);
+  const weightedConfidence = totalKcal > 0
+    ? logs.reduce((s, l) => s + l.energyKcal * l.confidenceScore, 0) / totalKcal
+    : (loggedMeals > 0 ? logs.reduce((s, l) => s + l.confidenceScore, 0) / loggedMeals : 0);
+  return { loggedMeals, totalKcal, weightedConfidence };
+}
+
+export function classifyDayCoverage(logs: IntakeLogRecord[], expectedMeals: number): DayCoverage {
+  return classifyDaySummary(summarizeDayLogs(logs), expectedMeals);
 }
 
 export interface IntakeShortcuts {

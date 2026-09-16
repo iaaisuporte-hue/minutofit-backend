@@ -54,6 +54,8 @@ export type DataAccessEventType =
   // SPEC 038 — alimento customizado do nutri (P3A)
   | 'nutri.custom_food.created'
   | 'nutri.custom_food.archived'
+  // PLAN_NUTRITION_QUICK_MACROS — leitura do sinal de ingestão pelo nutri (P1C)
+  | 'nutri.intake.read'
   | 'progress_photos.read'
   | 'parq.signed'
   | 'parq.medical_release_declared'

@@ -20,7 +20,10 @@ import {
   getPatientContext,
   getPatientsWithSummary,
   getMealHeatmap,
+  getIntakeDailyBreakdown,
 } from '../services/nutriService';
+import { getDayLogs as getIntakeLogsForDay } from '../services/nutritionIntakeService';
+import { dayKey } from '../utils/appDay';
 import {
   publishVoiceNote,
   listVoiceNotesForNutri,
@@ -974,6 +977,54 @@ router.get(
       res.json({ success: true, data: insights });
     } catch (err: any) {
       logger.error({ err }, '[nutri] compute insights error');
+      res.status(500).json({ success: false, error: 'internal_error' });
+    }
+  }
+);
+
+// ===========================================================================
+// Ingestão registrada (PLAN_NUTRITION_QUICK_MACROS, P1C) — nível 3: bloco 7d
+// + drawer sob demanda. Nunca inbox, nunca aprovação — só leitura.
+// ===========================================================================
+
+router.get(
+  '/patients/:patientId/intake-summary',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'invalid_patient_id' });
+      }
+      const { summary, days } = await getIntakeDailyBreakdown(patientId);
+      void logDataAccessEvent({ actorId: nutriId, subjectUserId: patientId, eventType: 'nutri.intake.read', eventPayload: {} }).catch(() => {});
+      res.json({ success: true, data: { summary, days } });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] intake summary error');
+      res.status(500).json({ success: false, error: 'internal_error' });
+    }
+  }
+);
+
+router.get(
+  '/patients/:patientId/intake-logs',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      if (!Number.isFinite(patientId)) {
+        return res.status(400).json({ success: false, error: 'invalid_patient_id' });
+      }
+      const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+        ? req.query.date
+        : dayKey();
+      const logs = await getIntakeLogsForDay(patientId, date);
+      void logDataAccessEvent({ actorId: nutriId, subjectUserId: patientId, eventType: 'nutri.intake.read', eventPayload: { date } }).catch(() => {});
+      res.json({ success: true, data: { date, logs } });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] intake logs error');
       res.status(500).json({ success: false, error: 'internal_error' });
     }
   }

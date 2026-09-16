@@ -19,6 +19,9 @@ import {
   ValidationError as FoodValidationError,
 } from './nutritionFoodService';
 import { resolveGrams, calculateNutrition, sumNutrients, type CalculatedNutrients } from './nutritionCalculation';
+import { resolveNutritionTarget } from './nutritionTarget';
+import { deriveIntakeSignal, type DayAgg, type IntakeTarget, type PatientIntakeSummary } from './nutritionIntake';
+import { classifyDaySummary, type DayCoverageLevel } from './nutritionIntakeService';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1221,7 +1224,7 @@ export async function getPatientsWithSummary(nutriId: number) {
   // Plano ativo por paciente — precisa de `started_at` para o denominador
   // proporcional (SPEC 035 / NUTRI-13).
   const plansResult = await pool.query(
-    `SELECT patient_id, id AS plan_id, title, started_at
+    `SELECT patient_id, id AS plan_id, title, started_at, objective
      FROM nutrition_plans
      WHERE nutri_id = $1 AND patient_id = ANY($2) AND status = 'active'`,
     [nutriId, patientIds]
@@ -1290,6 +1293,64 @@ export async function getPatientsWithSummary(nutriId: number) {
     if (!prevMax || row.check_date > prevMax) granularLastByPatient.set(row.patient_id, row.check_date);
   }
 
+  // ── PLAN_NUTRITION_QUICK_MACROS (P1C) — sinal de ingestão ────────────────
+  // UMA query agrupada de 14 dias (nunca N+1) + a meta resolvida por
+  // paciente (plano estruturado > estimativa própria — mesma regra do
+  // `resolveNutritionTarget` já usado no lado do aluno).
+  const intakeDaysRes = await pool.query(
+    `SELECT user_id, date_key::text AS date_key,
+            COUNT(*)::int AS logged_meals,
+            SUM(energy_kcal)::float AS total_kcal,
+            SUM(protein_g)::float AS protein_g,
+            SUM(carbohydrate_g)::float AS carbohydrate_g,
+            SUM(fat_g)::float AS fat_g,
+            (SUM(energy_kcal * confidence_score) / GREATEST(SUM(energy_kcal), 0.0001))::float AS weighted_confidence
+       FROM user_nutrition_intake_logs
+      WHERE user_id = ANY($1) AND deleted_at IS NULL AND date_key >= $2::date - 13
+      GROUP BY user_id, date_key`,
+    [patientIds, today]
+  );
+  const intakeDaysByPatient = new Map<number, DayAgg[]>();
+  for (const row of intakeDaysRes.rows) {
+    const list = intakeDaysByPatient.get(row.user_id) ?? [];
+    list.push({
+      dateKey: row.date_key,
+      loggedMeals: Number(row.logged_meals),
+      totalKcal: Number(row.total_kcal),
+      proteinG: Number(row.protein_g),
+      carbohydrateG: Number(row.carbohydrate_g),
+      fatG: Number(row.fat_g),
+      weightedConfidence: Number(row.weighted_confidence),
+    });
+    intakeDaysByPatient.set(row.user_id, list);
+  }
+
+  type PlanTotalsRow = { patient_id: number; energy_kcal: number; protein_g: number; carbohydrate_g: number; fat_g: number };
+  const planTotalsRes = activePlanIds.length > 0
+    ? await pool.query<PlanTotalsRow>(
+        `SELECT np.patient_id,
+                SUM(nmi.energy_kcal_snapshot)::float AS energy_kcal,
+                SUM(nmi.protein_g_snapshot)::float AS protein_g,
+                SUM(nmi.carbohydrate_g_snapshot)::float AS carbohydrate_g,
+                SUM(nmi.fat_g_snapshot)::float AS fat_g
+           FROM nutrition_meal_items nmi
+           JOIN nutrition_plan_meals npm ON npm.id = nmi.meal_id AND npm.deleted_at IS NULL
+           JOIN nutrition_plans np ON np.id = npm.plan_id
+          WHERE np.id = ANY($1) AND nmi.deleted_at IS NULL
+          GROUP BY np.patient_id`,
+        [activePlanIds]
+      )
+    : { rows: [] as PlanTotalsRow[] };
+  const planTotalsByPatient = new Map(planTotalsRes.rows.map((r) => [r.patient_id, r]));
+
+  type SelfTargetRow = { user_id: number; energy_kcal: string; protein_g: string; carbohydrate_g: string; fat_g: string; meals_per_day: number };
+  const selfTargetsRes = await pool.query<SelfTargetRow>(
+    `SELECT user_id, energy_kcal, protein_g, carbohydrate_g, fat_g, meals_per_day
+       FROM user_nutrition_targets WHERE user_id = ANY($1)`,
+    [patientIds]
+  );
+  const selfTargetsByPatient = new Map(selfTargetsRes.rows.map((r) => [r.user_id, r]));
+
   return patientsResult.rows.map((p) => {
     const scopes = consentByPatient.get(p.id);
     const hasProfileConsent = scopes?.has('profile') ?? false;
@@ -1318,6 +1379,7 @@ export async function getPatientsWithSummary(nutriId: number) {
         streakDays: 0,
         trend: null,
         consentRevoked: true,
+        intake: null,
       };
     }
 
@@ -1345,6 +1407,7 @@ export async function getPatientsWithSummary(nutriId: number) {
         streakDays: 0,
         trend: null,
         consentRevoked: true,
+        intake: null,
       };
     }
 
@@ -1395,6 +1458,34 @@ export async function getPatientsWithSummary(nutriId: number) {
     // aba Adesão do detalhe, nunca mais um segundo cálculo (SPEC 035 / NUTRI-09/33).
     const adherenceDropFlag = canonical?.trend === 'down';
 
+    // PLAN_NUTRITION_QUICK_MACROS (P1C) — sinal de ingestão. Mesma regra de
+    // resolução de meta do aluno (plano vence, plano só-texto nunca é lido
+    // como meta 0) e a MESMA `deriveIntakeSignal` que os insights consomem —
+    // um paciente sem plano ainda pode ter uma estimativa própria e disparar
+    // sinal (persona H).
+    const planTotalsRow = planTotalsByPatient.get(p.id);
+    const selfTargetRow = selfTargetsByPatient.get(p.id);
+    const resolvedTarget = resolveNutritionTarget({
+      planDayTotals: planTotalsRow
+        ? { energyKcal: planTotalsRow.energy_kcal, proteinG: planTotalsRow.protein_g, carbohydrateG: planTotalsRow.carbohydrate_g, fatG: planTotalsRow.fat_g }
+        : null,
+      planMealsCount: mealsPerDay || null,
+      selfTarget: selfTargetRow
+        ? {
+            energyKcal: Number(selfTargetRow.energy_kcal), proteinG: Number(selfTargetRow.protein_g),
+            carbohydrateG: Number(selfTargetRow.carbohydrate_g), fatG: Number(selfTargetRow.fat_g),
+            mealsPerDay: Number(selfTargetRow.meals_per_day),
+          }
+        : null,
+    });
+    const intakeTarget: IntakeTarget | null = resolvedTarget
+      ? { energyKcal: resolvedTarget.energyKcal, proteinG: resolvedTarget.proteinG, carbohydrateG: resolvedTarget.carbohydrateG, fatG: resolvedTarget.fatG, mealsPerDay: resolvedTarget.mealsPerDay, source: resolvedTarget.source }
+      : null;
+    const intakeDays: DayAgg[] = intakeDaysByPatient.get(p.id) ?? [];
+    const intake: PatientIntakeSummary = deriveIntakeSignal({
+      days: intakeDays, todayKey: today, target: intakeTarget, objective: plan?.objective ?? null,
+    });
+
     return {
       id: p.id,
       name: p.name,
@@ -1420,8 +1511,141 @@ export async function getPatientsWithSummary(nutriId: number) {
       streakDays: canonical?.streakDays ?? 0,
       trend: canonical?.trend ?? null,
       consentRevoked: false,
+      intake,
     };
   });
+}
+
+interface PatientIntakeContext {
+  today: string;
+  target: IntakeTarget | null;
+  objective: string | null;
+  days: DayAgg[];
+}
+
+/**
+ * Busca tudo que `deriveIntakeSignal` e o drawer nível 3 precisam para UM
+ * paciente — meta resolvida (plano vence sobre estimativa própria) + 14
+ * dias de logs agrupados. Reusado por `getIntakeSignalForPatient` (insights)
+ * e `getIntakeDailyBreakdown` (drawer do nutri) para nunca duplicar a busca.
+ */
+async function resolvePatientIntakeContext(patientId: number): Promise<PatientIntakeContext> {
+  const today = dayKey();
+
+  const planRes = await pool.query<{ plan_id: number; objective: string }>(
+    `SELECT id AS plan_id, objective FROM nutrition_plans WHERE patient_id = $1 AND status = 'active' LIMIT 1`,
+    [patientId]
+  );
+  const plan = planRes.rows[0] ?? null;
+
+  const [mealCountRes, planTotalsRes, selfTargetRes, intakeDaysRes] = await Promise.all([
+    plan
+      ? pool.query<{ meal_count: string }>(
+          `SELECT COUNT(*)::int AS meal_count FROM nutrition_plan_meals WHERE plan_id = $1 AND deleted_at IS NULL`,
+          [plan.plan_id]
+        )
+      : Promise.resolve({ rows: [{ meal_count: '0' }] }),
+    plan
+      ? pool.query<{ energy_kcal: number; protein_g: number; carbohydrate_g: number; fat_g: number }>(
+          `SELECT SUM(nmi.energy_kcal_snapshot)::float AS energy_kcal, SUM(nmi.protein_g_snapshot)::float AS protein_g,
+                  SUM(nmi.carbohydrate_g_snapshot)::float AS carbohydrate_g, SUM(nmi.fat_g_snapshot)::float AS fat_g
+             FROM nutrition_meal_items nmi
+             JOIN nutrition_plan_meals npm ON npm.id = nmi.meal_id AND npm.deleted_at IS NULL
+            WHERE npm.plan_id = $1 AND nmi.deleted_at IS NULL`,
+          [plan.plan_id]
+        )
+      : Promise.resolve({ rows: [] as Array<{ energy_kcal: number; protein_g: number; carbohydrate_g: number; fat_g: number }> }),
+    pool.query<{ energy_kcal: string; protein_g: string; carbohydrate_g: string; fat_g: string; meals_per_day: number }>(
+      `SELECT energy_kcal, protein_g, carbohydrate_g, fat_g, meals_per_day FROM user_nutrition_targets WHERE user_id = $1 LIMIT 1`,
+      [patientId]
+    ),
+    pool.query<{ date_key: string; logged_meals: number; total_kcal: number; protein_g: number; carbohydrate_g: number; fat_g: number; weighted_confidence: number }>(
+      `SELECT date_key::text AS date_key, COUNT(*)::int AS logged_meals,
+              SUM(energy_kcal)::float AS total_kcal, SUM(protein_g)::float AS protein_g,
+              SUM(carbohydrate_g)::float AS carbohydrate_g, SUM(fat_g)::float AS fat_g,
+              (SUM(energy_kcal * confidence_score) / GREATEST(SUM(energy_kcal), 0.0001))::float AS weighted_confidence
+         FROM user_nutrition_intake_logs
+        WHERE user_id = $1 AND deleted_at IS NULL AND date_key >= $2::date - 13
+        GROUP BY date_key`,
+      [patientId, today]
+    ),
+  ]);
+
+  const mealsPerDay = Number(mealCountRes.rows[0]?.meal_count ?? 0);
+  const planTotalsRow = planTotalsRes.rows[0];
+  const selfTargetRow = selfTargetRes.rows[0];
+
+  const resolvedTarget = resolveNutritionTarget({
+    planDayTotals: planTotalsRow ? { energyKcal: planTotalsRow.energy_kcal, proteinG: planTotalsRow.protein_g, carbohydrateG: planTotalsRow.carbohydrate_g, fatG: planTotalsRow.fat_g } : null,
+    planMealsCount: mealsPerDay || null,
+    selfTarget: selfTargetRow
+      ? {
+          energyKcal: Number(selfTargetRow.energy_kcal), proteinG: Number(selfTargetRow.protein_g),
+          carbohydrateG: Number(selfTargetRow.carbohydrate_g), fatG: Number(selfTargetRow.fat_g),
+          mealsPerDay: Number(selfTargetRow.meals_per_day),
+        }
+      : null,
+  });
+  const target: IntakeTarget | null = resolvedTarget
+    ? { energyKcal: resolvedTarget.energyKcal, proteinG: resolvedTarget.proteinG, carbohydrateG: resolvedTarget.carbohydrateG, fatG: resolvedTarget.fatG, mealsPerDay: resolvedTarget.mealsPerDay, source: resolvedTarget.source }
+    : null;
+
+  const days: DayAgg[] = intakeDaysRes.rows.map((r) => ({
+    dateKey: r.date_key, loggedMeals: Number(r.logged_meals), totalKcal: Number(r.total_kcal),
+    proteinG: Number(r.protein_g), carbohydrateG: Number(r.carbohydrate_g), fatG: Number(r.fat_g),
+    weightedConfidence: Number(r.weighted_confidence),
+  }));
+
+  return { today, target, objective: plan?.objective ?? null, days };
+}
+
+/**
+ * Sinal de ingestão de UM paciente (PLAN_NUTRITION_QUICK_MACROS P1C) — usado
+ * por `computePatientInsights`. MESMA `deriveIntakeSignal` que
+ * `getPatientsWithSummary` usa para o badge da carteira; consent já é
+ * responsabilidade do chamador (rota com `requireActiveConsent('nutrition')`).
+ */
+export async function getIntakeSignalForPatient(patientId: number): Promise<PatientIntakeSummary> {
+  const ctx = await resolvePatientIntakeContext(patientId);
+  return deriveIntakeSignal({ days: ctx.days, todayKey: ctx.today, target: ctx.target, objective: ctx.objective as any });
+}
+
+export interface IntakeDailyRow {
+  dateKey: string;
+  loggedMeals: number;
+  totalKcal: number;
+  proteinG: number;
+  carbohydrateG: number;
+  fatG: number;
+  coverageRatio: number;
+  confidence: number;
+  level: DayCoverageLevel;
+}
+
+/**
+ * Detalhe nível 3 (drawer) — 7 linhas diárias com selo de cobertura, para o
+ * nutri ver POR QUE o sinal disparou (ou não). Mesmo `classifyDaySummary`
+ * usado no dia único do aluno.
+ */
+export async function getIntakeDailyBreakdown(patientId: number): Promise<{ summary: PatientIntakeSummary; days: IntakeDailyRow[] }> {
+  const ctx = await resolvePatientIntakeContext(patientId);
+  const summary = deriveIntakeSignal({ days: ctx.days, todayKey: ctx.today, target: ctx.target, objective: ctx.objective as any });
+  const expectedMeals = ctx.target?.mealsPerDay ?? 3;
+
+  const last7 = ctx.days
+    .filter((d) => dayKeyDiff(d.dateKey, ctx.today) >= 0 && dayKeyDiff(d.dateKey, ctx.today) <= 6)
+    .sort((a, b) => b.dateKey.localeCompare(a.dateKey));
+
+  const days: IntakeDailyRow[] = last7.map((d) => {
+    const coverage = classifyDaySummary(d, expectedMeals);
+    return {
+      dateKey: d.dateKey, loggedMeals: d.loggedMeals, totalKcal: d.totalKcal, proteinG: d.proteinG,
+      carbohydrateG: d.carbohydrateG, fatG: d.fatG, coverageRatio: coverage.coverageRatio,
+      confidence: coverage.confidence, level: coverage.level,
+    };
+  });
+
+  return { summary, days };
 }
 
 // ---------------------------------------------------------------------------

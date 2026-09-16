@@ -267,6 +267,8 @@ export interface PersistedIntakeItem {
   proteinG: number;
   carbohydrateG: number;
   fatG: number;
+  /** null quando o alimento/medição não tem fibra conhecida — nunca 0 fabricado (PLAN §11). */
+  fiberG: number | null;
   resolver: IntakeItemResolver;
   confidence: IntakeConfidence;
   confirmed: boolean;
@@ -331,6 +333,7 @@ async function resolveFoodItem(item: Extract<IntakeItemRequest, { kind: 'food' }
     proteinG: calc.proteinG,
     carbohydrateG: calc.carbohydrateG,
     fatG: calc.fatG,
+    fiberG: calc.fiberG,
     resolver,
     confidence,
     confirmed: true,
@@ -352,6 +355,9 @@ function resolveManualItem(item: Extract<IntakeItemRequest, { kind: 'manual' }>)
     proteinG: item.proteinG,
     carbohydrateG: item.carbohydrateG,
     fatG: item.fatG,
+    // Item manual não tem como o usuário informar fibra separadamente hoje —
+    // `null` (não conhecida), nunca 0 (que afirmaria "sem fibra").
+    fiberG: null,
     resolver: 'manual',
     confidence: 'high',
     confirmed: true,
@@ -362,7 +368,7 @@ async function resolvePlanItem(userId: number, item: Extract<IntakeItemRequest, 
   // IDOR: só pode copiar item de refeição de um plano do PRÓPRIO usuário.
   const { rows } = await pool.query(
     `SELECT nmi.food_name_snapshot, nmi.energy_kcal_snapshot, nmi.protein_g_snapshot,
-            nmi.carbohydrate_g_snapshot, nmi.fat_g_snapshot, nmi.grams
+            nmi.carbohydrate_g_snapshot, nmi.fat_g_snapshot, nmi.fiber_g_snapshot, nmi.grams
        FROM nutrition_meal_items nmi
        JOIN nutrition_plan_meals npm ON npm.id = nmi.meal_id
        JOIN nutrition_plans np ON np.id = npm.plan_id
@@ -378,6 +384,7 @@ async function resolvePlanItem(userId: number, item: Extract<IntakeItemRequest, 
     proteinG: Number(row.protein_g_snapshot),
     carbohydrateG: Number(row.carbohydrate_g_snapshot),
     fatG: Number(row.fat_g_snapshot),
+    fiberG: row.fiber_g_snapshot == null ? null : Number(row.fiber_g_snapshot),
     resolver: 'plan',
     confidence: 'high',
     confirmed: true,
@@ -404,6 +411,10 @@ export interface IntakeLogRecord {
   proteinG: number;
   carbohydrateG: number;
   fatG: number;
+  /** null quando NENHUM item do log tinha fibra conhecida (PLAN §11) — nunca 0 fabricado. */
+  fiberG: number | null;
+  /** true quando ALGUM item do log não tinha fibra conhecida — `fiberG` é uma soma parcial. */
+  fiberPartial: boolean;
   items: PersistedIntakeItem[];
   confidenceScore: number;
   source: string;
@@ -422,6 +433,8 @@ function mapRow(r: any): IntakeLogRecord {
     proteinG: Number(r.protein_g),
     carbohydrateG: Number(r.carbohydrate_g),
     fatG: Number(r.fat_g),
+    fiberG: r.fiber_g == null ? null : Number(r.fiber_g),
+    fiberPartial: Boolean(r.fiber_partial),
     items: r.items,
     confidenceScore: Number(r.confidence_score),
     source: r.source,
@@ -445,7 +458,7 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
 
   const totals = sumNutrients(resolved.map((i) => ({
     energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
-    fiberG: null, sodiumMg: null,
+    fiberG: i.fiberG, sodiumMg: null,
   })));
 
   const totalKcal = resolved.reduce((s, i) => s + i.energyKcal, 0);
@@ -456,12 +469,13 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
   const dateKey = dayKey();
   const { rows } = await pool.query(
     `INSERT INTO user_nutrition_intake_logs
-       (user_id, date_key, meal_id, label, raw_text, energy_kcal, protein_g, carbohydrate_g, fat_g, items, confidence_score, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       (user_id, date_key, meal_id, label, raw_text, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, fiber_partial, items, confidence_score, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING *`,
     [
       input.userId, dateKey, input.mealId ?? null, label, input.rawText ?? null,
       totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
+      totals.fiberG, totals.fiberPartial,
       JSON.stringify(resolved), Math.round(confidenceScore * 100) / 100, input.source,
     ]
   );

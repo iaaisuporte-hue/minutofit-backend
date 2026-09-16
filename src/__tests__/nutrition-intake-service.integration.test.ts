@@ -108,6 +108,35 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       expect(log.confidenceScore).toBeCloseTo(1, 2);
     });
 
+    it('PLAN §11 — fibra do catálogo é persistida (não descartada) e fiberPartial fica false quando todo item tem fibra conhecida', async () => {
+      const found = await svc.parseAndResolve('100g de arroz tipo 1 cozido');
+      const foodId = found.items[0].foodId!;
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Almoço', items: [{ kind: 'food', foodId, quantity: 100, unitType: 'grams' }], source: 'manual',
+      });
+      expect(log.items[0].fiberG).not.toBeNull();
+      expect(log.fiberG).not.toBeNull();
+      expect(log.fiberPartial).toBe(false);
+    });
+
+    it('PLAN §11 — item manual não tem fibra conhecida (null, nunca 0) e marca o log como fiberPartial', async () => {
+      const found = await svc.parseAndResolve('100g de arroz tipo 1 cozido');
+      const foodId = found.items[0].foodId!;
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Mix',
+        items: [
+          { kind: 'food', foodId, quantity: 100, unitType: 'grams' },
+          { kind: 'manual', name: 'Suplemento', energyKcal: 100, proteinG: 20, carbohydrateG: 0, fatG: 0 },
+        ],
+        source: 'manual',
+      });
+      expect(log.items[1].fiberG).toBeNull();
+      expect(log.fiberPartial).toBe(true);
+      // A soma de fibra é PARCIAL (só o item de catálogo), nunca vira null nem 0 fabricado.
+      expect(log.fiberG).not.toBeNull();
+      expect(log.fiberG).toBeGreaterThan(0);
+    });
+
     it('rejeita item de catálogo com medida ausente (measureId e fallbackMeasureKey ausentes)', async () => {
       const found = await svc.parseAndResolve('100g de arroz tipo 1 cozido');
       const foodId = found.items[0]?.foodId;

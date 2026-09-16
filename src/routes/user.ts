@@ -49,6 +49,7 @@ import {
 } from '../services/nutritionIntakeService';
 import { dayKey } from '../utils/appDay';
 import { searchCatalogFoods } from '../services/nutritionFoodService';
+import { sumNutrients } from '../services/nutritionCalculation';
 
 const router = Router();
 registerNumericParams(router, ['planId', 'mealId', 'id']);
@@ -558,18 +559,23 @@ router.get('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake
       selfTarget,
     });
 
-    const totals = logs.reduce(
-      (acc, l) => ({
-        energyKcal: acc.energyKcal + l.energyKcal,
-        proteinG: acc.proteinG + l.proteinG,
-        carbohydrateG: acc.carbohydrateG + l.carbohydrateG,
-        fatG: acc.fatG + l.fatG,
-      }),
-      { energyKcal: 0, proteinG: 0, carbohydrateG: 0, fatG: 0 }
-    );
+    const totals = sumNutrients(logs.map((l) => ({
+      energyKcal: l.energyKcal, proteinG: l.proteinG, carbohydrateG: l.carbohydrateG, fatG: l.fatG,
+      fiberG: l.fiberG, sodiumMg: null,
+    })));
     const coverage = classifyDayCoverage(logs, target?.mealsPerDay ?? 3);
 
-    res.json({ success: true, data: { date, logs, totals, coverage, target } });
+    // PLAN_NUTRITION_QUICK_MACROS (P1B — adendo "Seu dia nutricional") — a
+    // curva "planejado" do gráfico de evolução só existe quando há plano
+    // ESTRUTURADO (itens de refeição, não só orientação em texto). Nunca
+    // reconstruída a partir da estimativa própria — aí a divisão fica
+    // "distribuição orientativa" e é responsabilidade do cliente montá-la a
+    // partir de `target.mealsPerDay`, sem dado novo do servidor.
+    const plannedMeals = (plan?.meals ?? [])
+      .filter((m: any) => Array.isArray(m.items) && m.items.length > 0 && m.totals?.energyKcal > 0)
+      .map((m: any) => ({ mealId: m.id, name: m.name, orderIndex: m.order_index, energyKcal: m.totals.energyKcal }));
+
+    res.json({ success: true, data: { date, logs, totals, coverage, target, plannedMeals } });
   } catch (err: any) {
     logger.error({ err }, '[user/nutrition-intake GET]');
     res.status(500).json({ success: false, error: 'Failed to load intake logs' });

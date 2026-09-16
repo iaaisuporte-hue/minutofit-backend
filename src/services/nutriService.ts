@@ -959,7 +959,14 @@ export async function getMealTimeline(userId: number) {
 
   const nowMinutes = minutesSinceMidnight(new Date());
 
-  const meals = mealsResult.rows.map((m) => {
+  // PLAN_NUTRITION_QUICK_MACROS (P1B): a SPA nunca recebia `items/totals` aqui
+  // — `MealTimelineEntry extends NutritionMeal` prometia o campo, mas
+  // `getMealTimeline` nunca chamava `attachMealItemsAndTotals` (só
+  // `getUserActivePlan` chamava). O chip "Como no plano" do registro rápido
+  // precisa dos itens estruturados por refeição para oferecer a cópia.
+  const mealsWithItems = await attachMealItemsAndTotals(mealsResult.rows);
+
+  const meals = mealsWithItems.map((m) => {
     const checkin = checkinsMap.get(m.id) ?? null;
     const status = computeMealStatus(
       m.meal_time,

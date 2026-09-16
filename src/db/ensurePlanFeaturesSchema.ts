@@ -22,7 +22,7 @@ const featureCatalog = [
   ['free_workout', 'Treino Livre', 'Aluno monta treino ad-hoc e executa com a engine de series. Kill-switch; liberada no Free.'],
   ['readiness', 'Prontidao (S2CORE Readiness)', 'Motor de prontidao diaria: score, motivos, confianca e recomendacao de intensidade (SPEC P3). NAO liberada por padrao — rollout gradual exigido pela SPEC §74/§75.'],
   ['voice_workout', 'Voice Workout', 'Registrar series por comando de voz durante o treino (P5A/P5B). PAUSED/EXPERIMENTAL desde set/2026 — prioridade de produto migrou para Fast Workout Input (registro manual em 1-2 toques). Nao removida: so tirada de todos os planos por padrao (ROLLOUT_ONLY_FEATURES). Religar e reversivel, sem migration.'],
-  ['nutrition_intake', 'Registro Rápido de Macros', 'Meta diária de macros + registro rápido de refeição pelo aluno, com sinal de ingestão por exceção para o nutri (PLAN_NUTRITION_QUICK_MACROS). NAO liberada por padrao — rollout gradual, mesmo motivo de `readiness`: observar uso real antes de expor a todo plano.'],
+  ['nutrition_intake', 'Registro Rápido de Macros', 'Meta diária de macros + registro rápido de refeição pelo aluno, com sinal de ingestão por exceção para o nutri (PLAN_NUTRITION_QUICK_MACROS). Liberada em TODOS os planos por decisão do usuário (16/set/2026) para validação ampla ainda em P1B — kill-switch continua disponível via ROLLOUT_ONLY_FEATURES se precisar recolher.'],
 ] as const;
 
 /**
@@ -53,8 +53,13 @@ const featureCatalog = [
  * `voice_workout` SAIU do Free (set/2026, P5C-STANDBY): prioridade de produto
  * migrou para Fast Workout Input. Ver ROLLOUT_ONLY_FEATURES abaixo — a feature
  * não foi removida, só desligada por padrão em todos os planos.
+ *
+ * `nutrition_intake` entra no Free (16/set/2026, decisão do usuário): P1A
+ * nasceu em rollout gradual (ver ROLLOUT_ONLY_FEATURES), mas passou a ser
+ * exibida em TODOS os planos enquanto o P1B (registro de refeição) é
+ * construído — validação ampla antes do sinal chegar ao nutri (P1C).
  */
-const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges', 'free_workout'];
+const FREE_PRODUCT_FEATURES: string[] = ['today', 'workouts_today', 'home_workouts', 'profile', 'settings', 'tracker', 'retro_workout_enabled', 'challenges', 'free_workout', 'nutrition_intake'];
 
 const PRO_PRODUCT_FEATURES: string[] = [
   'today',
@@ -73,6 +78,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
   'retro_workout_enabled',
   'challenges',
   'free_workout',
+  'nutrition_intake',
 ];
 
 /**
@@ -91,7 +97,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
  * rollout gradual de algo novo, é PAUSA de algo que já existia em produção
  * (Free + Pro) até set/2026. Ver o comentário em FREE_PRODUCT_FEATURES.
  */
-const ROLLOUT_ONLY_FEATURES: string[] = ['readiness', 'nutrition_intake', 'voice_workout'];
+const ROLLOUT_ONLY_FEATURES: string[] = ['readiness', 'voice_workout'];
 
 const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog
   .map((row) => row[0] as string)

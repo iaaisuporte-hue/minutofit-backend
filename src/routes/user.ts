@@ -36,6 +36,19 @@ import {
   type NutritionObjective,
   type ActivityLevel,
 } from '../services/nutritionTarget';
+import {
+  parseAndResolve,
+  persistIntakeLog,
+  getDayLogs,
+  softDeleteLog,
+  setFavorite,
+  getShortcuts,
+  classifyDayCoverage,
+  ValidationError as IntakeValidationError,
+  type IntakeItemRequest,
+} from '../services/nutritionIntakeService';
+import { dayKey } from '../utils/appDay';
+import { searchCatalogFoods } from '../services/nutritionFoodService';
 
 const router = Router();
 registerNumericParams(router, ['planId', 'mealId', 'id']);
@@ -447,6 +460,160 @@ router.put('/nutrition-target', authMiddleware, requireFeature('nutrition_intake
   } catch (err: any) {
     logger.error({ err }, '[user/nutrition-target PUT]');
     res.status(500).json({ success: false, error: 'Failed to save nutrition target' });
+  }
+});
+
+// ===========================================================================
+// Registro rápido de refeição (PLAN_NUTRITION_QUICK_MACROS, P1B)
+// ===========================================================================
+
+// Busca no catálogo (TACO) para o aluno resolver manualmente um item "?" que
+// o parser não reconheceu — mesmo dado licenciado/não sensível já exposto ao
+// nutri em `/nutri/foods`, só que do lado do aluno.
+router.get('/nutrition-foods/search', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const limit = Number(req.query.limit) || 10;
+    const foods = await searchCatalogFoods(q, limit);
+    res.json({ success: true, data: foods });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-foods/search]');
+    res.status(500).json({ success: false, error: 'Failed to search foods' });
+  }
+});
+
+router.post('/nutrition-intake/parse', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const text = typeof req.body?.text === 'string' ? req.body.text : '';
+    if (!text.trim()) return res.status(400).json({ success: false, error: 'text é obrigatório' });
+    const preview = await parseAndResolve(text);
+    res.json({ success: true, data: preview });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-intake/parse]');
+    res.status(500).json({ success: false, error: 'Failed to parse intake text' });
+  }
+});
+
+router.post('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const { label, rawText, mealId, items, source } = req.body ?? {};
+    const validSources = ['parse', 'parse_ai', 'manual', 'repeat', 'favorite', 'plan'];
+    if (!validSources.includes(source)) {
+      return res.status(400).json({ success: false, error: `source deve ser um de: ${validSources.join(', ')}` });
+    }
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ success: false, error: 'items é obrigatório' });
+    }
+
+    const log = await persistIntakeLog({
+      userId,
+      label: typeof label === 'string' ? label : '',
+      rawText: typeof rawText === 'string' ? rawText : null,
+      mealId: Number.isFinite(Number(mealId)) ? Number(mealId) : null,
+      items: items as IntakeItemRequest[],
+      source,
+    });
+
+    res.status(201).json({ success: true, data: log });
+  } catch (err: any) {
+    if (err instanceof IntakeValidationError) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    logger.error({ err }, '[user/nutrition-intake POST]');
+    res.status(500).json({ success: false, error: 'Failed to save intake log' });
+  }
+});
+
+router.get('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
+      ? req.query.date
+      : dayKey();
+
+    const [logs, plan, selfRow] = await Promise.all([
+      getDayLogs(userId, date),
+      getUserActivePlan(userId),
+      pool.query(
+        `SELECT energy_kcal, protein_g, carbohydrate_g, fat_g, meals_per_day
+           FROM user_nutrition_targets WHERE user_id = $1 LIMIT 1`,
+        [userId]
+      ),
+    ]);
+
+    const selfTarget = selfRow.rows[0]
+      ? {
+          energyKcal: Number(selfRow.rows[0].energy_kcal),
+          proteinG: Number(selfRow.rows[0].protein_g),
+          carbohydrateG: Number(selfRow.rows[0].carbohydrate_g),
+          fatG: Number(selfRow.rows[0].fat_g),
+          mealsPerDay: Number(selfRow.rows[0].meals_per_day),
+        }
+      : null;
+
+    const target = resolveNutritionTarget({
+      planDayTotals: plan?.dayTotals ?? null,
+      planMealsCount: plan?.meals?.length ?? null,
+      selfTarget,
+    });
+
+    const totals = logs.reduce(
+      (acc, l) => ({
+        energyKcal: acc.energyKcal + l.energyKcal,
+        proteinG: acc.proteinG + l.proteinG,
+        carbohydrateG: acc.carbohydrateG + l.carbohydrateG,
+        fatG: acc.fatG + l.fatG,
+      }),
+      { energyKcal: 0, proteinG: 0, carbohydrateG: 0, fatG: 0 }
+    );
+    const coverage = classifyDayCoverage(logs, target?.mealsPerDay ?? 3);
+
+    res.json({ success: true, data: { date, logs, totals, coverage, target } });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-intake GET]');
+    res.status(500).json({ success: false, error: 'Failed to load intake logs' });
+  }
+});
+
+router.delete('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'Invalid id' });
+    const ok = await softDeleteLog(req.user!.id, id);
+    if (!ok) return res.status(404).json({ success: false, error: 'Log not found' });
+    res.json({ success: true });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-intake DELETE]');
+    res.status(500).json({ success: false, error: 'Failed to delete intake log' });
+  }
+});
+
+router.patch('/nutrition-intake/:id/favorite', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'Invalid id' });
+    const favorite = Boolean(req.body?.favorite);
+    const ok = await setFavorite(req.user!.id, id, favorite);
+    if (!ok) return res.status(404).json({ success: false, error: 'Log not found' });
+    res.json({ success: true });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-intake/:id/favorite]');
+    res.status(500).json({ success: false, error: 'Failed to update favorite' });
+  }
+});
+
+router.get('/nutrition-intake/shortcuts', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const userId = req.user!.id;
+    const [shortcuts, plan] = await Promise.all([getShortcuts(userId), getUserActivePlan(userId)]);
+    const planMeals = (plan?.meals ?? [])
+      .filter((m: any) => Array.isArray(m.items) && m.items.length > 0)
+      .map((m: any) => ({ mealId: m.id, name: m.name, items: m.items }));
+    res.json({ success: true, data: { ...shortcuts, planMeals } });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-intake/shortcuts]');
+    res.status(500).json({ success: false, error: 'Failed to load shortcuts' });
   }
 });
 

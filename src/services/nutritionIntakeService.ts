@@ -483,6 +483,67 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
   return mapRow(rows[0]);
 }
 
+export interface IntakeLogUpdateInput {
+  label: string;
+  rawText?: string | null;
+  items: IntakeItemRequest[];
+  source: 'parse' | 'parse_ai' | 'manual' | 'repeat' | 'favorite' | 'plan';
+}
+
+/**
+ * Edição de um log já persistido (PLAN P1B corrective — "Consulta + Edição
+ * de Refeição Registrada"). Reusa os MESMOS resolvers de `persistIntakeLog`
+ * — todo item é revalidado e recalculado no servidor a partir do catálogo
+ * atual, nunca aceita totais/kcal do cliente como autoridade. Preserva
+ * `date_key`/`logged_at`/`meal_id` originais (não fazem parte do input) —
+ * editar o que o usuário declarou ter comido nunca migra o registro para
+ * "hoje" nem move o horário; `updated_at` marca que houve edição.
+ * `resolvePlanItem` só LÊ `nutrition_plan_meals`/`nutrition_meal_items` —
+ * a prescrição do Nutri nunca é escrita por este caminho (§8). Ownership
+ * via `WHERE id=$1 AND user_id=$2` no próprio UPDATE — mesmo padrão já
+ * usado por `softDeleteLog`/`setFavorite`; `rows.length === 0` cobre tanto
+ * "não existe" quanto "log de outro usuário" quanto "já apagado".
+ */
+export async function updateIntakeLog(userId: number, id: number, input: IntakeLogUpdateInput): Promise<IntakeLogRecord | null> {
+  const label = input.label?.trim();
+  if (!label) throw new ValidationError('label_required');
+  if (label.length > 80) throw new ValidationError('label_too_long');
+  if (!Array.isArray(input.items) || input.items.length === 0) throw new ValidationError('items_required');
+
+  const resolved: PersistedIntakeItem[] = [];
+  for (const item of input.items) {
+    if (item.kind === 'food') resolved.push(await resolveFoodItem(item));
+    else if (item.kind === 'manual') resolved.push(resolveManualItem(item));
+    else if (item.kind === 'plan') resolved.push(await resolvePlanItem(userId, item));
+    else throw new ValidationError('invalid_item_kind');
+  }
+
+  const totals = sumNutrients(resolved.map((i) => ({
+    energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
+    fiberG: i.fiberG, sodiumMg: null,
+  })));
+
+  const totalKcal = resolved.reduce((s, i) => s + i.energyKcal, 0);
+  const confidenceScore = totalKcal > 0
+    ? resolved.reduce((s, i) => s + i.energyKcal * RESOLVER_WEIGHT[i.resolver], 0) / totalKcal
+    : RESOLVER_WEIGHT[resolved[0].resolver];
+
+  const { rows } = await pool.query(
+    `UPDATE user_nutrition_intake_logs SET
+       label = $3, raw_text = $4, energy_kcal = $5, protein_g = $6, carbohydrate_g = $7, fat_g = $8,
+       fiber_g = $9, fiber_partial = $10, items = $11, confidence_score = $12, source = $13, updated_at = NOW()
+     WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+     RETURNING *`,
+    [
+      id, userId, label, input.rawText ?? null,
+      totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
+      totals.fiberG, totals.fiberPartial,
+      JSON.stringify(resolved), Math.round(confidenceScore * 100) / 100, input.source,
+    ]
+  );
+  return rows.length ? mapRow(rows[0]) : null;
+}
+
 export async function getDayLogs(userId: number, dateKey: string): Promise<IntakeLogRecord[]> {
   const { rows } = await pool.query(
     `SELECT * FROM user_nutrition_intake_logs

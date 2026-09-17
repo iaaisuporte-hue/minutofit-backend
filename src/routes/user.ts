@@ -39,6 +39,7 @@ import {
 import {
   parseAndResolve,
   persistIntakeLog,
+  updateIntakeLog,
   getDayLogs,
   softDeleteLog,
   setFavorite,
@@ -592,6 +593,41 @@ router.delete('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition
   } catch (err: any) {
     logger.error({ err }, '[user/nutrition-intake DELETE]');
     res.status(500).json({ success: false, error: 'Failed to delete intake log' });
+  }
+});
+
+// PLAN P1B corrective ("Consulta + Edição de Refeição Registrada") —
+// edição de conteúdo do log. Nunca aceita `dateKey`/`loggedAt`/`mealId` do
+// cliente (preserva o registro original, §9); ownership via
+// `updateIntakeLog` (mesmo padrão de `softDeleteLog`/`setFavorite`).
+router.patch('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'Invalid id' });
+
+    const { label, rawText, items, source } = req.body ?? {};
+    const validSources = ['parse', 'parse_ai', 'manual', 'repeat', 'favorite', 'plan'];
+    if (!validSources.includes(source)) {
+      return res.status(400).json({ success: false, error: `source deve ser um de: ${validSources.join(', ')}` });
+    }
+    if (!Array.isArray(items)) {
+      return res.status(400).json({ success: false, error: 'items é obrigatório' });
+    }
+
+    const log = await updateIntakeLog(req.user!.id, id, {
+      label: typeof label === 'string' ? label : '',
+      rawText: typeof rawText === 'string' ? rawText : null,
+      items: items as IntakeItemRequest[],
+      source,
+    });
+    if (!log) return res.status(404).json({ success: false, error: 'Log not found' });
+    res.json({ success: true, data: log });
+  } catch (err: any) {
+    if (err instanceof IntakeValidationError) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    logger.error({ err }, '[user/nutrition-intake PATCH]');
+    res.status(500).json({ success: false, error: 'Failed to update intake log' });
   }
 });
 

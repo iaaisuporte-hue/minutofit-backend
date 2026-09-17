@@ -402,6 +402,148 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
   });
 
+  // PLAN P1B corrective — "Consulta + Edição de Refeição Registrada".
+  describe('updateIntakeLog — edição de conteúdo (recálculo server-side)', () => {
+    it('UPDATE: "2 ovos" → "3 ovos" recalcula macros sem duplicar registro', async () => {
+      const ovo = (await svc.parseAndResolve('2 ovos')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Café', items: [{ kind: 'food', foodId: ovo.foodId!, quantity: ovo.grams!, unitType: 'grams' }], source: 'manual',
+      });
+
+      const updated = await svc.updateIntakeLog(userId, log.id, {
+        label: 'Café', items: [{ kind: 'food', foodId: ovo.foodId!, quantity: ovo.grams! * 1.5, unitType: 'grams' }], source: 'manual',
+      });
+
+      expect(updated?.id).toBe(log.id); // mesmo registro, nunca um segundo
+      expect(updated!.energyKcal).toBeGreaterThan(log.energyKcal);
+      expect(updated!.dateKey).toBe(log.dateKey); // data original preservada (§9)
+
+      const logs = await svc.getDayLogs(userId, log.dateKey);
+      expect(logs.filter((l) => l.label === 'Café')).toHaveLength(1); // sem duplicação
+    });
+
+    it('ADD ITEM: editar para incluir um alimento novo aumenta o total', async () => {
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Almoço', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }], source: 'manual',
+      });
+
+      const frango = (await svc.parseAndResolve('100g de frango grelhado')).items[0];
+      const updated = await svc.updateIntakeLog(userId, log.id, {
+        label: 'Almoço',
+        items: [
+          { kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' },
+          { kind: 'food', foodId: frango.foodId!, quantity: 100, unitType: 'grams' },
+        ],
+        source: 'manual',
+      });
+
+      expect(updated!.items).toHaveLength(2);
+      expect(updated!.energyKcal).toBeGreaterThan(log.energyKcal);
+    });
+
+    it('REMOVE ITEM: editar para remover um alimento reduz o total', async () => {
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const frango = (await svc.parseAndResolve('100g de frango grelhado')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Almoço',
+        items: [
+          { kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' },
+          { kind: 'food', foodId: frango.foodId!, quantity: 100, unitType: 'grams' },
+        ],
+        source: 'manual',
+      });
+
+      const updated = await svc.updateIntakeLog(userId, log.id, {
+        label: 'Almoço', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }], source: 'manual',
+      });
+
+      expect(updated!.items).toHaveLength(1);
+      expect(updated!.energyKcal).toBeLessThan(log.energyKcal);
+    });
+
+    it('OWNERSHIP: usuário A não pode editar log do usuário B', async () => {
+      const other = await createUser(client, TAG, 'outro-update');
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId: other, label: 'Café', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }], source: 'manual',
+      });
+
+      const result = await svc.updateIntakeLog(userId, log.id, {
+        label: 'Hackeado', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 999, unitType: 'grams' }], source: 'manual',
+      });
+      expect(result).toBeNull();
+
+      // Confirma que nada mudou no log da vítima.
+      const logsOther = await svc.getDayLogs(other, log.dateKey);
+      expect(logsOther[0].label).toBe('Café');
+
+      await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [other]);
+      await client.query(`DELETE FROM users WHERE id = $1`, [other]);
+    });
+
+    it('editar log inexistente/já apagado devolve null (404 lógico)', async () => {
+      const result = await svc.updateIntakeLog(userId, 999999999, {
+        label: 'x', items: [{ kind: 'manual', name: 'x', energyKcal: 10, proteinG: 1, carbohydrateG: 1, fatG: 1 }], source: 'manual',
+      });
+      expect(result).toBeNull();
+    });
+
+    it('valida itens da mesma forma que a criação (label vazio rejeitado)', async () => {
+      const arroz = (await svc.parseAndResolve('100g de arroz tipo 1 cozido')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Café', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }], source: 'manual',
+      });
+      await expect(
+        svc.updateIntakeLog(userId, log.id, { label: '', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }], source: 'manual' })
+      ).rejects.toThrow('label_required');
+    });
+
+    describe('PLAN SAFETY — editar intake nunca modifica a prescrição do Nutri', () => {
+      it('editar um log com item "plan" não altera nutrition_plan_meals/nutrition_meal_items', async () => {
+        const nutriId = await createUser(client, TAG, 'nutri-safety');
+        const patientId = await createUser(client, TAG, 'paciente-safety');
+        const plan = await client.query(
+          `INSERT INTO nutrition_plans (nutri_id, patient_id, title, objective, status)
+           VALUES ($1, $2, 'Plano teste', 'maintenance', 'active') RETURNING id`,
+          [nutriId, patientId]
+        );
+        const meal = await client.query(
+          `INSERT INTO nutrition_plan_meals (plan_id, name, orientation) VALUES ($1, 'Almoço', 'x') RETURNING id`,
+          [plan.rows[0].id]
+        );
+        const item = await client.query(
+          `INSERT INTO nutrition_meal_items
+             (meal_id, food_id, quantity, unit_type, grams, food_name_snapshot,
+              energy_kcal_snapshot, protein_g_snapshot, carbohydrate_g_snapshot, fat_g_snapshot)
+           VALUES ($1, 1, 100, 'grams', 100, 'Arroz snapshot', 128, 2.5, 28, 0.2)
+           RETURNING id`,
+          [meal.rows[0].id]
+        );
+        const planMealItemId = item.rows[0].id;
+        const mealSnapshotBefore = await client.query(`SELECT * FROM nutrition_plan_meals WHERE id = $1`, [meal.rows[0].id]);
+        const itemSnapshotBefore = await client.query(`SELECT * FROM nutrition_meal_items WHERE id = $1`, [planMealItemId]);
+
+        const log = await svc.persistIntakeLog({
+          userId: patientId, label: 'Como no plano', items: [{ kind: 'plan', planMealItemId }], source: 'plan',
+        });
+        const manual = { kind: 'manual' as const, name: 'Extra', energyKcal: 50, proteinG: 1, carbohydrateG: 5, fatG: 1 };
+        const updated = await svc.updateIntakeLog(patientId, log.id, {
+          label: 'Como no plano + extra', items: [{ kind: 'plan', planMealItemId }, manual], source: 'plan',
+        });
+        expect(updated!.items).toHaveLength(2);
+
+        const mealSnapshotAfter = await client.query(`SELECT * FROM nutrition_plan_meals WHERE id = $1`, [meal.rows[0].id]);
+        const itemSnapshotAfter = await client.query(`SELECT * FROM nutrition_meal_items WHERE id = $1`, [planMealItemId]);
+        expect(mealSnapshotAfter.rows[0]).toEqual(mealSnapshotBefore.rows[0]);
+        expect(itemSnapshotAfter.rows[0]).toEqual(itemSnapshotBefore.rows[0]);
+
+        await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [patientId]);
+        await client.query(`DELETE FROM nutrition_plans WHERE nutri_id = $1`, [nutriId]);
+      });
+    });
+  });
+
   describe('classifyDayCoverage', () => {
     const mkLog = (kcal: number, confidence: number) => ({ energyKcal: kcal, confidenceScore: confidence } as any);
 

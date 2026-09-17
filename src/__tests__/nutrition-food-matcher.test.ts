@@ -53,6 +53,90 @@ describe('nutritionFoodMatcher — corpus real (582 itens TACO)', () => {
   });
 
   // -------------------------------------------------------------------------
+  // PREPARAÇÕES (adendo) — "2 ovos fritos" e a separação quantidade/alimento
+  // base/preparo. O matcher recebe a `foodQuery` já separada pelo parser
+  // (ver `nutrition-intake-parser.test.ts` e o teste de integração para a
+  // separação quantidade↔alimento); aqui testamos que a QUERY já-separada
+  // ("ovo fritos", "ovo frito"...) resolve certo, e que preparo nunca é
+  // descartado silenciosamente em favor do alimento genérico (§4/§5).
+  // -------------------------------------------------------------------------
+  describe('PREPARAÇÕES — regressão "2 ovos fritos" e correlatos', () => {
+    it.each(['ovo fritos', 'ovo frito', 'ovos fritos'])(
+      '"%s" resolve para "Ovo, de galinha, inteiro, frito" — preparo nunca descartado',
+      (query) => {
+        const r = matchFood(query, index);
+        expect(r.resolved).toBe(true);
+        expect(r.entry?.name).toBe('Ovo, de galinha, inteiro, frito');
+        // "não exigir busca manual em caso inequívoco" — medium/high dispensam
+        // busca manual (só "confirme"/"usar este"); nunca precisa ser unresolved.
+        expect(['high', 'medium']).toContain(r.confidence);
+      },
+    );
+
+    it('"frango grelhado" resolve para o peito sem pele grelhado (não para "coração grelhado", que tem menos tokens extra)', () => {
+      const r = matchFood('frango grelhado', index);
+      expect(r.resolved).toBe(true);
+      expect(r.entry?.name).toBe('Frango, peito, sem pele, grelhado');
+      expect(r.confidence).toBe('high');
+    });
+
+    it('"arroz cozido" resolve para "Arroz, tipo 1, cozido"', () => {
+      const r = matchFood('arroz cozido', index);
+      expect(r).toMatchObject({ resolved: true, confidence: 'high' });
+      expect(r.entry?.name).toBe('Arroz, tipo 1, cozido');
+    });
+
+    // -----------------------------------------------------------------------
+    // Contraste (§9) — preparo explícito NUNCA pode ser confundido com outro
+    // preparo, nem com variante diferente, mesmo quando o alimento base bate.
+    // -----------------------------------------------------------------------
+    describe('contraste — preparo não pode virar outro preparo/variante', () => {
+      it('"ovo frito" nunca vira "ovo de codorna" nem "ovo cru"', () => {
+        const r = matchFood('ovo frito', index);
+        expect(r.entry?.name).not.toBe('Ovo, de codorna, inteiro, cru');
+        expect(r.entry?.name).not.toBe('Ovo, de galinha, inteiro, cru');
+      });
+
+      it('"frango grelhado" nunca vira "frango cru"', () => {
+        const r = matchFood('frango grelhado', index);
+        expect(r.entry?.name).not.toMatch(/cru$/);
+      });
+
+      it('"leite desnatado" nunca vira "leite integral" (variantes opostas)', () => {
+        const r = matchFood('leite desnatado', index);
+        if (r.resolved) expect(r.entry?.name).not.toMatch(/integral/i);
+      });
+    });
+
+    // -----------------------------------------------------------------------
+    // Gaps documentados (§13) — preparo/variante sem candidato dominante no
+    // catálogo. Nunca fabricamos um default aqui: o correto é pedir
+    // confirmação (medium/low), nunca ficar "high" por sorte de empate.
+    // -----------------------------------------------------------------------
+    describe('gaps documentados — sem candidato dominante, exige confirmação', () => {
+      it('"ovo mexidos" não existe no catálogo TACO — nunca confiança high', () => {
+        const r = matchFood('ovo mexidos', index);
+        if (r.resolved) expect(r.confidence).not.toBe('high');
+      });
+
+      it('"frango assado" é ambíguo (coxa/sobrecoxa/inteiro assados, sem default curado) — nunca high', () => {
+        const r = matchFood('frango assado', index);
+        if (r.resolved) expect(r.confidence).not.toBe('high');
+      });
+
+      it('"arroz integral" sem cru/cozido é ambíguo — nunca high', () => {
+        const r = matchFood('arroz integral', index);
+        if (r.resolved) expect(r.confidence).not.toBe('high');
+      });
+
+      it('"ovo cozido" bare empata entre clara/gema/inteiro — nunca high', () => {
+        const r = matchFood('ovo cozido', index);
+        if (r.resolved) expect(r.confidence).not.toBe('high');
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // EXACT
   // -------------------------------------------------------------------------
   describe('EXACT', () => {

@@ -30,8 +30,40 @@ export function normalizeFoodText(s: string): string {
     .trim();
 }
 
+/**
+ * Preparo (PLAN P1B corrective, adendo "Preparações, modificadores e
+ * composição semântica") — lista pequena, derivada da vocabulário REAL do
+ * catálogo TACO (582 itens), não inventada: `cru`(118)/`crua`(109),
+ * `cozido`(35)/`cozida`(27), `grelhado`(14)/`grelhada`(8), `frito`(12)/
+ * `frita`(13), `assado`(12)/`assada`(8), `refogado`(4)/`refogada`(4) — as
+ * únicas formas com presença relevante; `mexido`/`ensopado`/`defumado`/
+ * `curado`/`temperado` não aparecem (ou aparecem 0-1x) e ficam de fora por
+ * não terem utilidade real de matching (§3 do adendo). O catálogo nunca usa
+ * plural ("fritos"/"cozidos" têm 0 ocorrências) — plural é sempre forma do
+ * USUÁRIO ("2 ovos fritos"), por isso cada lema cobre singular+plural nos
+ * dois gêneros. Normalização morfológica controlada, não NLP pesado (§6).
+ *
+ * Preparo é semanticamente diferente de VARIANTE ("banana prata", "arroz
+ * integral", "pão francês" — §7): só as palavras desta lista pequena são
+ * lematizadas; qualquer outra palavra (variante, marca, corte) continua
+ * intacta e participa da pontuação normalmente — nunca é descartada.
+ */
+const PREPARATION_LEMMAS: Record<string, string> = {
+  cru: 'cru', crua: 'cru', crus: 'cru', cruas: 'cru',
+  cozido: 'cozido', cozida: 'cozido', cozidos: 'cozido', cozidas: 'cozido',
+  grelhado: 'grelhado', grelhada: 'grelhado', grelhados: 'grelhado', grelhadas: 'grelhado',
+  frito: 'frito', frita: 'frito', fritos: 'frito', fritas: 'frito',
+  assado: 'assado', assada: 'assado', assados: 'assado', assadas: 'assado',
+  refogado: 'refogado', refogada: 'refogado', refogados: 'refogado', refogadas: 'refogado',
+};
+
+/** Aplica o lema de preparo quando o token é uma inflexão conhecida; senão devolve o token como está. */
+function lemmatizePreparation(token: string): string {
+  return PREPARATION_LEMMAS[token] ?? token;
+}
+
 function tokenize(s: string): string[] {
-  return s.split(' ').filter(Boolean);
+  return s.split(' ').filter(Boolean).map(lemmatizePreparation);
 }
 
 // Palavras de ligação do próprio nome TACO ("Farinha, DE mandioca, crua") —
@@ -44,6 +76,7 @@ export interface FoodIndexEntry {
   id: number;
   name: string;
   normalizedName: string;
+  /** Tokens já com preparo lematizado ("fritos"→"frito") — ver `PREPARATION_LEMMAS`. */
   tokens: string[];
   /** 1º segmento do nome TACO antes da vírgula, normalizado — ex. "pao" em "Pão, trigo, francês". */
   firstSegment: string;
@@ -74,6 +107,20 @@ export function buildFoodIndex(foods: Array<{ id: number; name: string; normaliz
 // "jerimum", que têm 6 variedades no catálogo sem nenhuma medida curada)
 // ficam DE FORA de propósito — a resolução correta ali é perguntar, não
 // escolher (PLAN §22).
+//
+// "arroz cozido"/"frango grelhado" (adendo "preparações") entraram pelo
+// mesmo critério (b): o fuzzy por token JÁ encontra o candidato certo com
+// boa margem para essas duas frases específicas, mas ele também encontra
+// candidatos-ruído com o MESMO preparo em partes menos comuns do alimento
+// ("Frango, coração, grelhado" tem menos tokens extra que "Frango, peito,
+// sem pele, grelhado" e vence por ter menos penalidade de token não
+// explicado) — a mesma classe de problema do "arroz carreteiro" antes do
+// alias de "arroz" bare. Alias curto-circuita antes do fuzzy rodar, então
+// nem entra em jogo. NÃO adicionamos "frango assado" (várias partes
+// assadas sem default claro nem medida curada — ambíguo de verdade, cai em
+// fuzzy/confirmação, PLAN §22) nem "arroz integral"/"ovo cozido" bare (cru
+// vs cozido, ou clara/gema/inteiro, empatam exatamente no fuzzy — sem base
+// para escolher um sobre o outro sem inventar critério arbitrário).
 // ---------------------------------------------------------------------------
 export const FOOD_ALIASES: Record<string, string> = {
   'pao frances': 'pao trigo frances',
@@ -83,8 +130,10 @@ export const FOOD_ALIASES: Record<string, string> = {
   aipim: 'mandioca cozida',
   ovo: 'ovo de galinha inteiro cru',
   arroz: 'arroz tipo 1 cozido',
+  'arroz cozido': 'arroz tipo 1 cozido',
   feijao: 'feijao carioca cozido',
   frango: 'frango peito sem pele grelhado',
+  'frango grelhado': 'frango peito sem pele grelhado',
   banana: 'banana prata crua',
 };
 

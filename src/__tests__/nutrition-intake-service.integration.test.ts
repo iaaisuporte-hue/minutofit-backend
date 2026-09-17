@@ -109,6 +109,43 @@ describeWithDb('nutritionIntakeService (integration)', () => {
         },
       );
     });
+
+    // Adendo "Preparações" §10 — regressão obrigatória: "2 ovos fritos" não
+    // pode virar "2 ovos" (preparo descartado) nem ficar unresolved.
+    describe('regressão — "2 ovos fritos" (preparo nunca descartado)', () => {
+      it.each(['2 ovos fritos', '2 ovo frito', '200g de frango grelhado', '150 gramas de arroz cozido', '1 banana prata'])(
+        '"%s": alimento (com preparo/variante quando existir) identificado, kcal calculado, sem busca manual',
+        async (input) => {
+          const preview = await svc.parseAndResolve(input);
+          expect(preview.items).toHaveLength(1);
+          const item = preview.items[0];
+          expect(item.resolved).toBe(true);
+          expect(item.grams).toBeGreaterThan(0);
+          expect(item.energyKcal).toBeGreaterThan(0);
+          expect(['high', 'medium']).toContain(item.confidence);
+        },
+      );
+
+      it('"2 ovos fritos" identifica especificamente o ovo FRITO, não o cru genérico', async () => {
+        const preview = await svc.parseAndResolve('2 ovos fritos');
+        expect(preview.items[0].name).toBe('Ovo, de galinha, inteiro, frito');
+      });
+
+      it('"200g de frango grelhado" identifica o peito grelhado (não outra parte/preparo)', async () => {
+        const preview = await svc.parseAndResolve('200g de frango grelhado');
+        expect(preview.items[0].name).toBe('Frango, peito, sem pele, grelhado');
+        expect(preview.items[0].confidence).toBe('high');
+      });
+
+      // Gap documentado (§13): "mexido" não existe no catálogo TACO — nunca
+      // fabricamos macro para ele; a diferença visível é a confiança, não a
+      // ausência de item.
+      it('"2 ovos mexidos": catálogo não tem "mexido" — nunca confiança high', async () => {
+        const preview = await svc.parseAndResolve('2 ovos mexidos');
+        const item = preview.items[0];
+        if (item.resolved) expect(item.confidence).not.toBe('high');
+      });
+    });
   });
 
   describe('persistIntakeLog — nunca persiste item não resolvido', () => {

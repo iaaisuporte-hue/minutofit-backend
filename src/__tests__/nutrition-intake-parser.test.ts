@@ -134,4 +134,36 @@ describe('nutritionIntakeParser', () => {
     const [t] = parseIntakeText('200g de frango');
     expect(t.rawText).toBe('200g de frango');
   });
+
+  // Adendo "Preparações" — quantidade e "alimento + preparo" são
+  // responsabilidades separadas (§1/§11): o parser só separa QUANTIDADE de
+  // "o resto"; é o resolver (`nutritionFoodMatcher`) quem lematiza o preparo
+  // dentro desse "resto" na hora de pontuar candidatos — o parser nunca
+  // descarta a palavra de preparo, só não sabe (nem precisa saber) o que ela
+  // significa.
+  describe('separação quantidade × "alimento + preparo" (preparo nunca descartado aqui)', () => {
+    it('"2 ovos fritos": quantidade=2, foodQuery carrega alimento E preparo intactos', () => {
+      const [t] = parseIntakeText('2 ovos fritos');
+      expect(t.quantity).toBe(2);
+      expect(t.foodQuery).toBe('ovo fritos');
+    });
+
+    it('"200g de frango grelhado": quantidade em gramas, foodQuery = alimento + preparo', () => {
+      const [t] = parseIntakeText('200g de frango grelhado');
+      expect(t).toMatchObject({ quantity: 200, unitType: 'grams' });
+      expect(t.foodQuery).toBe('frango grelhado');
+    });
+
+    it('"150 gramas de arroz cozido"', () => {
+      const [t] = parseIntakeText('150 gramas de arroz cozido');
+      expect(t).toMatchObject({ quantity: 150, unitType: 'grams' });
+      expect(t.foodQuery).toBe('arroz cozido');
+    });
+
+    it('"1 banana prata": quantidade=1, foodQuery preserva a variante "prata"', () => {
+      const [t] = parseIntakeText('1 banana prata');
+      expect(t.quantity).toBe(1);
+      expect(t.foodQuery).toBe('banana prata');
+    });
+  });
 });

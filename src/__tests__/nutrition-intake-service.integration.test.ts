@@ -86,6 +86,29 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       expect(preview.totals.energyKcal).toBeGreaterThan(0);
       expect(preview.items[1].resolved).toBe(false);
     });
+
+    // PLAN P1B corrective §21 — regressão obrigatória do bug relatado no QA:
+    // "1 pão francês" virava unresolved (ILIKE substring não contíguo falha
+    // contra "Pão, TRIGO, francês") e o total mostrava "≈0 kcal".
+    describe('regressão — "1 pão francês" (bug relatado no QA)', () => {
+      it.each(['1 pão francês', '1 pao frances', '1 pão françes', '1 pao francez'])(
+        '"%s": alimento correto, medida resolvida, kcal calculado, sem busca manual',
+        async (input) => {
+          const preview = await svc.parseAndResolve(input);
+          expect(preview.items).toHaveLength(1);
+          const item = preview.items[0];
+          expect(item.resolved).toBe(true);
+          expect(item.name).toBe('Pão, trigo, francês');
+          expect(item.grams).toBeGreaterThan(0);
+          expect(item.energyKcal).toBeGreaterThan(0);
+          expect(item.confidence).not.toBeUndefined();
+          // High ou medium — em qualquer caso o usuário chega a "Confirmar"
+          // sem precisar abrir busca manual (medium exige toque em "Usar
+          // este", não digitar/buscar de novo).
+          expect(['high', 'medium']).toContain(item.confidence);
+        },
+      );
+    });
   });
 
   describe('persistIntakeLog — nunca persiste item não resolvido', () => {
@@ -183,6 +206,27 @@ describeWithDb('nutritionIntakeService (integration)', () => {
         source: 'parse',
       });
       expect(log.items[0].confidence).toBe('low');
+      expect(log.items[0].confirmed).toBe(true);
+    });
+
+    it('item de confiança MEDIUM (fuzzy "você quis dizer") também exige confirmação', async () => {
+      const preview = await svc.parseAndResolve('100g de leite integral');
+      const item = preview.items[0];
+      expect(item.confidence).toBe('medium');
+      await expect(
+        svc.persistIntakeLog({
+          userId, label: 'Teste',
+          items: [{ kind: 'food', foodId: item.foodId!, quantity: 100, unitType: 'grams', rawText: '100g de leite integral', confirmed: false }],
+          source: 'parse',
+        })
+      ).rejects.toThrow('low_confidence_item_needs_confirmation');
+
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Teste',
+        items: [{ kind: 'food', foodId: item.foodId!, quantity: 100, unitType: 'grams', rawText: '100g de leite integral', confirmed: true }],
+        source: 'parse',
+      });
+      expect(log.items[0].confidence).toBe('medium');
       expect(log.items[0].confirmed).toBe(true);
     });
 

@@ -1,5 +1,6 @@
 import pool from '../config/database';
 import { logDataAccessEvent } from './dataAccessAuditService';
+import { buildFoodIndex, type FoodIndexEntry } from './nutritionFoodMatcher';
 
 // ---------------------------------------------------------------------------
 // SPEC 038 (P3A) — catálogo de alimentos (TACO) + alimentos customizados do
@@ -130,6 +131,30 @@ function mapCatalogRow(r: any): FoodSummary {
     fiberG: r.fiber_g == null ? null : Number(r.fiber_g),
     sodiumMg: r.sodium_mg == null ? null : Number(r.sodium_mg),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Índice em memória para o fuzzy matcher (PLAN §17/§18) — o catálogo TACO
+// tem algumas centenas de linhas (582), não milhões: cachear em memória e
+// escorar o matching em `nutritionFoodMatcher.ts` evita N queries por
+// candidato e qualquer infraestrutura nova (Redis/Elasticsearch/vetorial,
+// explicitamente fora de escopo). Cache de processo simples, sem TTL — o
+// catálogo só muda por seed/migration (boot), nunca em runtime; testes que
+// precisem de um catálogo diferente chamam `invalidateFoodIndexCache()`.
+// ---------------------------------------------------------------------------
+let foodIndexCache: FoodIndexEntry[] | null = null;
+
+export function invalidateFoodIndexCache(): void {
+  foodIndexCache = null;
+}
+
+export async function getFoodIndex(): Promise<FoodIndexEntry[]> {
+  if (foodIndexCache) return foodIndexCache;
+  const { rows } = await pool.query(
+    `SELECT id, name, normalized_name FROM nutrition_foods WHERE is_active`,
+  );
+  foodIndexCache = buildFoodIndex(rows.map((r) => ({ id: r.id, name: r.name, normalizedName: r.normalized_name })));
+  return foodIndexCache;
 }
 
 export async function getCatalogFoodById(id: number): Promise<FoodSummary | null> {

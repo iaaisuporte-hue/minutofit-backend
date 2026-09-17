@@ -21,7 +21,8 @@ import pool from '../config/database';
 import { dayKey } from '../utils/appDay';
 import { parseIntakeText, type ParsedIntakeToken } from './nutritionIntakeParser';
 import { calculateNutrition, sumNutrients, type NutrientsPer100g } from './nutritionCalculation';
-import { searchCatalogFoods, getCatalogFoodById, listCatalogFoodMeasures, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
+import { getCatalogFoodById, listCatalogFoodMeasures, getFoodIndex, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
+import { matchFood, normalizeFoodText, type MatchConfidence } from './nutritionFoodMatcher';
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -40,9 +41,17 @@ export const FALLBACK_MEASURES_G: Record<string, number> = {
   fatia: 25,
 };
 
-/** Fallback por contagem de alimento quando não há palavra de medida ("2 ovos"). */
+/**
+ * Fallback por contagem de alimento quando não há palavra de medida
+ * ("2 ovos", "1 pão francês") — chave é a 1ª palavra da query já
+ * normalizada. `pao: 50` cobre a família pão francês/pãozinho (unidade
+ * padrão ~50g, mesma convenção já usada para `ovo`); não se aplica a pão de
+ * forma/pão integral em fatia — esses exigem palavra de medida própria
+ * ("1 fatia") e não caem neste fallback.
+ */
 export const FALLBACK_UNIT_FOOD_G: Record<string, number> = {
   ovo: 50,
+  pao: 50,
 };
 
 /** Peso de cada resolver no `confidence_score` do log (PLAN §8). */
@@ -55,7 +64,13 @@ export const RESOLVER_WEIGHT: Record<'catalog' | 'measure' | 'manual' | 'plan' |
 };
 
 export type IntakeItemResolver = 'catalog' | 'measure' | 'manual' | 'plan';
-export type IntakeConfidence = 'high' | 'low';
+/**
+ * `medium` é nova (PLAN P1B corrective §8/§9) — fuzzy match plausível mas
+ * não certo o bastante para entrar sem confirmação ("você quis dizer?").
+ * Tratada como `low` para efeito de persistência: ambas exigem
+ * `confirmed:true` (ver `resolveFoodItem`); a diferença é só de UX/telemetria.
+ */
+export type IntakeConfidence = MatchConfidence;
 
 export interface IntakePreviewItem {
   resolved: boolean;
@@ -74,33 +89,8 @@ export interface IntakePreviewItem {
   resolver?: IntakeItemResolver;
   confidence?: IntakeConfidence;
   confirmed?: boolean;
-}
-
-function simpleNormalize(s: string): string {
-  return s
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/**
- * "Match forte" o suficiente para confiança `high`: a query é o nome
- * completo OU o primeiro segmento (antes da vírgula) do alimento TACO —
- * ex. "ovo" bate com "Ovo, de galinha, inteiro, cru". Qualquer outro match
- * (query só aparece dentro de um segmento posterior, ou é um prefixo
- * parcial) fica `low` — a busca já garante substring contíguo (ILIKE), então
- * "fraco" aqui é sinônimo de "achou algo plausível, mas não é claramente
- * ISTO" — exatamente o caso que a confirmação explícita do usuário existe
- * para cobrir.
- */
-function isStrongMatch(foodName: string, query: string): boolean {
-  const normalized = simpleNormalize(foodName);
-  if (normalized === query) return true;
-  const firstSegment = simpleNormalize(foodName.split(',')[0]);
-  return firstSegment === query;
+  /** Top candidato(s) do fuzzy match — só populado quando `confidence` é `medium`/`low` (PLAN §14: UI "você quis dizer?", nunca detalhe técnico). */
+  matchScore?: number;
 }
 
 function toPer100g(food: FoodSummary): NutrientsPer100g {
@@ -128,30 +118,36 @@ const MEASURE_WORDS: Record<string, string[]> = {
 function findDbMeasure(measures: FoodMeasure[], canonical: string): FoodMeasure | null {
   const words = MEASURE_WORDS[canonical] ?? [canonical];
   return measures.find((m) => {
-    const n = simpleNormalize(m.name);
+    const n = normalizeFoodText(m.name);
     return words.every((w) => n.includes(w));
   }) ?? null;
 }
 
-async function searchCatalogWithPluralRetry(foodQuery: string): Promise<FoodSummary[]> {
-  const first = await searchCatalogFoods(foodQuery, 5);
-  if (first.length > 0) return first;
-  const words = foodQuery.split(' ');
-  if (words[0]?.length > 2 && words[0].endsWith('s')) {
-    const retryQuery = [words[0].slice(0, -1), ...words.slice(1)].join(' ');
-    return searchCatalogFoods(retryQuery, 5);
-  }
-  return [];
+/**
+ * Resolve o alimento de um token do parser contra o catálogo (PLAN P1B
+ * corrective) — pipeline alias → exato → fuzzy por token, sobre o índice em
+ * memória (`nutritionFoodMatcher.matchFood`), no lugar do antigo ILIKE
+ * substring-contíguo (que falhava sempre que uma palavra do TACO se
+ * intercalava entre os termos do usuário — "pao frances" nunca batia em
+ * "pao TRIGO frances"). Retorna o alimento completo (com macros) já
+ * carregado, ou `null` quando nenhum candidato plausível existe.
+ */
+async function resolveFoodForQuery(foodQuery: string): Promise<{ food: FoodSummary; resolver: IntakeItemResolver; confidence: IntakeConfidence; score: number } | null> {
+  const index = await getFoodIndex();
+  const match = matchFood(foodQuery, index);
+  if (!match.resolved || !match.entry) return null;
+  const food = await getCatalogFoodById(match.entry.id);
+  if (!food) return null;
+  return { food, resolver: 'catalog', confidence: match.confidence!, score: match.score ?? 0 };
 }
 
 /** Resolve um token do parser contra o catálogo — usado pelo preview (`/parse`). */
 export async function resolveTokenForPreview(token: ParsedIntakeToken): Promise<IntakePreviewItem> {
-  const candidates = await searchCatalogWithPluralRetry(token.foodQuery);
-  if (candidates.length === 0) {
+  const resolution = await resolveFoodForQuery(token.foodQuery);
+  if (!resolution) {
     return { resolved: false, rawText: token.rawText, foodQuery: token.foodQuery };
   }
-  const best = candidates[0];
-  const exactMatch = isStrongMatch(best.name, token.foodQuery);
+  const { food: best, confidence, score } = resolution;
 
   let grams: number | null = null;
   let measureId: number | null = null;
@@ -184,7 +180,6 @@ export async function resolveTokenForPreview(token: ParsedIntakeToken): Promise<
 
   const per100g = toPer100g(best);
   const calc = calculateNutrition(per100g, grams);
-  const confidence: IntakeConfidence = exactMatch ? 'high' : 'low';
 
   return {
     resolved: true,
@@ -203,6 +198,7 @@ export async function resolveTokenForPreview(token: ParsedIntakeToken): Promise<
     resolver: token.unitType === 'grams' ? 'catalog' : 'measure',
     confidence,
     confirmed: confidence === 'high',
+    matchScore: confidence === 'high' && score === 1 ? undefined : score,
   };
 }
 
@@ -224,7 +220,7 @@ export async function parseAndResolve(text: string): Promise<ParsedPreview> {
   return {
     items,
     totals: sumNutrients(resolvedCalcs),
-    needsConfirmation: items.some((i) => !i.resolved || (i.confidence === 'low' && !i.confirmed)),
+    needsConfirmation: items.some((i) => !i.resolved || (i.confidence !== 'high' && !i.confirmed)),
   };
 }
 
@@ -281,13 +277,18 @@ const MANUAL_ITEM_KCAL_MAX = 3000;
  * livre — NUNCA aceita o rótulo de confiança que o cliente mandou. Item
  * escolhido por busca explícita (sem `rawText`) é sempre `high`: não há
  * ambiguidade de parser a reconfirmar quando o próprio usuário apontou o
- * alimento na lista.
+ * alimento na lista. Quando há `rawText`, roda o MESMO matcher do preview
+ * (`resolveFoodForQuery`) — se o alimento escolhido não é o que o matcher
+ * também escolheria, ou a confiança dele não é `high`, trata como `low`
+ * (nunca confia que o cliente "só confirmou o que já era certo").
  */
-function deriveFoodConfidence(rawText: string | null | undefined, foodName: string): IntakeConfidence {
+async function deriveFoodConfidence(rawText: string | null | undefined, foodId: number): Promise<IntakeConfidence> {
   if (!rawText) return 'high';
   const [token] = parseIntakeText(rawText);
   if (!token) return 'low';
-  return isStrongMatch(foodName, token.foodQuery) ? 'high' : 'low';
+  const resolution = await resolveFoodForQuery(token.foodQuery);
+  if (!resolution || resolution.food.id !== foodId) return 'low';
+  return resolution.confidence;
 }
 
 async function resolveFoodItem(item: Extract<IntakeItemRequest, { kind: 'food' }>): Promise<PersistedIntakeItem> {
@@ -317,8 +318,8 @@ async function resolveFoodItem(item: Extract<IntakeItemRequest, { kind: 'food' }
   }
   if (grams <= 0) throw new ValidationError('invalid_grams');
 
-  const confidence = deriveFoodConfidence(item.rawText, food.name);
-  if (confidence === 'low' && !item.confirmed) {
+  const confidence = await deriveFoodConfidence(item.rawText, food.id);
+  if (confidence !== 'high' && !item.confirmed) {
     throw new ValidationError('low_confidence_item_needs_confirmation');
   }
 

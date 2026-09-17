@@ -13,6 +13,7 @@ import {
   hasTestDb,
   type FixtureTag,
 } from './helpers/integrationDb';
+import { dayKey, shiftDayKey } from '../utils/appDay';
 import type { Client } from 'pg';
 
 // Defesa em profundidade (mesmo padrão de nutri-p1a.integration.test.ts): o
@@ -50,8 +51,10 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [userId]);
       await client.query(`DELETE FROM users WHERE email LIKE $1`, [`${TAG}-%@test.local`]);
     });
-    const pool = (await import('../config/database')).default;
-    await pool.end();
+    // `pool.end()` fica no ÚLTIMO describe do arquivo (contrato HTTP,
+    // abaixo) — encerrar aqui quebraria as rotas montadas por supertest
+    // nesse outro bloco, que reusam o MESMO pool singleton de
+    // `config/database.ts` e correm depois deste no mesmo processo.
   });
 
   afterEach(async () => {
@@ -544,6 +547,220 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
   });
 
+  // PLAN P1B corrective — "Agrupamento por Refeição + Refeição Extra +
+  // Janela de Edição". Personas A-I do Harness (§25).
+  describe('groupLogsIntoMeals + merge-on-create + janela de edição', () => {
+    let nutriId: number;
+    let planMealId: number; // "Café da manhã" do plano
+
+    beforeAll(async () => {
+      nutriId = await createUser(client, TAG, 'nutri-meals');
+      const plan = await client.query(
+        `INSERT INTO nutrition_plans (nutri_id, patient_id, title, objective, status)
+         VALUES ($1, $2, 'Plano teste', 'maintenance', 'active') RETURNING id`,
+        [nutriId, userId]
+      );
+      const meal = await client.query(
+        `INSERT INTO nutrition_plan_meals (plan_id, name, orientation) VALUES ($1, 'Café da manhã', 'x') RETURNING id`,
+        [plan.rows[0].id]
+      );
+      planMealId = meal.rows[0].id;
+    });
+
+    afterAll(async () => {
+      await client.query(`DELETE FROM nutrition_plans WHERE nutri_id = $1`, [nutriId]);
+    });
+
+    it('A — CAFÉ NORMAL: "1 pão francês e 2 ovos fritos" de uma vez gera 1 card, 2 itens', async () => {
+      const pao = (await svc.parseAndResolve('1 pão francês')).items[0];
+      const ovos = (await svc.parseAndResolve('2 ovos fritos')).items[0];
+      await svc.persistIntakeLog({
+        userId, label: 'Café da manhã', mealId: planMealId,
+        items: [
+          { kind: 'food', foodId: pao.foodId!, quantity: pao.grams!, unitType: 'grams' },
+          { kind: 'food', foodId: ovos.foodId!, quantity: ovos.grams!, unitType: 'grams' },
+        ],
+        source: 'manual',
+      });
+
+      const logs = await svc.getDayLogs(userId, dayKey());
+      const meals = svc.groupLogsIntoMeals(logs);
+      const cafe = meals.find((m) => m.mealId === planMealId)!;
+      expect(cafe.items).toHaveLength(2);
+      expect(cafe.isExtra).toBe(false);
+      expect(cafe.sourceLogIds).toHaveLength(1);
+    });
+
+    it('B — ADICIONAR DEPOIS: 2ª chamada para a MESMA refeição do plano funde na MESMA linha (nunca 2 cards)', async () => {
+      const pao = (await svc.parseAndResolve('1 pão francês')).items[0];
+      const cafeComLeite = (await svc.parseAndResolve('200ml de leite')).items[0];
+
+      await svc.persistIntakeLog({
+        userId, label: 'Café da manhã', mealId: planMealId,
+        items: [{ kind: 'food', foodId: pao.foodId!, quantity: pao.grams!, unitType: 'grams' }],
+        source: 'manual',
+      });
+      await svc.persistIntakeLog({
+        userId, label: 'Café da manhã', mealId: planMealId,
+        items: [{ kind: 'food', foodId: cafeComLeite.foodId!, quantity: cafeComLeite.grams!, unitType: 'grams' }],
+        source: 'manual',
+      });
+
+      const logs = await svc.getDayLogs(userId, dayKey());
+      const rowsForMeal = logs.filter((l) => l.mealId === planMealId);
+      expect(rowsForMeal).toHaveLength(1); // UMA linha física — merge no create, nunca duplica (§26)
+
+      const meals = svc.groupLogsIntoMeals(logs);
+      const cafe = meals.find((m) => m.mealId === planMealId)!;
+      expect(cafe.items).toHaveLength(2);
+      expect(cafe.energyKcal).toBeGreaterThan(0);
+    });
+
+    it('C — REFEIÇÃO EXTRA: "30g whey" (ou manual quando o catálogo não resolve) vira card próprio, extra, conta nos totais, nunca altera o plano', async () => {
+      const before = await client.query(`SELECT * FROM nutrition_plan_meals WHERE id = $1`, [planMealId]);
+
+      const preview = await svc.parseAndResolve('30g whey');
+      const wheyItem = preview.items[0];
+      // Catálogo TACO não tem whey (confirmado na investigação) — o item
+      // pode vir não resolvido; nesse caso o fluxo real é resolução manual
+      // (custom food), reproduzido aqui como item `manual` com macros
+      // explícitas do usuário — nunca inventadas pelo servidor.
+      const items = wheyItem.resolved
+        ? [{ kind: 'food' as const, foodId: wheyItem.foodId!, quantity: wheyItem.grams ?? 30, unitType: 'grams' as const }]
+        : [{ kind: 'manual' as const, name: 'Whey protein (30g)', grams: 30, energyKcal: 120, proteinG: 24, carbohydrateG: 3, fatG: 1 }];
+
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Lanche da manhã', mealId: null, items, source: 'manual',
+      });
+      expect(log.mealId).toBeNull();
+
+      const logs = await svc.getDayLogs(userId, dayKey());
+      const meals = svc.groupLogsIntoMeals(logs);
+      const extra = meals.find((m) => m.groupKey === `log:${log.id}`)!;
+      expect(extra.isExtra).toBe(true);
+      expect(extra.energyKcal).toBeGreaterThan(0);
+
+      const totalKcal = logs.reduce((s, l) => s + l.energyKcal, 0);
+      expect(totalKcal).toBeGreaterThanOrEqual(extra.energyKcal); // extra soma no realizado do dia
+
+      const after = await client.query(`SELECT * FROM nutrition_plan_meals WHERE id = $1`, [planMealId]);
+      expect(after.rows[0]).toEqual(before.rows[0]); // plano do Nutri intocado
+    });
+
+    it('D — ALMOÇO: "200g carne + 100g arroz + 60g legumes" extra gera 1 card com 3 itens, card do café intacto', async () => {
+      const carne = (await svc.parseAndResolve('200g de carne bovina')).items[0];
+      const arroz = (await svc.parseAndResolve('100g de arroz cozido')).items[0];
+
+      await svc.persistIntakeLog({
+        userId, label: 'Almoço', mealId: null,
+        items: [
+          { kind: 'food', foodId: carne.foodId!, quantity: carne.grams ?? 200, unitType: 'grams' },
+          { kind: 'food', foodId: arroz.foodId!, quantity: arroz.grams ?? 100, unitType: 'grams' },
+          { kind: 'manual', name: 'Legumes', grams: 60, energyKcal: 40, proteinG: 2, carbohydrateG: 8, fatG: 0.3 },
+        ],
+        source: 'manual',
+      });
+
+      const logs = await svc.getDayLogs(userId, dayKey());
+      const meals = svc.groupLogsIntoMeals(logs);
+      const almoco = meals.find((m) => m.label === 'Almoço')!;
+      expect(almoco.items).toHaveLength(3);
+      expect(almoco.isExtra).toBe(true);
+    });
+
+    it('E — EDITAR: 100g arroz → 150g arroz na mesma refeição recalcula o total, mesma refeição', async () => {
+      const arroz = (await svc.parseAndResolve('100g de arroz cozido')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Almoço', mealId: null,
+        items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }],
+        source: 'manual',
+      });
+
+      const updated = await svc.updateIntakeLog(userId, log.id, {
+        label: 'Almoço', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 150, unitType: 'grams' }], source: 'manual',
+      });
+      expect(updated!.id).toBe(log.id);
+      expect(updated!.energyKcal).toBeGreaterThan(log.energyKcal);
+    });
+
+    it('F — EXCLUIR ITEM: remover legumes mantém a refeição com os demais itens', async () => {
+      const carne = (await svc.parseAndResolve('200g de carne bovina')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Almoço', mealId: null,
+        items: [
+          { kind: 'food', foodId: carne.foodId!, quantity: 200, unitType: 'grams' },
+          { kind: 'manual', name: 'Legumes', grams: 60, energyKcal: 40, proteinG: 2, carbohydrateG: 8, fatG: 0.3 },
+        ],
+        source: 'manual',
+      });
+      expect(log.items).toHaveLength(2);
+
+      const updated = await svc.updateIntakeLog(userId, log.id, {
+        label: 'Almoço', items: [{ kind: 'food', foodId: carne.foodId!, quantity: 200, unitType: 'grams' }], source: 'manual',
+      });
+      expect(updated!.items).toHaveLength(1);
+      expect(updated!.items[0].name).not.toBe('Legumes');
+    });
+
+    it('G — EXCLUIR REFEIÇÃO: soft delete some do dia e do realizado', async () => {
+      const arroz = (await svc.parseAndResolve('100g de arroz cozido')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Almoço', mealId: null,
+        items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }],
+        source: 'manual',
+      });
+
+      const ok = await svc.softDeleteLog(userId, log.id);
+      expect(ok).toBe(true);
+      const logs = await svc.getDayLogs(userId, log.dateKey);
+      expect(logs.map((l) => l.id)).not.toContain(log.id);
+    });
+
+    it('H — ONTEM: log de ontem não aparece em getDayLogs(hoje), mas aparece em getDayLogs(ontem) e permanece editável', async () => {
+      const arroz = (await svc.parseAndResolve('100g de arroz cozido')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Jantar de ontem', mealId: null,
+        items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }],
+        source: 'manual',
+      });
+      const yesterday = shiftDayKey(dayKey(), -1);
+      await client.query(`UPDATE user_nutrition_intake_logs SET date_key = $1 WHERE id = $2`, [yesterday, log.id]);
+
+      const todayLogs = await svc.getDayLogs(userId, dayKey());
+      expect(todayLogs.map((l) => l.id)).not.toContain(log.id);
+
+      const yesterdayLogs = await svc.getDayLogs(userId, yesterday);
+      expect(yesterdayLogs.map((l) => l.id)).toContain(log.id);
+
+      // Ontem ainda está dentro da janela de edição.
+      const updated = await svc.updateIntakeLog(userId, log.id, {
+        label: 'Jantar de ontem', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 120, unitType: 'grams' }], source: 'manual',
+      });
+      expect(updated).not.toBeNull();
+    });
+
+    it('I — ANTEONTEM: backend bloqueia PATCH e DELETE (edit window excedida)', async () => {
+      const arroz = (await svc.parseAndResolve('100g de arroz cozido')).items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Almoço de anteontem', mealId: null,
+        items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }],
+        source: 'manual',
+      });
+      const twoDaysAgo = shiftDayKey(dayKey(), -2);
+      await client.query(`UPDATE user_nutrition_intake_logs SET date_key = $1 WHERE id = $2`, [twoDaysAgo, log.id]);
+
+      await expect(
+        svc.updateIntakeLog(userId, log.id, { label: 'x', items: [{ kind: 'food', foodId: arroz.foodId!, quantity: 100, unitType: 'grams' }], source: 'manual' })
+      ).rejects.toThrow('edit_window_exceeded');
+
+      await expect(svc.softDeleteLog(userId, log.id)).rejects.toThrow('edit_window_exceeded');
+
+      // Leitura/histórico continua preservado — nunca apagado, só não editável pelo aluno.
+      const logs = await svc.getDayLogs(userId, twoDaysAgo);
+      expect(logs.map((l) => l.id)).toContain(log.id);
+    });
+  });
+
   describe('classifyDayCoverage', () => {
     const mkLog = (kcal: number, confidence: number) => ({ energyKcal: kcal, confidenceScore: confidence } as any);
 
@@ -569,5 +786,96 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       expect(c.level).toBe('low');
       expect(c.coverageRatio).toBe(0);
     });
+  });
+});
+
+// PLAN P1B corrective ("Agrupamento por Refeição") — achado do QA em
+// navegador real: `POST /nutrition-intake` para uma refeição EXTRA
+// (`mealId: null` explícito no corpo, não omitido) quebrava com 500 —
+// `Number(null) === 0` e `Number.isFinite(0) === true`, então a rota
+// coagia `null` para `0` e a FK de `meal_id` rejeitava (nenhuma
+// `nutrition_plan_meals.id` é 0). O service (`persistIntakeLog`) nunca
+// teve esse bug — só a rota, por isso só aparece num teste HTTP de verdade,
+// nunca chamando o service direto (mesma lição já registrada no
+// changelog do produto para outros módulos: "P0 anterior — teste HTTP
+// ponta a ponta").
+describeWithDb('POST /api/user/nutrition-intake — contrato HTTP', () => {
+  let client: Client;
+  let userId: number;
+  let app: import('express').Express;
+  let token: (userId: number) => string;
+
+  beforeAll(async () => {
+    client = await connect();
+    await acquireSuiteLock(client);
+    await client.query(`DELETE FROM users WHERE email LIKE $1`, [`${TAG}-http-%@test.local`]);
+    userId = await createUser(client, `${TAG}-http`, 'aluno');
+
+    const express = (await import('express')).default;
+    const userRoutes = (await import('../routes/user')).default;
+    const { generateAccessToken } = await import('../utils/jwt');
+
+    app = express();
+    app.use(express.json());
+    app.use('/api/user', userRoutes);
+
+    token = (uid) => generateAccessToken({ id: uid, email: `${uid}@test.local`, role: 'user', profileCompleted: true, products: ['app'] });
+  });
+
+  afterAll(async () => {
+    await finishSuite(client, async () => {
+      await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM users WHERE email LIKE $1`, [`${TAG}-http-%@test.local`]);
+    });
+    const pool = (await import('../config/database')).default;
+    await pool.end();
+  });
+
+  afterEach(async () => {
+    await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [userId]);
+  });
+
+  it('refeição extra com mealId:null explícito no corpo cria o log (201), nunca 500', async () => {
+    const request = (await import('supertest')).default;
+    const res = await request(app)
+      .post('/api/user/nutrition-intake')
+      .set('Authorization', `Bearer ${token(userId)}`)
+      .send({
+        label: 'Lanche da tarde',
+        rawText: null,
+        mealId: null,
+        items: [{ kind: 'manual', name: 'Whey protein (30g)', grams: 30, energyKcal: 120, proteinG: 24, carbohydrateG: 3, fatG: 1 }],
+        source: 'parse',
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.mealId).toBeNull();
+  });
+
+  it('refeição de plano com mealId numérico continua funcionando (regressão)', async () => {
+    const request = (await import('supertest')).default;
+    const nutriId = await createUser(client, `${TAG}-http`, 'nutri');
+    const plan = await client.query(
+      `INSERT INTO nutrition_plans (nutri_id, patient_id, title, objective, status)
+       VALUES ($1, $2, 'Plano teste', 'maintenance', 'active') RETURNING id`,
+      [nutriId, userId]
+    );
+    const meal = await client.query(
+      `INSERT INTO nutrition_plan_meals (plan_id, name, orientation) VALUES ($1, 'Almoço', 'x') RETURNING id`,
+      [plan.rows[0].id]
+    );
+
+    const res = await request(app)
+      .post('/api/user/nutrition-intake')
+      .set('Authorization', `Bearer ${token(userId)}`)
+      .send({
+        label: 'Almoço',
+        mealId: meal.rows[0].id,
+        items: [{ kind: 'manual', name: 'Arroz', grams: 100, energyKcal: 128, proteinG: 2.5, carbohydrateG: 28, fatG: 0.2 }],
+        source: 'manual',
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.data.mealId).toBe(meal.rows[0].id);
+
+    await client.query(`DELETE FROM nutrition_plans WHERE nutri_id = $1`, [nutriId]);
   });
 });

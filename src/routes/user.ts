@@ -41,11 +41,13 @@ import {
   persistIntakeLog,
   updateIntakeLog,
   getDayLogs,
+  groupLogsIntoMeals,
   softDeleteLog,
   setFavorite,
   getShortcuts,
   classifyDayCoverage,
   ValidationError as IntakeValidationError,
+  EditWindowError,
   type IntakeItemRequest,
 } from '../services/nutritionIntakeService';
 import { dayKey } from '../utils/appDay';
@@ -512,7 +514,11 @@ router.post('/nutrition-intake', authMiddleware, requireFeature('nutrition_intak
       userId,
       label: typeof label === 'string' ? label : '',
       rawText: typeof rawText === 'string' ? rawText : null,
-      mealId: Number.isFinite(Number(mealId)) ? Number(mealId) : null,
+      // `Number(null) === 0` e `Number.isFinite(0) === true` — coagir sem
+      // checar null/undefined primeiro transformava um `mealId: null`
+      // explícito (refeição extra, PLAN P1B corrective §7) em `mealId: 0`,
+      // que quebra a FK (nenhuma `nutrition_plan_meals.id` é 0).
+      mealId: mealId != null && Number.isFinite(Number(mealId)) ? Number(mealId) : null,
       items: items as IntakeItemRequest[],
       source,
     });
@@ -576,7 +582,12 @@ router.get('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake
       .filter((m: any) => Array.isArray(m.items) && m.items.length > 0 && m.totals?.energyKcal > 0)
       .map((m: any) => ({ mealId: m.id, name: m.name, orderIndex: m.order_index, energyKcal: m.totals.energyKcal }));
 
-    res.json({ success: true, data: { date, logs, totals, coverage, target, plannedMeals } });
+    // PLAN P1B corrective ("Agrupamento por Refeição") — a unidade visual é
+    // a refeição, não o log; `meals` agrupa por associação persistida
+    // (meal_id do plano) e nunca por horário/rótulo parecido.
+    const meals = groupLogsIntoMeals(logs);
+
+    res.json({ success: true, data: { date, logs, meals, totals, coverage, target, plannedMeals } });
   } catch (err: any) {
     logger.error({ err }, '[user/nutrition-intake GET]');
     res.status(500).json({ success: false, error: 'Failed to load intake logs' });
@@ -591,6 +602,9 @@ router.delete('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition
     if (!ok) return res.status(404).json({ success: false, error: 'Log not found' });
     res.json({ success: true });
   } catch (err: any) {
+    if (err instanceof EditWindowError) {
+      return res.status(403).json({ success: false, error: 'edit_window_exceeded' });
+    }
     logger.error({ err }, '[user/nutrition-intake DELETE]');
     res.status(500).json({ success: false, error: 'Failed to delete intake log' });
   }
@@ -625,6 +639,9 @@ router.patch('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition_
   } catch (err: any) {
     if (err instanceof IntakeValidationError) {
       return res.status(400).json({ success: false, error: err.message });
+    }
+    if (err instanceof EditWindowError) {
+      return res.status(403).json({ success: false, error: 'edit_window_exceeded' });
     }
     logger.error({ err }, '[user/nutrition-intake PATCH]');
     res.status(500).json({ success: false, error: 'Failed to update intake log' });

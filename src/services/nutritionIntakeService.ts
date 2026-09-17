@@ -18,7 +18,7 @@
  *    pesos do resolver — nunca aceito do cliente.
  */
 import pool from '../config/database';
-import { dayKey } from '../utils/appDay';
+import { dayKey, dayKeyDiff } from '../utils/appDay';
 import { parseIntakeText, type ParsedIntakeToken } from './nutritionIntakeParser';
 import { calculateNutrition, sumNutrients, type NutrientsPer100g } from './nutritionCalculation';
 import { getCatalogFoodById, listCatalogFoodMeasures, getFoodIndex, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
@@ -29,6 +29,28 @@ export class ValidationError extends Error {
     super(message);
     this.name = 'ValidationError';
   }
+}
+
+/**
+ * PLAN P1B corrective ("Agrupamento por Refeição + Refeição Extra + Janela
+ * de Edição") §17 — "hoje" e "ontem" o aluno pode corrigir; de anteontem
+ * pra trás o histórico é preservado (Truth Layer/Nutri/agregações seguem
+ * lendo tudo) mas o PRÓPRIO aluno não edita/exclui mais. `dayKeyDiff(from,
+ * to)` = dias de `from` até `to`; diff 0 = hoje, 1 = ontem.
+ */
+export class EditWindowError extends Error {
+  constructor() {
+    super('edit_window_exceeded');
+    this.name = 'EditWindowError';
+  }
+}
+
+function toDateKeyString(v: unknown): string {
+  return v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
+}
+
+function assertWithinEditWindow(logDateKey: string): void {
+  if (dayKeyDiff(logDateKey, dayKey()) > 1) throw new EditWindowError();
 }
 
 /** Medidas caseiras sem correspondência cadastrada no catálogo (PLAN §10). */
@@ -443,6 +465,28 @@ function mapRow(r: any): IntakeLogRecord {
   };
 }
 
+function weightedConfidence(items: PersistedIntakeItem[]): number {
+  const totalKcal = items.reduce((s, i) => s + i.energyKcal, 0);
+  const score = totalKcal > 0
+    ? items.reduce((s, i) => s + i.energyKcal * RESOLVER_WEIGHT[i.resolver], 0) / totalKcal
+    : RESOLVER_WEIGHT[items[0].resolver];
+  return Math.round(score * 100) / 100;
+}
+
+/**
+ * PLAN P1B corrective ("Agrupamento por Refeição") §6/§26 — "adicionar
+ * alimento depois" a uma refeição do PLANO nunca pode virar um segundo
+ * card. Quando `mealId` é informado e já existe um log não-apagado HOJE
+ * para esse `(user_id, date_key, meal_id)`, este registro passa a ser um
+ * UPDATE que junta os itens novos aos já persistidos, em vez de um INSERT
+ * — a mesma ação ("Registrar o que comi" a partir da MESMA refeição do
+ * plano, chamada mais de uma vez no dia) sempre converge para UMA linha.
+ * Preserva o `label`/`logged_at` originais (a refeição continua sendo a
+ * mesma, só ganhou mais itens). Refeição EXTRA (`mealId == null`) nunca
+ * funde — cada chamada sem vínculo ao plano é uma refeição nova por
+ * definição (§3: não agrupar por rótulo/horário parecido sem associação
+ * persistida).
+ */
 export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLogRecord> {
   const label = input.label?.trim();
   if (!label) throw new ValidationError('label_required');
@@ -457,17 +501,40 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
     else throw new ValidationError('invalid_item_kind');
   }
 
+  const dateKey = dayKey();
+
+  if (input.mealId != null) {
+    const existing = await pool.query(
+      `SELECT * FROM user_nutrition_intake_logs
+        WHERE user_id = $1 AND date_key = $2 AND meal_id = $3 AND deleted_at IS NULL
+        LIMIT 1`,
+      [input.userId, dateKey, input.mealId]
+    );
+    if (existing.rows.length > 0) {
+      const row = existing.rows[0];
+      const mergedItems: PersistedIntakeItem[] = [...(row.items as PersistedIntakeItem[]), ...resolved];
+      const totals = sumNutrients(mergedItems.map((i) => ({
+        energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
+        fiberG: i.fiberG, sodiumMg: null,
+      })));
+      const { rows } = await pool.query(
+        `UPDATE user_nutrition_intake_logs SET
+           energy_kcal = $2, protein_g = $3, carbohydrate_g = $4, fat_g = $5,
+           fiber_g = $6, fiber_partial = $7, items = $8, confidence_score = $9, updated_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [row.id, totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
+          totals.fiberG, totals.fiberPartial, JSON.stringify(mergedItems), weightedConfidence(mergedItems)]
+      );
+      return mapRow(rows[0]);
+    }
+  }
+
   const totals = sumNutrients(resolved.map((i) => ({
     energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
     fiberG: i.fiberG, sodiumMg: null,
   })));
 
-  const totalKcal = resolved.reduce((s, i) => s + i.energyKcal, 0);
-  const confidenceScore = totalKcal > 0
-    ? resolved.reduce((s, i) => s + i.energyKcal * RESOLVER_WEIGHT[i.resolver], 0) / totalKcal
-    : RESOLVER_WEIGHT[resolved[0].resolver];
-
-  const dateKey = dayKey();
   const { rows } = await pool.query(
     `INSERT INTO user_nutrition_intake_logs
        (user_id, date_key, meal_id, label, raw_text, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, fiber_partial, items, confidence_score, source)
@@ -477,7 +544,7 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
       input.userId, dateKey, input.mealId ?? null, label, input.rawText ?? null,
       totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
       totals.fiberG, totals.fiberPartial,
-      JSON.stringify(resolved), Math.round(confidenceScore * 100) / 100, input.source,
+      JSON.stringify(resolved), weightedConfidence(resolved), input.source,
     ]
   );
   return mapRow(rows[0]);
@@ -510,6 +577,13 @@ export async function updateIntakeLog(userId: number, id: number, input: IntakeL
   if (label.length > 80) throw new ValidationError('label_too_long');
   if (!Array.isArray(input.items) || input.items.length === 0) throw new ValidationError('items_required');
 
+  const existing = await pool.query(
+    `SELECT date_key FROM user_nutrition_intake_logs WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+    [id, userId]
+  );
+  if (existing.rows.length === 0) return null;
+  assertWithinEditWindow(toDateKeyString(existing.rows[0].date_key));
+
   const resolved: PersistedIntakeItem[] = [];
   for (const item of input.items) {
     if (item.kind === 'food') resolved.push(await resolveFoodItem(item));
@@ -523,11 +597,6 @@ export async function updateIntakeLog(userId: number, id: number, input: IntakeL
     fiberG: i.fiberG, sodiumMg: null,
   })));
 
-  const totalKcal = resolved.reduce((s, i) => s + i.energyKcal, 0);
-  const confidenceScore = totalKcal > 0
-    ? resolved.reduce((s, i) => s + i.energyKcal * RESOLVER_WEIGHT[i.resolver], 0) / totalKcal
-    : RESOLVER_WEIGHT[resolved[0].resolver];
-
   const { rows } = await pool.query(
     `UPDATE user_nutrition_intake_logs SET
        label = $3, raw_text = $4, energy_kcal = $5, protein_g = $6, carbohydrate_g = $7, fat_g = $8,
@@ -538,7 +607,7 @@ export async function updateIntakeLog(userId: number, id: number, input: IntakeL
       id, userId, label, input.rawText ?? null,
       totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
       totals.fiberG, totals.fiberPartial,
-      JSON.stringify(resolved), Math.round(confidenceScore * 100) / 100, input.source,
+      JSON.stringify(resolved), weightedConfidence(resolved), input.source,
     ]
   );
   return rows.length ? mapRow(rows[0]) : null;
@@ -554,7 +623,82 @@ export async function getDayLogs(userId: number, dateKey: string): Promise<Intak
   return rows.map(mapRow);
 }
 
+export interface NutritionIntakeMeal {
+  groupKey: string;
+  mealId: number | null;
+  label: string;
+  loggedAt: string;
+  /** `true` quando não está associada a nenhuma `nutrition_plan_meal` — realidade alimentar fora do plano do Nutri. */
+  isExtra: boolean;
+  items: PersistedIntakeItem[];
+  energyKcal: number;
+  proteinG: number;
+  carbohydrateG: number;
+  fatG: number;
+  fiberG: number | null;
+  fiberPartial: boolean;
+  confidenceScore: number;
+  /** Linhas físicas de `user_nutrition_intake_logs` agregadas neste card — normalmente 1; >1 só em registros legados de antes desta correção. */
+  sourceLogIds: number[];
+}
+
+/**
+ * PLAN P1B corrective ("Agrupamento por Refeição") §2-§4/§18-§19 — a
+ * unidade visual do aluno é REFEIÇÃO, não log. Função PURA (sem banco):
+ * agrupa os logs do dia por associação PERSISTIDA, nunca por horário
+ * parecido (§3) — `meal_id` (refeição do plano) é a única chave de
+ * agrupamento; um log sem `meal_id` é, por definição, a própria refeição
+ * extra (§3 categoria B: "pertence à refeição/momento escolhido pelo
+ * usuário" — a linha É a refeição). `persistIntakeLog` já garante que, daqui
+ * em diante, existe no máximo 1 log por `(dia, meal_id)` — o agrupamento
+ * aqui é sobretudo defensivo para dados legados de antes desta correção.
+ */
+export function groupLogsIntoMeals(logs: IntakeLogRecord[]): NutritionIntakeMeal[] {
+  const groups = new Map<string, IntakeLogRecord[]>();
+  for (const log of logs) {
+    const key = log.mealId != null ? `plan:${log.mealId}` : `log:${log.id}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(log);
+    else groups.set(key, [log]);
+  }
+
+  const meals: NutritionIntakeMeal[] = [];
+  for (const [groupKey, groupLogs] of groups) {
+    const sorted = [...groupLogs].sort((a, b) => new Date(a.loggedAt).getTime() - new Date(b.loggedAt).getTime());
+    const items = sorted.flatMap((l) => l.items);
+    const totals = sumNutrients(items.map((i) => ({
+      energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
+      fiberG: i.fiberG, sodiumMg: null,
+    })));
+    meals.push({
+      groupKey,
+      mealId: sorted[0].mealId,
+      label: sorted[0].label,
+      loggedAt: sorted[0].loggedAt,
+      isExtra: sorted[0].mealId == null,
+      items,
+      energyKcal: totals.energyKcal,
+      proteinG: totals.proteinG,
+      carbohydrateG: totals.carbohydrateG,
+      fatG: totals.fatG,
+      fiberG: totals.fiberG,
+      fiberPartial: totals.fiberPartial,
+      confidenceScore: items.length > 0 ? weightedConfidence(items) : sorted[0].confidenceScore,
+      sourceLogIds: sorted.map((l) => l.id),
+    });
+  }
+
+  return meals.sort((a, b) => new Date(a.loggedAt).getTime() - new Date(b.loggedAt).getTime());
+}
+
 export async function softDeleteLog(userId: number, id: number): Promise<boolean> {
+  const existing = await pool.query(
+    `SELECT date_key FROM user_nutrition_intake_logs WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+    [id, userId]
+  );
+  if (existing.rows.length === 0) return false;
+  assertWithinEditWindow(toDateKeyString(existing.rows[0].date_key));
+
   const { rowCount } = await pool.query(
     `UPDATE user_nutrition_intake_logs SET deleted_at = NOW()
       WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,

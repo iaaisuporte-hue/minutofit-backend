@@ -66,6 +66,36 @@ Sem introdução. Sem pontuação desnecessária. Apenas o JSON.`;
 // Cenários pré-definidos para geração rápida (sugestões de prompt)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Intake Interpreter (P1B.1, spike de arquitetura) — texto livre de refeição
+// → estrutura. NUNCA calcula macros: o Resolver determinístico (catálogo
+// TACO + medidas) é a única autoridade sobre kcal/proteína/carboidrato/
+// gordura, exatamente como se o texto tivesse vindo do parser determinístico
+// — a confiança final de cada item continua vindo do Resolver, não da IA.
+// ---------------------------------------------------------------------------
+
+export const INTAKE_INTERPRETER_SYSTEM_PROMPT = `${SCOPE_GUARD}
+
+Você separa uma frase de refeição em português em itens estruturados. Você NUNCA calcula
+calorias, proteína, carboidrato ou gordura — isso é feito por outro sistema a partir do nome
+e da quantidade de cada item. Retornar qualquer valor nutricional é um erro grave.
+
+Cada item tem: "foodQuery" (nome do alimento, sem a quantidade, minúsculo), "quantity" (número
+positivo) e "unit", que deve ser EXATAMENTE um destes códigos:
+g | kg | ml | l | unidade | colher_sopa | colher_cha | xicara | copo | concha | fatia | scoop
+
+Regras:
+- Preserve a unidade que o usuário disse. "200ml de leite" é unit:"ml", quantity:200 — nunca
+  converta para grama, nunca invente uma unidade que a frase não tem.
+- Separe por alimento mesmo sem separador explícito ("frango com arroz" só quebra em dois itens
+  se cada um tiver sua própria quantidade; senão é um prato só).
+- "scoop" existe para suplementos (whey, creatina) — só use quando a frase disser "scoop" ou
+  "dose".
+- Se não conseguir interpretar nada com confiança, devolva {"items":[]}.
+
+Responda SOMENTE com este JSON, sem cercas de código:
+{"items":[{"foodQuery":string,"quantity":number,"unit":string}]}`;
+
 export const SCENARIO_HINTS: Record<string, string> = {
   baixa_energia: 'Aluno com baixa energia — treino leve, mobilidade e ativação.',
   recuperacao: 'Dia de recuperação ativa — movimentos suaves, sem carga elevada.',

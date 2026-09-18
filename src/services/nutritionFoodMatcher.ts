@@ -80,17 +80,34 @@ export interface FoodIndexEntry {
   tokens: string[];
   /** 1º segmento do nome TACO antes da vírgula, normalizado — ex. "pao" em "Pão, trigo, francês". */
   firstSegment: string;
+  /** Categoria TACO (`nutrition_foods.category`) — usada só para desambiguação por medida (volume → Bebidas), nunca para score. */
+  category: string | null;
 }
 
-export function buildFoodIndex(foods: Array<{ id: number; name: string; normalizedName: string }>): FoodIndexEntry[] {
+export function buildFoodIndex(
+  foods: Array<{ id: number; name: string; normalizedName: string; category?: string | null }>,
+): FoodIndexEntry[] {
   return foods.map((f) => ({
     id: f.id,
     name: f.name,
     normalizedName: f.normalizedName,
     tokens: tokenize(f.normalizedName),
     firstSegment: normalizeFoodText(f.name.split(',')[0]),
+    category: f.category ?? null,
   }));
 }
+
+/**
+ * Única categoria TACO cujo conteúdo é, por definição física, líquido diluído
+ * em água (infusões, refrigerantes, isotônico, água de coco, caldo de cana,
+ * cerveja) — a única onde "1 ml ≈ 1 g" é uma aproximação honesta (desvio
+ * &lt;5%). Usada SÓ para desambiguar query+medida de volume (§Measure
+ * Resolver, `nutritionIntakeService.ts`) — nunca para decidir sozinha se um
+ * alimento "é líquido" fora desse conjunto (leite/suco têm densidade
+ * diferente e o catálogo não tem a versão fluida — não populamos uma tabela
+ * de densidades por chute; ver P1B1_SMART_FOOD_LOGGING_SPIKE.md §10).
+ */
+export const BEVERAGE_CATEGORY = 'Bebidas (alcoólicas e não alcoólicas)';
 
 // ---------------------------------------------------------------------------
 // Aliases — lista pequena e explícita (PLAN §4). Cada entrada aponta para o
@@ -129,6 +146,12 @@ export const FOOD_ALIASES: Record<string, string> = {
   macaxeira: 'mandioca cozida',
   aipim: 'mandioca cozida',
   ovo: 'ovo de galinha inteiro cru',
+  // "ovo frito"/"ovos fritos" (preparo já lematizado por `tokenize`, mas o
+  // fuzzy por token nunca passa de 0,79 aqui — "de galinha"/"inteiro" são 2
+  // tokens do candidato que a query de 2 palavras nunca explica, tocando o
+  // teto do `tokenCountRatio` — mesmo critério (b) do cabeçalho: candidato
+  // único e dominante, com medida caseira já curada para a versão cozida).
+  'ovo frito': 'ovo de galinha inteiro frito',
   arroz: 'arroz tipo 1 cozido',
   'arroz cozido': 'arroz tipo 1 cozido',
   feijao: 'feijao carioca cozido',
@@ -247,6 +270,11 @@ export interface FoodMatchResult {
   candidates: CandidateScore[];
 }
 
+/** `qNorm` com preparo lematizado ("ovo fritos" → "ovo frito") — mesma normalização que o fuzzy já aplica via `tokenize`, agora também disponível para alias/exact, que antes só viam a forma crua do usuário. */
+function lemmatizeQuery(qNorm: string): string {
+  return tokenize(qNorm).join(' ');
+}
+
 /**
  * Nome completo OU 1º segmento (antes da vírgula) igual à query — "match
  * forte" pré-existente generalizado. Só conta como EXATO quando há um único
@@ -256,22 +284,39 @@ export interface FoodMatchResult {
  * módulo existe para eliminar — nesses casos cai para o fuzzy, cujo
  * empate de score entre os candidatos aciona a faixa `medium`/confirmação
  * em vez de uma escolha às cegas.
+ *
+ * Exceção estreita (P1B.1, `unitHint`): quando a query vem de uma MEDIDA DE
+ * VOLUME explícita do usuário ("1 xícara de café", "1 copo de suco") e os
+ * empatados incluem exatamente um candidato da categoria Bebidas, esse
+ * desempate É seguro — o usuário descreveu literalmente estar bebendo o
+ * alimento, então "a versão que se bebe" não é um palpite, é o que a própria
+ * medida diz. Nunca se aplica a `unitHint` de massa/contagem (aí o empate
+ * "leite"/"queijo" continua indo para o fuzzy, como sempre).
  */
-function findExact(qNorm: string, index: FoodIndexEntry[]): FoodIndexEntry | null {
+function findExact(qNorm: string, index: FoodIndexEntry[], unitHint?: UnitHint): FoodIndexEntry | null {
   const matches = index.filter((e) => e.normalizedName === qNorm || e.firstSegment === qNorm);
-  return matches.length === 1 ? matches[0] : null;
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1 && unitHint === 'volume') {
+    const beverages = matches.filter((e) => e.category === BEVERAGE_CATEGORY);
+    if (beverages.length === 1) return beverages[0];
+  }
+  return null;
 }
+
+export type UnitHint = 'mass' | 'volume' | 'count' | 'household';
 
 /**
  * Resolve uma query de texto livre já normalizável contra o índice do
  * catálogo. Não acessa banco — `index` é fornecido pelo chamador (cache em
- * `nutritionFoodService.ts`).
+ * `nutritionFoodService.ts`). `unitHint` é opcional e só afeta o desempate
+ * de `findExact` (ver acima) — nunca o fuzzy, nunca o alias.
  */
-export function matchFood(query: string, index: FoodIndexEntry[]): FoodMatchResult {
+export function matchFood(query: string, index: FoodIndexEntry[], unitHint?: UnitHint): FoodMatchResult {
   const qNorm = normalizeFoodText(query);
   if (!qNorm) return { resolved: false, candidates: [] };
+  const qLemma = lemmatizeQuery(qNorm);
 
-  const aliasTarget = FOOD_ALIASES[qNorm];
+  const aliasTarget = FOOD_ALIASES[qNorm] ?? FOOD_ALIASES[qLemma];
   if (aliasTarget) {
     const entry = index.find((e) => e.normalizedName === aliasTarget);
     if (entry) {
@@ -280,7 +325,7 @@ export function matchFood(query: string, index: FoodIndexEntry[]): FoodMatchResu
     // Alias configurado mas catálogo não tem mais o alvo (dado mudou) — cai para fuzzy normalmente.
   }
 
-  const exact = findExact(qNorm, index);
+  const exact = findExact(qNorm, index, unitHint) ?? (qLemma !== qNorm ? findExact(qLemma, index, unitHint) : null);
   if (exact) {
     return { resolved: true, entry: exact, resolver: 'exact', confidence: 'high', score: 1, candidates: [{ entry: exact, score: 1 }] };
   }

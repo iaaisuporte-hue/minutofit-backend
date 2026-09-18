@@ -490,7 +490,11 @@ router.post('/nutrition-intake/parse', authMiddleware, requireFeature('nutrition
   try {
     const text = typeof req.body?.text === 'string' ? req.body.text : '';
     if (!text.trim()) return res.status(400).json({ success: false, error: 'text é obrigatório' });
-    const preview = await parseAndResolve(text);
+    // `userId` habilita o estágio de histórico (whey/manuais reaproveitáveis)
+    // e o fallback opcional de IA quando `nutrition_intake_ai` está ligada
+    // para este usuário (PLAN P1B.1) — nenhum dos dois altera o caminho
+    // determinístico puro quando não se aplicam.
+    const preview = await parseAndResolve(text, req.user!.id);
     res.json({ success: true, data: preview });
   } catch (err: any) {
     logger.error({ err }, '[user/nutrition-intake/parse]');

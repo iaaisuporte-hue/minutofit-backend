@@ -57,6 +57,8 @@ export const TOKEN_BUDGET = {
   STUDENT_SUMMARY: 600,
   /** Síntese de performance para o personal (Spec 033, P5). */
   PERFORMANCE_INSIGHT: 600,
+  /** Interpretação de texto livre de refeição em {alimento, quantidade, unidade} — nunca macros (P1B.1). */
+  INTAKE_INTERPRET: 700,
 } as const;
 
 // ---------------------------------------------------------------------------

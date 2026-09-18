@@ -593,7 +593,7 @@ describeWithDb('nutritionIntakeService (integration)', () => {
 
     it('B — ADICIONAR DEPOIS: 2ª chamada para a MESMA refeição do plano funde na MESMA linha (nunca 2 cards)', async () => {
       const pao = (await svc.parseAndResolve('1 pão francês')).items[0];
-      const cafeComLeite = (await svc.parseAndResolve('200ml de leite')).items[0];
+      const ovos = (await svc.parseAndResolve('2 ovos')).items[0];
 
       await svc.persistIntakeLog({
         userId, label: 'Café da manhã', mealId: planMealId,
@@ -602,7 +602,7 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       });
       await svc.persistIntakeLog({
         userId, label: 'Café da manhã', mealId: planMealId,
-        items: [{ kind: 'food', foodId: cafeComLeite.foodId!, quantity: cafeComLeite.grams!, unitType: 'grams' }],
+        items: [{ kind: 'food', foodId: ovos.foodId!, quantity: ovos.grams!, unitType: 'grams' }],
         source: 'manual',
       });
 
@@ -758,6 +758,116 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       // Leitura/histórico continua preservado — nunca apagado, só não editável pelo aluno.
       const logs = await svc.getDayLogs(userId, twoDaysAgo);
       expect(logs.map((l) => l.id)).toContain(log.id);
+    });
+  });
+
+  // PLAN P1B.1 ("Smart Food Logging" spike, set/2026) — corpus dos 8 casos do
+  // spike como harness permanente, mais os caveats explícitos do usuário.
+  describe('P1B.1 — Smart Food Logging (volume, histórico, IA opcional)', () => {
+    it('"200ml de leite integral" preserva quantidade/unidade e NUNCA vira "integral" silenciosamente (caveat 4) — fica não resolvido, nunca "informe em gramas" (caveat 3)', async () => {
+      const preview = await svc.parseAndResolve('200ml de leite integral');
+      const item = preview.items[0];
+      expect(item.resolved).toBe(false);
+      // A quantidade/unidade que o usuário disse continuam visíveis — nunca
+      // reescritas para "g", nunca perdidas.
+      expect(item.quantity).toBe(200);
+      expect(item.unitLabel).toBe('ml');
+    });
+
+    it('"1 xícara de café" resolve a BEBIDA (infusão), não o pó — desambiguação por medida de volume', async () => {
+      const preview = await svc.parseAndResolve('1 xícara de café');
+      const item = preview.items[0];
+      expect(item.resolved).toBe(true);
+      expect(item.confidence).toBe('high');
+      expect(item.name).toMatch(/infus/i);
+    });
+
+    it('"1 scoop de whey" e "30g de whey" seguem não resolvidos no catálogo (sem banco externo) — mas preservam a unidade dita', async () => {
+      const scoop = (await svc.parseAndResolve('1 scoop de whey')).items[0];
+      expect(scoop.resolved).toBe(false);
+      expect(scoop.unitLabel).toBe('scoop');
+
+      const grams = (await svc.parseAndResolve('30g de whey')).items[0];
+      expect(grams.resolved).toBe(false);
+      expect(grams.quantity).toBe(30);
+      expect(grams.unitLabel).toBe('g');
+    });
+
+    it('caveat 6 — 2º lançamento de whey reaproveita o histórico do PRÓPRIO usuário (rápido, sem formulário de novo)', async () => {
+      await svc.persistIntakeLog({
+        userId, label: 'Lanche', mealId: null, source: 'manual',
+        items: [{
+          kind: 'manual', name: 'Whey Integralmedica', grams: 30,
+          energyKcal: 120, proteinG: 24, carbohydrateG: 3, fatG: 1,
+          displayQuantity: 30, displayUnitLabel: 'g',
+        }],
+      });
+
+      const bareScoop = (await svc.parseAndResolve('1 scoop de whey', userId)).items[0];
+      expect(bareScoop.resolved).toBe(true);
+      expect(bareScoop.resolver).toBe('history');
+      expect(bareScoop.confidence).toBe('high');
+      expect(bareScoop.energyKcal).toBe(120);
+
+      // Massa explícita diferente da vez anterior → escala pelo per-100g
+      // derivado do histórico, nunca reaproveita o total antigo como está.
+      const scaled = (await svc.parseAndResolve('60g de whey', userId)).items[0];
+      expect(scaled.resolved).toBe(true);
+      expect(scaled.resolver).toBe('history');
+      expect(scaled.grams).toBe(60);
+      expect(scaled.energyKcal).toBe(240);
+    });
+
+    it('histórico é escopado por usuário — item manual de OUTRO usuário nunca é reaproveitado', async () => {
+      const otherUserId = await createUser(client, `${TAG}-other`, 'aluno');
+      try {
+        await svc.persistIntakeLog({
+          userId: otherUserId, label: 'Lanche', mealId: null, source: 'manual',
+          items: [{
+            kind: 'manual', name: 'Suplemento Exclusivo Do Outro', grams: 20,
+            energyKcal: 80, proteinG: 10, carbohydrateG: 2, fatG: 1,
+          }],
+        });
+        const preview = await svc.parseAndResolve('suplemento exclusivo do outro', userId);
+        expect(preview.items[0].resolved).toBe(false);
+      } finally {
+        await client.query(`DELETE FROM user_nutrition_intake_logs WHERE user_id = $1`, [otherUserId]);
+        await client.query(`DELETE FROM users WHERE id = $1`, [otherUserId]);
+      }
+    });
+
+    it('caveat 1/5 — IA (mock injetado) só entra quando o determinístico deixa algo não resolvido, e a confiança final vem do Resolver (nunca capada por causa da IA)', async () => {
+      const { interpretIntakeTextWithAi } = await import('../services/ai/intakeInterpreterAi');
+      const mockCallModel = async () =>
+        JSON.stringify({ items: [{ foodQuery: 'pao frances', quantity: 1, unit: 'unidade' }] });
+
+      const tokens = await interpretIntakeTextWithAi('um pão francês inteiro', userId, { callModel: mockCallModel });
+      expect(tokens).not.toBeNull();
+      expect(tokens![0].foodQuery).toBe('pao frances');
+
+      // A IA nunca produz macro — o contrato de saída não tem esse campo.
+      const raw = await mockCallModel();
+      expect(JSON.parse(raw).items[0]).not.toHaveProperty('energyKcal');
+
+      // Resolvido pelo Resolver determinístico a partir do token da IA — vira
+      // 'alias'/high como qualquer texto digitado, nunca um teto artificial.
+      const resolved = await svc.resolveTokenForPreview(tokens![0], userId);
+      expect(resolved.resolved).toBe(true);
+      expect(resolved.confidence).toBe('high');
+    });
+
+    it('IA com resposta inválida nunca quebra o fluxo — cai para `null`, chamador usa o determinístico', async () => {
+      const { interpretIntakeTextWithAi } = await import('../services/ai/intakeInterpreterAi');
+      const brokenModel = async () => 'isto não é json';
+      const tokens = await interpretIntakeTextWithAi('qualquer coisa', userId, { callModel: brokenModel });
+      expect(tokens).toBeNull();
+    });
+
+    it('parseAndResolve nunca chama a IA quando tudo já resolveu no determinístico (caminho feliz sem latência extra)', async () => {
+      let called = false;
+      const spyModel = async () => { called = true; return '{"items":[]}'; };
+      await svc.parseAndResolve('1 pão francês', userId, { callModel: spyModel });
+      expect(called).toBe(false);
     });
   });
 

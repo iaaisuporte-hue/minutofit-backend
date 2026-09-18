@@ -23,12 +23,12 @@ import {
 
 const raw = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../seeds/tacoFoods.snapshot.json'), 'utf8'),
-) as Array<{ name: string; normalizedName: string }>;
+) as Array<{ name: string; normalizedName: string; category: string | null }>;
 
 let index: FoodIndexEntry[];
 
 beforeAll(() => {
-  const foods = raw.map((f, i) => ({ id: i + 1, name: f.name, normalizedName: f.normalizedName }));
+  const foods = raw.map((f, i) => ({ id: i + 1, name: f.name, normalizedName: f.normalizedName, category: f.category }));
   index = buildFoodIndex(foods);
 });
 
@@ -297,6 +297,55 @@ describe('nutritionFoodMatcher — corpus real (582 itens TACO)', () => {
     it('remove acentos, uppercase, pontuação e espaços duplicados', () => {
       expect(normalizeFoodText('  Pão   Francês! ')).toBe('pao frances');
       expect(normalizeFoodText('PÃO FRANCÊS')).toBe('pao frances');
+    });
+  });
+
+  // PLAN P1B.1 ("Smart Food Logging" spike) — alias de preparo + desempate
+  // por medida de volume.
+  describe('alias "ovo frito" (preparo lematizado antes do alias, não só no fuzzy)', () => {
+    it('"2 ovos fritos" (forma do parser, plural, preparo não lematizado ainda) resolve via alias, high', () => {
+      const r = matchFood('ovo fritos', index);
+      expect(r.resolved).toBe(true);
+      expect(r.resolver).toBe('alias');
+      expect(r.confidence).toBe('high');
+      expect(r.entry?.name).toBe('Ovo, de galinha, inteiro, frito');
+    });
+
+    it('"ovo frito" (já singular/lematizado) resolve igual', () => {
+      const r = matchFood('ovo frito', index);
+      expect(r.resolver).toBe('alias');
+      expect(r.entry?.name).toBe('Ovo, de galinha, inteiro, frito');
+    });
+  });
+
+  describe('unitHint "volume" desambigua nomes ambíguos por medida de líquido', () => {
+    it('"cafe" sozinho continua ambíguo (fuzzy medium) sem unitHint', () => {
+      const r = matchFood('cafe', index);
+      expect(r.resolver).not.toBe('exact');
+    });
+
+    it('"cafe" com unitHint "volume" resolve à BEBIDA (infusão) como exact/high — nunca ao pó', () => {
+      const r = matchFood('cafe', index, 'volume');
+      expect(r.resolved).toBe(true);
+      expect(r.resolver).toBe('exact');
+      expect(r.confidence).toBe('high');
+      expect(r.entry?.name).toBe('Café, infusão 10%');
+    });
+
+    it('"cafe" com unitHint "mass"/"count" NÃO aciona o desempate — continua caindo no fuzzy (o café em pó também é plausível numa colher)', () => {
+      const mass = matchFood('cafe', index, 'mass');
+      const count = matchFood('cafe', index, 'count');
+      expect(mass.resolver).not.toBe('exact');
+      expect(count.resolver).not.toBe('exact');
+    });
+
+    it('"leite" com unitHint "volume" continua AMBÍGUO — nunca escolhe "integral" ou qualquer outro sozinho (caveat 4: nunca silencioso)', () => {
+      // Ao contrário do café, nenhum dos 7 candidatos de "leite" é da
+      // categoria Bebidas — o desempate por volume não tem alvo, e o
+      // comportamento correto é continuar incerto (fuzzy/medium), nunca
+      // inventar um "vencedor" por outro critério.
+      const r = matchFood('leite', index, 'volume');
+      expect(r.resolver).not.toBe('exact');
     });
   });
 });

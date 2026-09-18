@@ -16,9 +16,37 @@ describe('nutritionIntakeParser', () => {
     expect(t).toMatchObject({ foodQuery: 'aveia', quantity: 80, unitType: 'grams' });
   });
 
-  it('ml', () => {
+  // PLAN P1B.1 ("Smart Food Logging" spike) — ml deixou de ser sinônimo de
+  // grama: são dimensões físicas diferentes, e a conversão (quando possível
+  // e segura) só acontece no Measure Resolver do serviço, nunca aqui.
+  it('ml preserva a dimensão de volume — nunca colapsa em grama', () => {
     const [t] = parseIntakeText('250ml de leite');
-    expect(t).toMatchObject({ foodQuery: 'leite', quantity: 250, unitType: 'grams' });
+    expect(t).toMatchObject({ foodQuery: 'leite', quantity: 250, unitType: 'ml', unitDimension: 'volume', unitLabel: 'ml' });
+  });
+
+  it('litro converte para ml (base única de volume)', () => {
+    const [t] = parseIntakeText('1l de leite');
+    expect(t).toMatchObject({ foodQuery: 'leite', quantity: 1000, unitType: 'ml' });
+  });
+
+  it('quilo converte para grama (base única de massa)', () => {
+    const [t] = parseIntakeText('1kg de arroz');
+    expect(t).toMatchObject({ foodQuery: 'arroz', quantity: 1000, unitType: 'grams' });
+  });
+
+  it('separador " com " só quebra quando seguido de outra quantidade', () => {
+    const withQty = parseIntakeText('200g de frango grelhado com 150g de arroz cozido');
+    expect(withQty).toHaveLength(2);
+    expect(withQty[0].foodQuery).toBe('frango grelhado');
+    expect(withQty[1].foodQuery).toBe('arroz cozido');
+
+    const withoutQty = parseIntakeText('arroz com feijão');
+    expect(withoutQty).toHaveLength(1);
+  });
+
+  it('scoop e dose são reconhecidos como medida caseira (suplemento, PLAN §caveat 6)', () => {
+    const [t] = parseIntakeText('1 scoop de whey');
+    expect(t).toMatchObject({ foodQuery: 'whey', quantity: 1, unitType: 'measure', measureName: 'scoop', unitLabel: 'scoop' });
   });
 
   it('decimal com vírgula', () => {

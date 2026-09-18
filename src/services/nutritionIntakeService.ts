@@ -22,7 +22,9 @@ import { dayKey, dayKeyDiff } from '../utils/appDay';
 import { parseIntakeText, type ParsedIntakeToken } from './nutritionIntakeParser';
 import { calculateNutrition, sumNutrients, type NutrientsPer100g } from './nutritionCalculation';
 import { getCatalogFoodById, listCatalogFoodMeasures, getFoodIndex, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
-import { matchFood, normalizeFoodText, type MatchConfidence } from './nutritionFoodMatcher';
+import { matchFood, normalizeFoodText, BEVERAGE_CATEGORY, type MatchConfidence, type UnitHint } from './nutritionFoodMatcher';
+import { interpretIntakeTextWithAi, type IntakeInterpreterDeps } from './ai/intakeInterpreterAi';
+import { getFeatureMapForUser } from './planFeatureService';
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -77,15 +79,19 @@ export const FALLBACK_UNIT_FOOD_G: Record<string, number> = {
 };
 
 /** Peso de cada resolver no `confidence_score` do log (PLAN §8). */
-export const RESOLVER_WEIGHT: Record<'catalog' | 'measure' | 'manual' | 'plan' | 'ai', number> = {
+export const RESOLVER_WEIGHT: Record<'catalog' | 'measure' | 'manual' | 'plan' | 'history', number> = {
   catalog: 1,
   measure: 1,
   plan: 1,
   manual: 0.8,
-  ai: 0.7,
+  // Item reaproveitado do histórico do PRÓPRIO usuário (PLAN P1B.1 §caveat 6)
+  // — não é dado oficial de catálogo, mas também não é palpite: é uma
+  // afirmação que o próprio usuário já confirmou antes. Peso entre catálogo
+  // e manual.
+  history: 0.85,
 };
 
-export type IntakeItemResolver = 'catalog' | 'measure' | 'manual' | 'plan';
+export type IntakeItemResolver = 'catalog' | 'measure' | 'manual' | 'plan' | 'history';
 /**
  * `medium` é nova (PLAN P1B corrective §8/§9) — fuzzy match plausível mas
  * não certo o bastante para entrar sem confirmação ("você quis dizer?").
@@ -113,6 +119,15 @@ export interface IntakePreviewItem {
   confirmed?: boolean;
   /** Top candidato(s) do fuzzy match — só populado quando `confidence` é `medium`/`low` (PLAN §14: UI "você quis dizer?", nunca detalhe técnico). */
   matchScore?: number;
+  /**
+   * Quantidade E unidade EXATAMENTE como o usuário disse (PLAN P1B.1 §3) —
+   * preenchido mesmo quando `resolved:false`, para a UI nunca perder "200 ml"
+   * e reexibir como se fosse grama, nem pedir para o usuário reescrever em
+   * outra unidade. `grams` continua sendo a base de CÁLCULO; estes dois
+   * campos são só de EXIBIÇÃO.
+   */
+  quantity?: number;
+  unitLabel?: string;
 }
 
 function toPer100g(food: FoodSummary): NutrientsPer100g {
@@ -151,76 +166,216 @@ function findDbMeasure(measures: FoodMeasure[], canonical: string): FoodMeasure 
  * memória (`nutritionFoodMatcher.matchFood`), no lugar do antigo ILIKE
  * substring-contíguo (que falhava sempre que uma palavra do TACO se
  * intercalava entre os termos do usuário — "pao frances" nunca batia em
- * "pao TRIGO frances"). Retorna o alimento completo (com macros) já
- * carregado, ou `null` quando nenhum candidato plausível existe.
+ * "pao TRIGO frances"). `unitHint` só afeta o desempate de nomes ambíguos
+ * quando a MEDIDA do usuário já entrega contexto físico (§Measure Resolver
+ * abaixo) — nunca o score do fuzzy. Retorna o alimento completo (com
+ * macros) já carregado, ou `null` quando nenhum candidato plausível existe.
  */
-async function resolveFoodForQuery(foodQuery: string): Promise<{ food: FoodSummary; resolver: IntakeItemResolver; confidence: IntakeConfidence; score: number } | null> {
+async function resolveFoodForQuery(
+  foodQuery: string,
+  unitHint?: UnitHint,
+): Promise<{ food: FoodSummary; confidence: IntakeConfidence; score: number } | null> {
   const index = await getFoodIndex();
-  const match = matchFood(foodQuery, index);
+  const match = matchFood(foodQuery, index, unitHint);
   if (!match.resolved || !match.entry) return null;
   const food = await getCatalogFoodById(match.entry.id);
   if (!food) return null;
-  return { food, resolver: 'catalog', confidence: match.confidence!, score: match.score ?? 0 };
+  return { food, confidence: match.confidence!, score: match.score ?? 0 };
 }
 
-/** Resolve um token do parser contra o catálogo — usado pelo preview (`/parse`). */
-export async function resolveTokenForPreview(token: ParsedIntakeToken): Promise<IntakePreviewItem> {
-  const resolution = await resolveFoodForQuery(token.foodQuery);
-  if (!resolution) {
-    return { resolved: false, rawText: token.rawText, foodQuery: token.foodQuery };
-  }
-  const { food: best, confidence, score } = resolution;
+/**
+ * Volume → grama, de forma encapsulada e restrita (PLAN P1B.1 §2/§10 —
+ * caveat explícito: nunca um fator 1:1 universal, nunca popular uma tabela
+ * de densidades por chute). Só resolve quando o alimento identificado é da
+ * categoria Bebidas — infusões, refrigerantes, isotônico, água de coco,
+ * caldo de cana, cerveja: líquidos diluídos em água onde 1 ml ≈ 1 g é uma
+ * aproximação honesta (desvio &lt;5%). Para qualquer outro alimento (leite,
+ * suco — densidade real diferente e, no caso do leite, a versão fluida nem
+ * existe no catálogo hoje) devolve `null`: o chamador cai para o histórico
+ * do usuário ou para a entrada manual, preservando "ml" na tela — nunca
+ * convertido, nunca pedido de volta em gramas (§3).
+ */
+function resolveVolumeGrams(ml: number, food: FoodSummary): number | null {
+  if (food.category !== BEVERAGE_CATEGORY) return null;
+  return ml;
+}
 
-  let grams: number | null = null;
-  let measureId: number | null = null;
-  let fallbackMeasureKey: string | null = null;
+interface QuantityResolution {
+  grams: number;
+  measureId: number | null;
+  fallbackMeasureKey: string | null;
+}
 
+/** Measure Resolver — quantidade+unidade já identificadas → gramas para o Nutrition Engine. Separado do Food Resolver (função acima) por design (PLAN P1B.1 §1/§10). */
+async function resolveQuantityToGrams(token: ParsedIntakeToken, food: FoodSummary): Promise<QuantityResolution | null> {
   if (token.unitType === 'grams') {
-    grams = token.quantity;
-  } else {
-    const canonical = token.measureName ?? 'unidade';
-    const dbMeasures = await listCatalogFoodMeasures(best.id);
-    const dbMatch = findDbMeasure(dbMeasures, canonical);
-    if (dbMatch) {
-      grams = token.quantity * dbMatch.grams;
-      measureId = dbMatch.id;
-    } else if (token.measureName && FALLBACK_MEASURES_G[token.measureName]) {
-      grams = token.quantity * FALLBACK_MEASURES_G[token.measureName];
-      fallbackMeasureKey = token.measureName;
-    } else if (!token.measureName) {
-      const foodHead = token.foodQuery.split(' ')[0];
-      if (FALLBACK_UNIT_FOOD_G[foodHead]) {
-        grams = token.quantity * FALLBACK_UNIT_FOOD_G[foodHead];
-        fallbackMeasureKey = foodHead;
+    return { grams: token.quantity, measureId: null, fallbackMeasureKey: null };
+  }
+  if (token.unitType === 'ml') {
+    const grams = resolveVolumeGrams(token.quantity, food);
+    return grams == null ? null : { grams, measureId: null, fallbackMeasureKey: null };
+  }
+  const canonical = token.measureName ?? 'unidade';
+  const dbMeasures = await listCatalogFoodMeasures(food.id);
+  const dbMatch = findDbMeasure(dbMeasures, canonical);
+  if (dbMatch) {
+    return { grams: token.quantity * dbMatch.grams, measureId: dbMatch.id, fallbackMeasureKey: null };
+  }
+  if (token.measureName && token.measureName !== 'unidade' && FALLBACK_MEASURES_G[token.measureName] != null) {
+    return { grams: token.quantity * FALLBACK_MEASURES_G[token.measureName], measureId: null, fallbackMeasureKey: token.measureName };
+  }
+  // "unidade" explícita ("1 unidade de banana") é semanticamente a mesma
+  // coisa que contagem bare ("3 bananas") — mesmo fallback por alimento
+  // (PLAN P1B.1: o Interpreter por IA sempre manda um `unit` explícito,
+  // nunca omite; sem este ramo, "1 pão francês" via IA nunca resolveria
+  // gramas, mesmo com o alimento já identificado).
+  if (!token.measureName || token.measureName === 'unidade') {
+    const foodHead = token.foodQuery.split(' ')[0];
+    if (FALLBACK_UNIT_FOOD_G[foodHead] != null) {
+      return { grams: token.quantity * FALLBACK_UNIT_FOOD_G[foodHead], measureId: null, fallbackMeasureKey: foodHead };
+    }
+  }
+  return null;
+}
+
+/**
+ * Histórico do PRÓPRIO usuário como estágio de resolução (PLAN P1B.1 §5/§10,
+ * caveat 6) — "whey"/"1 scoop de whey" não existem na TACO e nunca vão
+ * existir (nenhum banco externo é autorizado); mas depois da PRIMEIRA vez
+ * que o usuário informou os macros manualmente, o segundo lançamento não
+ * precisa repetir o formulário. Escopo estritamente por `user_id` — nunca
+ * um alias global (§5: "whey" não tem alvo dominante único como "arroz"
+ * tem). Só considera itens `manual`/`history` já confirmados (nunca
+ * catálogo — esse já teria resolvido normalmente) com `grams` conhecido.
+ */
+interface HistoryFoodMatch {
+  name: string;
+  grams: number | null;
+  energyKcal: number;
+  proteinG: number;
+  carbohydrateG: number;
+  fatG: number;
+  fiberG: number | null;
+}
+
+async function findHistoryMatch(userId: number, foodQuery: string): Promise<HistoryFoodMatch | null> {
+  const qNorm = normalizeFoodText(foodQuery);
+  if (!qNorm) return null;
+  const { rows } = await pool.query(
+    `SELECT items FROM user_nutrition_intake_logs
+      WHERE user_id = $1 AND deleted_at IS NULL AND logged_at >= NOW() - INTERVAL '120 days'
+      ORDER BY logged_at DESC LIMIT 200`,
+    [userId],
+  );
+  for (const row of rows) {
+    const items = (row.items ?? []) as PersistedIntakeItem[];
+    for (const item of items) {
+      if (item.resolver !== 'manual' && item.resolver !== 'history') continue;
+      const nNorm = normalizeFoodText(item.name);
+      if (!nNorm) continue;
+      if (nNorm === qNorm || nNorm.includes(qNorm) || qNorm.includes(nNorm)) {
+        return {
+          name: item.name,
+          grams: item.grams,
+          energyKcal: item.energyKcal,
+          proteinG: item.proteinG,
+          carbohydrateG: item.carbohydrateG,
+          fatG: item.fatG,
+          fiberG: item.fiberG,
+        };
       }
     }
   }
+  return null;
+}
 
-  if (grams == null || grams <= 0) {
-    return { resolved: false, rawText: token.rawText, foodQuery: token.foodQuery };
-  }
-
-  const per100g = toPer100g(best);
-  const calc = calculateNutrition(per100g, grams);
-
+/**
+ * Item de preview a partir de um match de histórico. Quando a menção atual
+ * TAMBÉM tem gramas conhecidos (massa explícita — "30g de whey" de novo) e o
+ * histórico também tinha, escala pelo per-100g derivado (mesma disciplina
+ * do catálogo — nunca aceita o total antigo como se fosse o de agora).
+ * Quando não há como escalar (medida ambígua, "1 scoop" de novo, ou o
+ * histórico não tinha gramas), reaproveita os macros TOTAIS como estão —
+ * legítimo porque é a mesma unidade discreta de antes ("1 scoop" continua
+ * significando a mesma coisa), nunca um palpite novo.
+ */
+function buildHistoryPreviewItem(token: ParsedIntakeToken, hist: HistoryFoodMatch): IntakePreviewItem {
+  const canScale = hist.grams != null && hist.grams > 0 && (token.unitType === 'grams' || token.unitType === 'ml');
+  const grams = canScale ? token.quantity : (hist.grams ?? undefined);
+  const factor = canScale ? token.quantity / hist.grams! : 1;
   return {
     resolved: true,
     rawText: token.rawText,
     foodQuery: token.foodQuery,
-    foodId: best.id,
-    name: best.name,
+    name: hist.name,
     grams,
-    measureId,
-    fallbackMeasureKey,
-    per100g: { kcal: per100g.energyKcal, p: per100g.proteinG, c: per100g.carbohydrateG, f: per100g.fatG },
-    energyKcal: calc.energyKcal,
-    proteinG: calc.proteinG,
-    carbohydrateG: calc.carbohydrateG,
-    fatG: calc.fatG,
-    resolver: token.unitType === 'grams' ? 'catalog' : 'measure',
-    confidence,
-    confirmed: confidence === 'high',
-    matchScore: confidence === 'high' && score === 1 ? undefined : score,
+    quantity: token.quantity,
+    unitLabel: token.unitLabel,
+    energyKcal: round2(hist.energyKcal * factor),
+    proteinG: round2(hist.proteinG * factor),
+    carbohydrateG: round2(hist.carbohydrateG * factor),
+    fatG: round2(hist.fatG * factor),
+    resolver: 'history',
+    confidence: 'high',
+    confirmed: true,
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/** Resolve um token do parser contra o catálogo — usado pelo preview (`/parse`). `userId` habilita o estágio de histórico (§ acima); omitido em contextos onde não há usuário autenticado. */
+export async function resolveTokenForPreview(token: ParsedIntakeToken, userId?: number): Promise<IntakePreviewItem> {
+  const resolution = await resolveFoodForQuery(token.foodQuery, token.unitDimension);
+
+  if (resolution) {
+    const { food: best, confidence, score } = resolution;
+    const quantityResult = await resolveQuantityToGrams(token, best);
+    if (quantityResult) {
+      const per100g = toPer100g(best);
+      const calc = calculateNutrition(per100g, quantityResult.grams);
+      return {
+        resolved: true,
+        rawText: token.rawText,
+        foodQuery: token.foodQuery,
+        foodId: best.id,
+        name: best.name,
+        grams: quantityResult.grams,
+        measureId: quantityResult.measureId,
+        fallbackMeasureKey: quantityResult.fallbackMeasureKey,
+        quantity: token.quantity,
+        unitLabel: token.unitLabel,
+        per100g: { kcal: per100g.energyKcal, p: per100g.proteinG, c: per100g.carbohydrateG, f: per100g.fatG },
+        energyKcal: calc.energyKcal,
+        proteinG: calc.proteinG,
+        carbohydrateG: calc.carbohydrateG,
+        fatG: calc.fatG,
+        resolver: token.unitType === 'grams' ? 'catalog' : 'measure',
+        confidence,
+        confirmed: confidence === 'high',
+        matchScore: confidence === 'high' && score === 1 ? undefined : score,
+      };
+    }
+    // Alimento identificado, mas sem como chegar a gramas com segurança (ex.:
+    // volume sem densidade conhecida) — NUNCA "informe em gramas" (§3): cai
+    // para o histórico/manual preservando quantidade+unidade originais.
+  }
+
+  const history = userId != null ? await findHistoryMatch(userId, token.foodQuery) : null;
+  if (history) return buildHistoryPreviewItem(token, history);
+
+  return {
+    resolved: false,
+    rawText: token.rawText,
+    foodQuery: token.foodQuery,
+    quantity: token.quantity,
+    unitLabel: token.unitLabel,
+    // Só quando a dimensão é MASSA a "quantidade" já É a gramagem — permite
+    // que a entrada manual comece com a base real em vez de vazia (caveat
+    // 6); para volume/contagem/medida caseira `grams` fica indefinido, nunca
+    // um número forjado.
+    grams: token.unitType === 'grams' ? token.quantity : undefined,
   };
 }
 
@@ -228,22 +383,70 @@ export interface ParsedPreview {
   items: IntakePreviewItem[];
   totals: ReturnType<typeof sumNutrients>;
   needsConfirmation: boolean;
+  /** `true` quando a IA (não o parser determinístico) produziu os tokens usados — o chamador decide o `source` do log a partir disto. */
+  aiUsed: boolean;
 }
 
-export async function parseAndResolve(text: string): Promise<ParsedPreview> {
+async function resolveAll(tokens: ParsedIntakeToken[], userId?: number): Promise<IntakePreviewItem[]> {
+  return Promise.all(tokens.map((t) => resolveTokenForPreview(t, userId)));
+}
+
+/**
+ * PLAN P1B.1 §6/§7/§caveat 1/5 — determinístico primeiro, sempre. A IA
+ * (`nutrition_intake_ai`, ROLLOUT_ONLY) só é consultada quando o resultado
+ * determinístico tem algo NÃO resolvido — nunca no caminho feliz (chips,
+ * "200g de frango"), e nunca substitui um resultado que já funcionou. A
+ * versão da IA só é adotada se estritamente melhor (mais itens resolvidos,
+ * nenhum item unresolved que o determinístico também não tivesse) — o
+ * determinístico é sempre o piso, nunca "às vezes pior". A confiança final
+ * de cada item, com ou sem IA, vem só do Resolver (`resolveFoodForQuery`
+ * acima) — a IA nunca resolve um item.
+ */
+export async function parseAndResolve(text: string, userId?: number, aiDeps?: IntakeInterpreterDeps): Promise<ParsedPreview> {
   const tokens = parseIntakeText(text);
-  const items = await Promise.all(tokens.map(resolveTokenForPreview));
-  const resolvedCalcs = items
+  const items = await resolveAll(tokens, userId);
+  const hasUnresolved = items.some((i) => !i.resolved);
+
+  let finalItems = items;
+  let aiUsed = false;
+
+  if (hasUnresolved && userId != null) {
+    const aiEnabled = await isNutritionIntakeAiEnabled(userId);
+    if (aiEnabled) {
+      const aiTokens = await interpretIntakeTextWithAi(text, userId, aiDeps);
+      if (aiTokens && aiTokens.length > 0) {
+        const aiItems = await resolveAll(aiTokens, userId);
+        const aiUnresolvedCount = aiItems.filter((i) => !i.resolved).length;
+        const detUnresolvedCount = items.filter((i) => !i.resolved).length;
+        if (aiUnresolvedCount < detUnresolvedCount) {
+          finalItems = aiItems;
+          aiUsed = true;
+        }
+      }
+    }
+  }
+
+  const resolvedCalcs = finalItems
     .filter((i) => i.resolved)
     .map((i) => ({
       energyKcal: i.energyKcal!, proteinG: i.proteinG!, carbohydrateG: i.carbohydrateG!, fatG: i.fatG!,
       fiberG: null, sodiumMg: null,
     }));
   return {
-    items,
+    items: finalItems,
     totals: sumNutrients(resolvedCalcs),
-    needsConfirmation: items.some((i) => !i.resolved || (i.confidence !== 'high' && !i.confirmed)),
+    needsConfirmation: finalItems.some((i) => !i.resolved || (i.confidence !== 'high' && !i.confirmed)),
+    aiUsed,
   };
+}
+
+async function isNutritionIntakeAiEnabled(userId: number): Promise<boolean> {
+  try {
+    const { features } = await getFeatureMapForUser(userId);
+    return Boolean(features['nutrition_intake_ai']) && Boolean(process.env.OPENAI_API_KEY);
+  } catch {
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +464,9 @@ export type IntakeItemRequest =
       /** Presente só quando o item nasceu de texto livre — dispara re-checagem de confiança no servidor. */
       rawText?: string | null;
       confirmed?: boolean;
+      /** Quantidade/unidade ORIGINAIS tal como o usuário disse (preview) — só para exibição, nunca para cálculo (PLAN P1B.1 §3). */
+      displayQuantity?: number | null;
+      displayUnitLabel?: string | null;
     }
   | {
       kind: 'manual';
@@ -270,6 +476,8 @@ export type IntakeItemRequest =
       proteinG: number;
       carbohydrateG: number;
       fatG: number;
+      displayQuantity?: number | null;
+      displayUnitLabel?: string | null;
     }
   | {
       kind: 'plan';
@@ -290,6 +498,9 @@ export interface PersistedIntakeItem {
   resolver: IntakeItemResolver;
   confidence: IntakeConfidence;
   confirmed: boolean;
+  /** Quantidade/unidade ORIGINAIS tal como o usuário disse — exibição apenas (PLAN P1B.1 §3); `grams` continua a base de cálculo. */
+  quantity?: number | null;
+  unitLabel?: string | null;
 }
 
 const MANUAL_ITEM_KCAL_MAX = 3000;
@@ -308,7 +519,7 @@ async function deriveFoodConfidence(rawText: string | null | undefined, foodId: 
   if (!rawText) return 'high';
   const [token] = parseIntakeText(rawText);
   if (!token) return 'low';
-  const resolution = await resolveFoodForQuery(token.foodQuery);
+  const resolution = await resolveFoodForQuery(token.foodQuery, token.unitDimension);
   if (!resolution || resolution.food.id !== foodId) return 'low';
   return resolution.confidence;
 }
@@ -360,6 +571,8 @@ async function resolveFoodItem(item: Extract<IntakeItemRequest, { kind: 'food' }
     resolver,
     confidence,
     confirmed: true,
+    quantity: item.displayQuantity ?? null,
+    unitLabel: item.displayUnitLabel ?? null,
   };
 }
 
@@ -384,6 +597,8 @@ function resolveManualItem(item: Extract<IntakeItemRequest, { kind: 'manual' }>)
     resolver: 'manual',
     confidence: 'high',
     confirmed: true,
+    quantity: item.displayQuantity ?? null,
+    unitLabel: item.displayUnitLabel ?? null,
   };
 }
 

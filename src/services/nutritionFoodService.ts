@@ -151,9 +151,11 @@ export function invalidateFoodIndexCache(): void {
 export async function getFoodIndex(): Promise<FoodIndexEntry[]> {
   if (foodIndexCache) return foodIndexCache;
   const { rows } = await pool.query(
-    `SELECT id, name, normalized_name FROM nutrition_foods WHERE is_active`,
+    `SELECT id, name, normalized_name, category FROM nutrition_foods WHERE is_active`,
   );
-  foodIndexCache = buildFoodIndex(rows.map((r) => ({ id: r.id, name: r.name, normalizedName: r.normalized_name })));
+  foodIndexCache = buildFoodIndex(
+    rows.map((r) => ({ id: r.id, name: r.name, normalizedName: r.normalized_name, category: r.category })),
+  );
   return foodIndexCache;
 }
 

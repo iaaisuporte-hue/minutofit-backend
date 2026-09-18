@@ -23,6 +23,7 @@ const featureCatalog = [
   ['readiness', 'Prontidao (S2CORE Readiness)', 'Motor de prontidao diaria: score, motivos, confianca e recomendacao de intensidade (SPEC P3). NAO liberada por padrao — rollout gradual exigido pela SPEC §74/§75.'],
   ['voice_workout', 'Voice Workout', 'Registrar series por comando de voz durante o treino (P5A/P5B). PAUSED/EXPERIMENTAL desde set/2026 — prioridade de produto migrou para Fast Workout Input (registro manual em 1-2 toques). Nao removida: so tirada de todos os planos por padrao (ROLLOUT_ONLY_FEATURES). Religar e reversivel, sem migration.'],
   ['nutrition_intake', 'Registro Rápido de Macros', 'Meta diária de macros + registro rápido de refeição pelo aluno, com sinal de ingestão por exceção para o nutri (PLAN_NUTRITION_QUICK_MACROS). Liberada em TODOS os planos por decisão do usuário (16/set/2026) para validação ampla ainda em P1B — kill-switch continua disponível via ROLLOUT_ONLY_FEATURES se precisar recolher.'],
+  ['nutrition_intake_ai', 'Registro de Macros — Interpretação por IA', 'Fallback opcional de interpretação de texto livre via GPT quando o parser determinístico não resolve algum item (P1B.1, spike de arquitetura, set/2026). A IA só produz {alimento, quantidade, unidade} — NUNCA macros; a confiança final de cada item continua vindo do Resolver determinístico, igual a qualquer texto digitado. NÃO liberada por padrão (ROLLOUT_ONLY_FEATURES) — exige OPENAI_API_KEY configurada; com a flag off (ou sem chave), o comportamento é idêntico ao puramente determinístico.'],
 ] as const;
 
 /**
@@ -97,7 +98,7 @@ const PRO_PRODUCT_FEATURES: string[] = [
  * rollout gradual de algo novo, é PAUSA de algo que já existia em produção
  * (Free + Pro) até set/2026. Ver o comentário em FREE_PRODUCT_FEATURES.
  */
-const ROLLOUT_ONLY_FEATURES: string[] = ['readiness', 'voice_workout'];
+const ROLLOUT_ONLY_FEATURES: string[] = ['readiness', 'voice_workout', 'nutrition_intake_ai'];
 
 const PREMIUM_PRODUCT_FEATURES: string[] = featureCatalog
   .map((row) => row[0] as string)

@@ -17,6 +17,8 @@
  * cuja densidade é conhecida com segurança (categoria Bebidas) — nunca aqui,
  * e nunca com um fator 1:1 universal.
  */
+import { PREPARATION_LEMMAS } from './nutritionFoodMatcher';
+
 export type ParsedUnitType = 'grams' | 'ml' | 'measure';
 export type ParsedUnitDimension = 'mass' | 'volume' | 'count' | 'household';
 
@@ -44,6 +46,25 @@ export interface ParsedIntakeToken {
   unitDimension: ParsedUnitDimension;
   /** Rótulo de exibição da unidade tal como o usuário disse ("ml", "xícara", "unidade") — nunca "g" por padrão. */
   unitLabel: string;
+  /**
+   * Preparo extraído por `PREPARATION_LEMMAS` quando presente em `foodQuery`
+   * (PLAN CANONICAL_FOOD_MODEL_SPIKE §9/§21) — primeira classe agora, em vez
+   * de só afetar o score do fuzzy match. NÃO remove a palavra de `foodQuery`
+   * (o matching continua precisando dela do jeito que já funciona) — é um
+   * campo PARALELO, side-effect não-destrutivo, usado pelo Canonical Food
+   * Resolver (`canonicalFood.ts`) para exibir "Grelhado" como legenda em vez
+   * de deixá-lo enterrado dentro do nome bruto da fonte.
+   */
+  preparation: string | null;
+}
+
+/** Escaneia as palavras (já normalizadas) contra `PREPARATION_LEMMAS` — primeiro match encontrado vence; ordem não importa para os 6 lemas hoje conhecidos (nunca coexistem 2 preparos na mesma menção). */
+function extractPreparation(words: string[]): string | null {
+  for (const w of words) {
+    const lemma = PREPARATION_LEMMAS[w];
+    if (lemma) return lemma;
+  }
+  return null;
 }
 
 /** Medidas caseiras com nome canônico reconhecido pelo parser (PLAN §10). */
@@ -135,19 +156,20 @@ function parseSegment(rawText: string): ParsedIntakeToken {
   const lowered = stripAccents(rawText).toLowerCase().trim();
   const qtyMatch = lowered.match(LEADING_QUANTITY);
   if (!qtyMatch) {
-    return { rawText, foodQuery: normalizeText(rawText), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade' };
+    return { rawText, foodQuery: normalizeText(rawText), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
   }
   const quantity = parseQuantity(qtyMatch[1]);
   const remainder = normalizeText(lowered.slice(qtyMatch[0].length));
   if (quantity == null || !remainder) {
-    return { rawText, foodQuery: normalizeText(rawText), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade' };
+    return { rawText, foodQuery: normalizeText(rawText), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
   }
   const remainderWords = remainder.split(' ');
 
   // 1) unidade de massa, colada ("200g") ou separada ("200 g"/"2kg") — kg
   //    converte para gramas aqui (mesma dimensão, base única de cálculo).
   if (MASS_UNIT.test(remainderWords[0])) {
-    const foodQuery = dropLeadingDe(remainderWords.slice(1)).join(' ').trim();
+    const rest = dropLeadingDe(remainderWords.slice(1));
+    const foodQuery = rest.join(' ').trim();
     if (foodQuery) {
       const isKg = KG_WORDS.has(remainderWords[0]);
       return {
@@ -155,6 +177,7 @@ function parseSegment(rawText: string): ParsedIntakeToken {
         quantity: isKg ? quantity * 1000 : quantity,
         unitType: 'grams', measureName: null,
         unitDimension: 'mass', unitLabel: 'g',
+        preparation: extractPreparation(rest),
       };
     }
   }
@@ -162,7 +185,8 @@ function parseSegment(rawText: string): ParsedIntakeToken {
   // 1b) unidade de VOLUME ("200ml"/"1l") — dimensão própria, nunca colapsada
   //     em massa aqui (PLAN P1B.1 §2/§10) — l converte para ml (base única).
   if (VOLUME_UNIT.test(remainderWords[0])) {
-    const foodQuery = dropLeadingDe(remainderWords.slice(1)).join(' ').trim();
+    const rest = dropLeadingDe(remainderWords.slice(1));
+    const foodQuery = rest.join(' ').trim();
     if (foodQuery) {
       const isL = L_WORDS.has(remainderWords[0]);
       return {
@@ -170,6 +194,7 @@ function parseSegment(rawText: string): ParsedIntakeToken {
         quantity: isL ? quantity * 1000 : quantity,
         unitType: 'ml', measureName: null,
         unitDimension: 'volume', unitLabel: 'ml',
+        preparation: extractPreparation(rest),
       };
     }
   }
@@ -178,21 +203,27 @@ function parseSegment(rawText: string): ParsedIntakeToken {
   for (const alias of MEASURE_ALIASES_BY_LENGTH) {
     const prefix = remainderWords.slice(0, alias.words.length).join(' ');
     if (prefix === alias.words.join(' ')) {
-      const foodQuery = dropLeadingDe(remainderWords.slice(alias.words.length)).join(' ').trim();
+      const rest = dropLeadingDe(remainderWords.slice(alias.words.length));
+      const foodQuery = rest.join(' ').trim();
       if (foodQuery) {
         return {
           rawText, foodQuery, quantity, unitType: 'measure', measureName: alias.canonical,
           // xícara/copo são recipientes de LÍQUIDO na fala comum — colher/concha/fatia/unidade/scoop/dose não.
           unitDimension: alias.canonical === 'xicara' || alias.canonical === 'copo' ? 'volume' : 'household',
           unitLabel: MEASURE_LABELS[alias.canonical] ?? alias.canonical,
+          preparation: extractPreparation(rest),
         };
       }
     }
   }
 
   // 3) contagem de alimento no plural, sem palavra de medida — "2 ovos", "3 bananas".
-  const foodQuery = [singularize(remainderWords[0]), ...remainderWords.slice(1)].join(' ').trim();
-  return { rawText, foodQuery, quantity, unitType: 'measure', measureName: null, unitDimension: 'count', unitLabel: 'unidade' };
+  const countRest = remainderWords.slice(1);
+  const foodQuery = [singularize(remainderWords[0]), ...countRest].join(' ').trim();
+  return {
+    rawText, foodQuery, quantity, unitType: 'measure', measureName: null, unitDimension: 'count', unitLabel: 'unidade',
+    preparation: extractPreparation(countRest),
+  };
 }
 
 /** Rótulo de exibição por medida canônica — nunca "g" (PLAN P1B.1 §3). */

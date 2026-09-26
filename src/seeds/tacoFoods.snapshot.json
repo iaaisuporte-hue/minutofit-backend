@@ -8728,5 +8728,50 @@
     "fatG": 59.36,
     "fiberG": 7.25,
     "sodiumMg": 4.57
+  },
+  {
+    "source": "usda_fdc",
+    "sourceId": "171265",
+    "sourceVersion": "sr_legacy_2018",
+    "name": "Leite, de vaca, integral",
+    "normalizedName": "leite de vaca integral",
+    "category": "Leite e derivados",
+    "referenceAmountG": 100,
+    "energyKcal": 61,
+    "proteinG": 3.15,
+    "carbohydrateG": 4.8,
+    "fatG": 3.25,
+    "fiberG": null,
+    "sodiumMg": null
+  },
+  {
+    "source": "usda_fdc",
+    "sourceId": "173432",
+    "sourceVersion": "sr_legacy_2018",
+    "name": "Leite, de vaca, desnatado",
+    "normalizedName": "leite de vaca desnatado",
+    "category": "Leite e derivados",
+    "referenceAmountG": 100,
+    "energyKcal": 35,
+    "proteinG": 3.4,
+    "carbohydrateG": 4.86,
+    "fatG": 0.18,
+    "fiberG": null,
+    "sodiumMg": null
+  },
+  {
+    "source": "usda_fdc",
+    "sourceId": "173177",
+    "sourceVersion": "sr_legacy_2018",
+    "name": "Whey protein, isolado",
+    "normalizedName": "whey protein isolado",
+    "category": "Suplementos",
+    "referenceAmountG": 100,
+    "energyKcal": 359,
+    "proteinG": 58.1,
+    "carbohydrateG": 29.1,
+    "fatG": 1.16,
+    "fiberG": null,
+    "sodiumMg": null
   }
 ]

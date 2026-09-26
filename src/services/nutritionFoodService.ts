@@ -36,6 +36,8 @@ export interface FoodSummary {
   id: number;
   kind: 'catalog' | 'custom';
   name: string;
+  /** Chave usada pelo Canonical Food Resolver (`canonicalFood.ts`) para o mapa curado — fonte-agnóstica (PLAN CANONICAL_FOOD_MODEL_SPIKE §6). */
+  normalizedName: string;
   category: string | null;
   source: string;
   referenceAmountG: number;
@@ -99,14 +101,14 @@ export async function searchCatalogFoods(query: string, limit = 20): Promise<Foo
   const safeLimit = Math.min(Math.max(limit, 1), 50);
   if (!q) {
     const { rows } = await pool.query(
-      `SELECT id, name, category, source, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
+      `SELECT id, name, normalized_name, category, source, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
          FROM nutrition_foods WHERE is_active ORDER BY name LIMIT $1`,
       [safeLimit],
     );
     return rows.map(mapCatalogRow);
   }
   const { rows } = await pool.query(
-    `SELECT id, name, category, source, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
+    `SELECT id, name, normalized_name, category, source, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
        FROM nutrition_foods
       WHERE is_active AND normalized_name ILIKE $1
       ORDER BY (normalized_name = $2) DESC, name
@@ -121,6 +123,7 @@ function mapCatalogRow(r: any): FoodSummary {
     id: r.id,
     kind: 'catalog',
     name: r.name,
+    normalizedName: r.normalized_name,
     category: r.category,
     source: r.source,
     referenceAmountG: Number(r.reference_amount_g),
@@ -161,7 +164,7 @@ export async function getFoodIndex(): Promise<FoodIndexEntry[]> {
 
 export async function getCatalogFoodById(id: number): Promise<FoodSummary | null> {
   const { rows } = await pool.query(
-    `SELECT id, name, category, source, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
+    `SELECT id, name, normalized_name, category, source, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
        FROM nutrition_foods WHERE id = $1 AND is_active`,
     [id],
   );
@@ -192,6 +195,7 @@ function mapCustomRow(r: any): FoodSummary {
     id: r.id,
     kind: 'custom',
     name: r.name,
+    normalizedName: r.normalized_name ?? normalizeName(r.name),
     category: null,
     source: 'custom',
     referenceAmountG: Number(r.reference_amount_g),
@@ -206,7 +210,7 @@ function mapCustomRow(r: any): FoodSummary {
 
 export async function listCustomFoods(nutriId: number): Promise<FoodSummary[]> {
   const { rows } = await pool.query(
-    `SELECT id, name, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
+    `SELECT id, name, normalized_name, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg
        FROM nutrition_custom_foods
       WHERE owner_nutri_id = $1 AND status = 'active'
       ORDER BY name`,
@@ -229,7 +233,7 @@ export async function createCustomFood(nutriId: number, input: CustomFoodInput):
          (owner_nutri_id, name, normalized_name, brand, notes, reference_amount_g,
           energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-       RETURNING id, name, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg`,
+       RETURNING id, name, normalized_name, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg`,
       [
         nutriId, name, normalizeName(name), input.brand?.trim() || null, input.notes?.trim() || null,
         referenceAmountG, input.energyKcal, input.proteinG, input.carbohydrateG, input.fatG,
@@ -312,7 +316,7 @@ export async function updateCustomFood(
        sodium_mg = CASE WHEN $15::boolean THEN $16 ELSE sodium_mg END,
        updated_at = NOW()
      WHERE id = $1 AND owner_nutri_id = $2 AND status = 'active'
-     RETURNING id, name, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg`,
+     RETURNING id, name, normalized_name, reference_amount_g, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, sodium_mg`,
     [
       id, nutriId, name ?? null, name ? normalizeName(name) : null,
       input.brand !== undefined, input.brand?.trim() || null,

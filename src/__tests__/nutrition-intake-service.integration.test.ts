@@ -250,20 +250,24 @@ describeWithDb('nutritionIntakeService (integration)', () => {
     });
 
     it('item de confiança MEDIUM (fuzzy "você quis dizer") também exige confirmação', async () => {
-      const preview = await svc.parseAndResolve('100g de leite integral');
+      // "frango cru" continua genuinamente ambíguo (peito/coxa/sobrecoxa/etc.
+      // crus, sem alias — PLAN CANONICAL_FOOD_MODEL_SPIKE §12-13, "AMBÍGUO
+      // GENUÍNO"). "leite integral" deixou de servir de exemplo aqui: agora
+      // tem alias (§14, gap aprovado/importado do USDA) e resolve high.
+      const preview = await svc.parseAndResolve('100g de frango cru');
       const item = preview.items[0];
       expect(item.confidence).toBe('medium');
       await expect(
         svc.persistIntakeLog({
           userId, label: 'Teste',
-          items: [{ kind: 'food', foodId: item.foodId!, quantity: 100, unitType: 'grams', rawText: '100g de leite integral', confirmed: false }],
+          items: [{ kind: 'food', foodId: item.foodId!, quantity: 100, unitType: 'grams', rawText: '100g de frango cru', confirmed: false }],
           source: 'parse',
         })
       ).rejects.toThrow('low_confidence_item_needs_confirmation');
 
       const log = await svc.persistIntakeLog({
         userId, label: 'Teste',
-        items: [{ kind: 'food', foodId: item.foodId!, quantity: 100, unitType: 'grams', rawText: '100g de leite integral', confirmed: true }],
+        items: [{ kind: 'food', foodId: item.foodId!, quantity: 100, unitType: 'grams', rawText: '100g de frango cru', confirmed: true }],
         source: 'parse',
       });
       expect(log.items[0].confidence).toBe('medium');
@@ -764,8 +768,8 @@ describeWithDb('nutritionIntakeService (integration)', () => {
   // PLAN P1B.1 ("Smart Food Logging" spike, set/2026) — corpus dos 8 casos do
   // spike como harness permanente, mais os caveats explícitos do usuário.
   describe('P1B.1 — Smart Food Logging (volume, histórico, IA opcional)', () => {
-    it('"200ml de leite integral" preserva quantidade/unidade e NUNCA vira "integral" silenciosamente (caveat 4) — fica não resolvido, nunca "informe em gramas" (caveat 3)', async () => {
-      const preview = await svc.parseAndResolve('200ml de leite integral');
+    it('"200ml de leite" (bare, sem variante) segue honestamente ambíguo — NUNCA vira "integral" silenciosamente (caveat 4)', async () => {
+      const preview = await svc.parseAndResolve('200ml de leite');
       const item = preview.items[0];
       expect(item.resolved).toBe(false);
       // A quantidade/unidade que o usuário disse continuam visíveis — nunca
@@ -782,28 +786,17 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       expect(item.name).toMatch(/infus/i);
     });
 
-    it('"1 scoop de whey" e "30g de whey" seguem não resolvidos no catálogo (sem banco externo) — mas preservam a unidade dita', async () => {
-      const scoop = (await svc.parseAndResolve('1 scoop de whey')).items[0];
-      expect(scoop.resolved).toBe(false);
-      expect(scoop.unitLabel).toBe('scoop');
-
-      const grams = (await svc.parseAndResolve('30g de whey')).items[0];
-      expect(grams.resolved).toBe(false);
-      expect(grams.quantity).toBe(30);
-      expect(grams.unitLabel).toBe('g');
-    });
-
-    it('caveat 6 — 2º lançamento de whey reaproveita o histórico do PRÓPRIO usuário (rápido, sem formulário de novo)', async () => {
+    it('caveat 6 — 2º lançamento de um alimento genuinamente fora de qualquer fonte (nem TACO nem USDA) reaproveita o histórico do PRÓPRIO usuário (rápido, sem formulário de novo)', async () => {
       await svc.persistIntakeLog({
         userId, label: 'Lanche', mealId: null, source: 'manual',
         items: [{
-          kind: 'manual', name: 'Whey Integralmedica', grams: 30,
+          kind: 'manual', name: 'Barrinha Proteica XYZ', grams: 30,
           energyKcal: 120, proteinG: 24, carbohydrateG: 3, fatG: 1,
           displayQuantity: 30, displayUnitLabel: 'g',
         }],
       });
 
-      const bareScoop = (await svc.parseAndResolve('1 scoop de whey', userId)).items[0];
+      const bareScoop = (await svc.parseAndResolve('1 unidade de barrinha proteica xyz', userId)).items[0];
       expect(bareScoop.resolved).toBe(true);
       expect(bareScoop.resolver).toBe('history');
       expect(bareScoop.confidence).toBe('high');
@@ -811,7 +804,7 @@ describeWithDb('nutritionIntakeService (integration)', () => {
 
       // Massa explícita diferente da vez anterior → escala pelo per-100g
       // derivado do histórico, nunca reaproveita o total antigo como está.
-      const scaled = (await svc.parseAndResolve('60g de whey', userId)).items[0];
+      const scaled = (await svc.parseAndResolve('60g de barrinha proteica xyz', userId)).items[0];
       expect(scaled.resolved).toBe(true);
       expect(scaled.resolver).toBe('history');
       expect(scaled.grams).toBe(60);
@@ -868,6 +861,92 @@ describeWithDb('nutritionIntakeService (integration)', () => {
       const spyModel = async () => { called = true; return '{"items":[]}'; };
       await svc.parseAndResolve('1 pão francês', userId, { callModel: spyModel });
       expect(called).toBe(false);
+    });
+  });
+
+  // PLAN CANONICAL_FOOD_MODEL_SPIKE.md — Canonical Food Resolver +
+  // Nutrition Source Resolver. Contrato GENÉRICO (§25, corrigido): qualquer
+  // gap aprovado/importado passa; qualquer gap não validado continua
+  // honestamente não-resolvido. Leite/whey são os 2 casos usados para
+  // provar a regra AGORA — o teste verifica a REGRA, nunca uma lista fixa.
+  describe('CANONICAL_FOOD_MODEL_SPIKE — Canonical Food + Nutrition Source Resolver', () => {
+    it('gap aprovado e importado (whey, USDA FDC 173177) resolve DIRETO — sem formulário manual, na 1ª vez', async () => {
+      const scoop = (await svc.parseAndResolve('1 scoop de whey')).items[0];
+      expect(scoop.resolved).toBe(true);
+      expect(scoop.confidence).toBe('high');
+      expect(scoop.resolver).toBe('measure');
+      expect(scoop.canonicalFood).toMatchObject({ baseFood: 'whey protein' });
+      expect(scoop.grams).toBeCloseTo(28.7, 1);
+
+      const grams = (await svc.parseAndResolve('30g de whey')).items[0];
+      expect(grams.resolved).toBe(true);
+      expect(grams.confidence).toBe('high');
+      expect(grams.resolver).toBe('catalog');
+      expect(grams.grams).toBe(30);
+      expect(grams.energyKcal).toBeCloseTo(107.7, 1);
+    });
+
+    it('gap aprovado e importado (leite integral/desnatado, USDA FDC) resolve com densidade curada — nunca 1:1 genérico', async () => {
+      const integral = (await svc.parseAndResolve('200ml de leite integral')).items[0];
+      expect(integral.resolved).toBe(true);
+      expect(integral.confidence).toBe('high');
+      expect(integral.canonicalFood).toMatchObject({ baseFood: 'leite', variant: 'integral' });
+      // densidade curada 1,03 g/ml (não 1:1) — 200ml ≈ 206g, nunca 200g.
+      expect(integral.grams).toBeCloseTo(206, 0);
+
+      const desnatado = (await svc.parseAndResolve('200ml de leite desnatado')).items[0];
+      expect(desnatado.resolved).toBe(true);
+      expect(desnatado.canonicalFood).toMatchObject({ baseFood: 'leite', variant: 'desnatado' });
+    });
+
+    it('gap NÃO validado (nenhuma fonte aprovada cobre) NUNCA resolve em confiança high — sempre exige confirmação, nunca aproximado silenciosamente', async () => {
+      // "queijo coalho" não existe na TACO nem foi importado de nenhuma fonte
+      // complementar — nenhuma linha aprovada cobre este gap ainda. O motor
+      // de fuzzy pode sugerir um candidato plausível (ex. "queijo prato"),
+      // mas NUNCA em confiança `high` — o contrato genérico (§25) é "nunca
+      // silenciosamente aproximado", não "sempre fica sem nenhum palpite".
+      const preview = await svc.parseAndResolve('50g de queijo coalho');
+      const item = preview.items[0];
+      expect(item.confidence).not.toBe('high');
+      expect(item.confirmed).toBe(false);
+    });
+
+    it('CanonicalFood nunca expõe a taxonomia bruta da fonte — nome natural, preparo como campo próprio', async () => {
+      const frango = (await svc.parseAndResolve('200g de frango grelhado')).items[0];
+      expect(frango.canonicalFood).toEqual({ baseFood: 'peito de frango', variant: null, preparation: 'grelhado' });
+      expect(frango.name).toBe('Frango, peito, sem pele, grelhado'); // string da fonte ainda existe, mas não é o que a UI mostra
+
+      const banana = (await svc.parseAndResolve('1 banana prata')).items[0];
+      expect(banana.canonicalFood).toMatchObject({ baseFood: 'banana', variant: 'prata' });
+    });
+
+    it('ambiguidade genuína expõe candidatos alternativos (§10) — nunca em confiança high', async () => {
+      const ovoMexido = (await svc.parseAndResolve('2 ovos mexidos')).items[0];
+      expect(ovoMexido.confidence).not.toBe('high');
+      expect(ovoMexido.candidates).toBeDefined();
+      expect(ovoMexido.candidates!.length).toBeGreaterThan(0);
+      for (const c of ovoMexido.candidates!) {
+        expect(c.foodId).toBeDefined();
+        expect(c.canonicalFood.baseFood).toBeTruthy();
+      }
+
+      // Caminho feliz (high) NUNCA carrega candidatos — nenhum payload extra.
+      const pao = (await svc.parseAndResolve('1 pão francês')).items[0];
+      expect(pao.confidence).toBe('high');
+      expect(pao.candidates).toBeUndefined();
+    });
+
+    it('leite/whey persistidos carregam canonicalFood no snapshot — não é só o preview', async () => {
+      const preview = await svc.parseAndResolve('30g de whey');
+      const item = preview.items[0];
+      const log = await svc.persistIntakeLog({
+        userId, label: 'Lanche', mealId: null, source: 'parse',
+        items: [{
+          kind: 'food', foodId: item.foodId!, quantity: item.grams!, unitType: 'grams',
+          rawText: '30g de whey', confirmed: item.confirmed,
+        }],
+      });
+      expect(log.items[0].canonicalFood).toMatchObject({ baseFood: 'whey protein' });
     });
   });
 

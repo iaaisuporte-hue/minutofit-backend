@@ -32,9 +32,12 @@ beforeAll(() => {
   index = buildFoodIndex(foods);
 });
 
-describe('nutritionFoodMatcher — corpus real (582 itens TACO)', () => {
+describe('nutritionFoodMatcher — corpus real (582 TACO + 3 USDA)', () => {
   it('sanity: catálogo carregado tem os itens esperados', () => {
-    expect(index.length).toBe(582);
+    // 582 TACO + 3 linhas USDA importadas (PLAN CANONICAL_FOOD_MODEL_SPIKE
+    // §14/§16 — leite integral/desnatado fluido + whey, gaps que a TACO
+    // nunca teve e nunca vai ter).
+    expect(index.length).toBe(585);
     expect(index.some((e) => e.normalizedName === 'pao trigo frances')).toBe(true);
   });
 
@@ -228,7 +231,12 @@ describe('nutritionFoodMatcher — corpus real (582 itens TACO)', () => {
   // quando há candidato plausível, nem virar HIGH.
   // -------------------------------------------------------------------------
   describe('AMBÍGUOS — pedem confirmação', () => {
-    it.each(['leite integral', 'frango cru', 'arroz cru'])('"%s" resolve com confiança < high (pede confirmação)', (input) => {
+    // "leite integral" SAIU desta lista (PLAN CANONICAL_FOOD_MODEL_SPIKE
+    // §14) — ganhou alias para a linha USDA importada (gap aprovado); deixou
+    // de ser ambíguo por design, não por acidente. Ver
+    // `nutrition-intake-service.integration.test.ts` para o teste que cobre
+    // esse caso especificamente.
+    it.each(['frango cru', 'arroz cru'])('"%s" resolve com confiança < high (pede confirmação)', (input) => {
       const r = matchFood(input, index);
       expect(r.resolved).toBe(true);
       expect(r.confidence).not.toBe('high');

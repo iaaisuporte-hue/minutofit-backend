@@ -48,7 +48,7 @@ export function normalizeFoodText(s: string): string {
  * lematizadas; qualquer outra palavra (variante, marca, corte) continua
  * intacta e participa da pontuação normalmente — nunca é descartada.
  */
-const PREPARATION_LEMMAS: Record<string, string> = {
+export const PREPARATION_LEMMAS: Record<string, string> = {
   cru: 'cru', crua: 'cru', crus: 'cru', cruas: 'cru',
   cozido: 'cozido', cozida: 'cozido', cozidos: 'cozido', cozidas: 'cozido',
   grelhado: 'grelhado', grelhada: 'grelhado', grelhados: 'grelhado', grelhadas: 'grelhado',
@@ -158,6 +158,19 @@ export const FOOD_ALIASES: Record<string, string> = {
   frango: 'frango peito sem pele grelhado',
   'frango grelhado': 'frango peito sem pele grelhado',
   banana: 'banana prata crua',
+  // Importados via USDA FoodData Central (PLAN CANONICAL_FOOD_MODEL_SPIKE
+  // §14/§16 — TACO não tem macro para leite fluido nem qualquer linha de
+  // whey). "leite integral"/"leite desnatado" têm o qualificador dito
+  // explicitamente pelo usuário — sem ambiguidade real (critério (b) do
+  // cabeçalho). Bare "leite" (sem qualificador) permanece SEM alias de
+  // propósito — nunca escolhe uma variante pelo usuário (§14: "leite
+  // genérico não vira integral silenciosamente").
+  'leite integral': 'leite de vaca integral',
+  'leite desnatado': 'leite de vaca desnatado',
+  // "whey" não tem a mesma ambiguidade de leite — não existe "whey em pó"
+  // vs. "whey líquido" concorrendo por sentido; candidato único e dominante.
+  whey: 'whey protein isolado',
+  'whey protein': 'whey protein isolado',
 };
 
 // ---------------------------------------------------------------------------

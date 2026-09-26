@@ -82,5 +82,23 @@
     "foodName": "Queijo, minas, frescal",
     "name": "fatia média",
     "grams": 30
+  },
+  {
+    "foodSourceId": "171265",
+    "foodName": "Leite, de vaca, integral",
+    "name": "ml",
+    "grams": 1.03
+  },
+  {
+    "foodSourceId": "173432",
+    "foodName": "Leite, de vaca, desnatado",
+    "name": "ml",
+    "grams": 1.03
+  },
+  {
+    "foodSourceId": "173177",
+    "foodName": "Whey protein, isolado",
+    "name": "scoop",
+    "grams": 28.7
   }
 ]

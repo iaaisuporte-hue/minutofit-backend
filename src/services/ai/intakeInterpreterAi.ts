@@ -96,6 +96,12 @@ export function parseAiIntakeTokens(raw: string, rawTextByIndex?: string[]): Par
       measureName: unit.measureName,
       unitDimension: unit.dimension,
       unitLabel: unit.label,
+      // A IA nunca extrai preparo separadamente (fora de escopo do contrato,
+      // §6 do prompt) — fica null; o Resolver ainda funciona normalmente
+      // porque `foodQuery` continua carregando a palavra de preparo, só o
+      // campo estruturado paralelo (PLAN CANONICAL_FOOD_MODEL_SPIKE §9) não
+      // é preenchido para tokens vindos da IA.
+      preparation: null,
     });
   }
   return tokens;

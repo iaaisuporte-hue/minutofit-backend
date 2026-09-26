@@ -22,9 +22,10 @@ import { dayKey, dayKeyDiff } from '../utils/appDay';
 import { parseIntakeText, type ParsedIntakeToken } from './nutritionIntakeParser';
 import { calculateNutrition, sumNutrients, type NutrientsPer100g } from './nutritionCalculation';
 import { getCatalogFoodById, listCatalogFoodMeasures, getFoodIndex, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
-import { matchFood, normalizeFoodText, BEVERAGE_CATEGORY, type MatchConfidence, type UnitHint } from './nutritionFoodMatcher';
+import { matchFood, normalizeFoodText, BEVERAGE_CATEGORY, FUZZY_MINIMUM_SCORE, type CandidateScore, type MatchConfidence, type UnitHint } from './nutritionFoodMatcher';
 import { interpretIntakeTextWithAi, type IntakeInterpreterDeps } from './ai/intakeInterpreterAi';
 import { getFeatureMapForUser } from './planFeatureService';
+import { toCanonicalFood, derivePreparationFromSourceName, type CanonicalFood } from './canonicalFood';
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -128,6 +129,19 @@ export interface IntakePreviewItem {
    */
   quantity?: number;
   unitLabel?: string;
+  /** Identidade de domínio (PLAN CANONICAL_FOOD_MODEL_SPIKE §6) — nome natural para exibição; `name`/`foodId` continuam a identidade do registro de composição. */
+  canonicalFood?: CanonicalFood;
+  /**
+   * Candidatos alternativos (top-3 do Food Resolver) quando a confiança NÃO
+   * é `high` — nunca populado no caminho feliz. Alimenta a UI de chips
+   * "Como foi preparado?"/"qual destes?" (§10) sem round-trip nova: já é o
+   * que `matchFood` calcula hoje, só nunca era exposto fora do resolver.
+   */
+  candidates?: Array<{
+    foodId: number;
+    canonicalFood: CanonicalFood;
+    per100g: { kcal: number; p: number; c: number; f: number };
+  }>;
 }
 
 function toPer100g(food: FoodSummary): NutrientsPer100g {
@@ -174,30 +188,40 @@ function findDbMeasure(measures: FoodMeasure[], canonical: string): FoodMeasure 
 async function resolveFoodForQuery(
   foodQuery: string,
   unitHint?: UnitHint,
-): Promise<{ food: FoodSummary; confidence: IntakeConfidence; score: number } | null> {
+): Promise<{ food: FoodSummary; confidence: IntakeConfidence; score: number; candidates: CandidateScore[] } | null> {
   const index = await getFoodIndex();
   const match = matchFood(foodQuery, index, unitHint);
   if (!match.resolved || !match.entry) return null;
   const food = await getCatalogFoodById(match.entry.id);
   if (!food) return null;
-  return { food, confidence: match.confidence!, score: match.score ?? 0 };
+  return { food, confidence: match.confidence!, score: match.score ?? 0, candidates: match.candidates };
 }
 
 /**
- * Volume → grama, de forma encapsulada e restrita (PLAN P1B.1 §2/§10 —
- * caveat explícito: nunca um fator 1:1 universal, nunca popular uma tabela
- * de densidades por chute). Só resolve quando o alimento identificado é da
- * categoria Bebidas — infusões, refrigerantes, isotônico, água de coco,
- * caldo de cana, cerveja: líquidos diluídos em água onde 1 ml ≈ 1 g é uma
- * aproximação honesta (desvio &lt;5%). Para qualquer outro alimento (leite,
- * suco — densidade real diferente e, no caso do leite, a versão fluida nem
- * existe no catálogo hoje) devolve `null`: o chamador cai para o histórico
- * do usuário ou para a entrada manual, preservando "ml" na tela — nunca
+ * Volume → grama, de forma encapsulada e restrita (PLAN P1B.1 §2/§10;
+ * PLAN CANONICAL_FOOD_MODEL_SPIKE §14 — caveat explícito: nunca um fator
+ * 1:1 universal, nunca popular uma tabela de densidades por chute). Duas
+ * fontes de densidade, nesta ordem:
+ *
+ * 1. Medida curada POR ALIMENTO (`nutrition_food_measures`, nome literal
+ *    "ml", `grams` = densidade em g por 1 ml daquele alimento específico —
+ *    ex.: leite ≈1,03) — nunca um valor genérico, sempre citado/revisado
+ *    antes de entrar no seed (§14/§16 do spike: leite fluido importado do
+ *    USDA ganhou essa medida).
+ * 2. Categoria Bebidas — infusões, refrigerantes, isotônico, água de coco,
+ *    caldo de cana, cerveja: líquidos diluídos em água onde 1 ml ≈ 1 g é
+ *    uma aproximação honesta (desvio &lt;5%), sem precisar de medida curada
+ *    por alimento (aproximação já era boa o bastante antes do spike).
+ *
+ * Sem nenhuma das duas, devolve `null`: o chamador cai para o histórico do
+ * usuário ou para a entrada manual, preservando "ml" na tela — nunca
  * convertido, nunca pedido de volta em gramas (§3).
  */
-function resolveVolumeGrams(ml: number, food: FoodSummary): number | null {
-  if (food.category !== BEVERAGE_CATEGORY) return null;
-  return ml;
+function resolveVolumeGrams(ml: number, food: FoodSummary, measures: FoodMeasure[]): number | null {
+  const densityMeasure = measures.find((m) => normalizeFoodText(m.name) === 'ml');
+  if (densityMeasure) return round2(ml * densityMeasure.grams);
+  if (food.category === BEVERAGE_CATEGORY) return ml;
+  return null;
 }
 
 interface QuantityResolution {
@@ -211,12 +235,12 @@ async function resolveQuantityToGrams(token: ParsedIntakeToken, food: FoodSummar
   if (token.unitType === 'grams') {
     return { grams: token.quantity, measureId: null, fallbackMeasureKey: null };
   }
+  const dbMeasures = await listCatalogFoodMeasures(food.id);
   if (token.unitType === 'ml') {
-    const grams = resolveVolumeGrams(token.quantity, food);
+    const grams = resolveVolumeGrams(token.quantity, food, dbMeasures);
     return grams == null ? null : { grams, measureId: null, fallbackMeasureKey: null };
   }
   const canonical = token.measureName ?? 'unidade';
-  const dbMeasures = await listCatalogFoodMeasures(food.id);
   const dbMatch = findDbMeasure(dbMeasures, canonical);
   if (dbMatch) {
     return { grams: token.quantity * dbMatch.grams, measureId: dbMatch.id, fallbackMeasureKey: null };
@@ -325,22 +349,56 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/**
+ * Candidatos ALTERNATIVOS ao vencedor — nunca populado em confiança `high`
+ * (PLAN CANONICAL_FOOD_MODEL_SPIKE §10/§20: a UI de chips só faz sentido
+ * quando já existe incerteza real; não é round-trip nova, `matchFood` já
+ * calcula esse top-3 hoje, só nunca saía do resolver). Cap de 2 alternativas
+ * (+ o vencedor = 3 opções no máximo) para não virar um menu longo.
+ */
+async function buildAlternateCandidates(
+  candidates: CandidateScore[],
+  winnerFoodId: number,
+): Promise<IntakePreviewItem['candidates']> {
+  const alternates = candidates
+    .filter((c) => c.entry.id !== winnerFoodId && c.score >= FUZZY_MINIMUM_SCORE)
+    .slice(0, 2);
+  if (alternates.length === 0) return undefined;
+
+  const built = await Promise.all(
+    alternates.map(async (c) => {
+      const food = await getCatalogFoodById(c.entry.id);
+      if (!food) return null;
+      return {
+        foodId: food.id,
+        canonicalFood: toCanonicalFood(food, derivePreparationFromSourceName(food.name)),
+        per100g: { kcal: food.energyKcal, p: food.proteinG, c: food.carbohydrateG, f: food.fatG },
+      };
+    }),
+  );
+  const filtered = built.filter((b): b is NonNullable<typeof b> => b != null);
+  return filtered.length > 0 ? filtered : undefined;
+}
+
 /** Resolve um token do parser contra o catálogo — usado pelo preview (`/parse`). `userId` habilita o estágio de histórico (§ acima); omitido em contextos onde não há usuário autenticado. */
 export async function resolveTokenForPreview(token: ParsedIntakeToken, userId?: number): Promise<IntakePreviewItem> {
   const resolution = await resolveFoodForQuery(token.foodQuery, token.unitDimension);
 
   if (resolution) {
-    const { food: best, confidence, score } = resolution;
+    const { food: best, confidence, score, candidates } = resolution;
     const quantityResult = await resolveQuantityToGrams(token, best);
     if (quantityResult) {
       const per100g = toPer100g(best);
       const calc = calculateNutrition(per100g, quantityResult.grams);
+      const alternates = confidence === 'high' ? undefined : await buildAlternateCandidates(candidates, best.id);
       return {
         resolved: true,
         rawText: token.rawText,
         foodQuery: token.foodQuery,
         foodId: best.id,
         name: best.name,
+        canonicalFood: toCanonicalFood(best, token.preparation),
+        candidates: alternates,
         grams: quantityResult.grams,
         measureId: quantityResult.measureId,
         fallbackMeasureKey: quantityResult.fallbackMeasureKey,
@@ -501,6 +559,8 @@ export interface PersistedIntakeItem {
   /** Quantidade/unidade ORIGINAIS tal como o usuário disse — exibição apenas (PLAN P1B.1 §3); `grams` continua a base de cálculo. */
   quantity?: number | null;
   unitLabel?: string | null;
+  /** Identidade de domínio (PLAN CANONICAL_FOOD_MODEL_SPIKE §6) — nome natural, computado no momento do registro; nunca re-derivado ao ler (o registro é um snapshot). */
+  canonicalFood?: CanonicalFood | null;
 }
 
 const MANUAL_ITEM_KCAL_MAX = 3000;
@@ -558,6 +618,12 @@ async function resolveFoodItem(item: Extract<IntakeItemRequest, { kind: 'food' }
 
   const per100g = toPer100g(food);
   const calc = calculateNutrition(per100g, grams);
+  // Preparo do PRÓPRIO texto quando existir (mesma extração do preview) —
+  // sem rawText (item escolhido por busca explícita), deriva da linha da
+  // fonte (PLAN CANONICAL_FOOD_MODEL_SPIKE §9/§21).
+  const preparation = item.rawText
+    ? parseIntakeText(item.rawText)[0]?.preparation ?? null
+    : derivePreparationFromSourceName(food.name);
   return {
     foodId: food.id,
     name: food.name,
@@ -573,6 +639,7 @@ async function resolveFoodItem(item: Extract<IntakeItemRequest, { kind: 'food' }
     confirmed: true,
     quantity: item.displayQuantity ?? null,
     unitLabel: item.displayUnitLabel ?? null,
+    canonicalFood: toCanonicalFood(food, preparation),
   };
 }
 

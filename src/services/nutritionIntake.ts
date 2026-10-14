@@ -90,8 +90,11 @@ export function deriveIntakeSignal(input: {
   }
 
   const expectedMeals = target?.mealsPerDay ?? 3;
-  const last7 = days.filter((d) => { const a = daysAgo(d, todayKey); return a >= 0 && a <= 6; });
-  const prev7 = days.filter((d) => { const a = daysAgo(d, todayKey); return a >= 7 && a <= 13; });
+  // O sinal usa só DIAS FECHADOS: as janelas ancoram em ONTEM (1..7 e 8..14 dias atrás). O dia de HOJE ainda está em
+  // andamento — com o registro incremental a refeição pode estar pela metade, e um almoço ainda sem a salada não pode
+  // virar "comeu pouco" nem disparar alerta. Hoje só conta para saber se a pessoa está ATIVA (`intake_silent`).
+  const last7 = days.filter((d) => { const a = daysAgo(d, todayKey); return a >= 1 && a <= 7; });
+  const prev7 = days.filter((d) => { const a = daysAgo(d, todayKey); return a >= 8 && a <= 14; });
   const last5 = days.filter((d) => { const a = daysAgo(d, todayKey); return a >= 0 && a <= 4; });
   const window14to6 = days.filter((d) => { const a = daysAgo(d, todayKey); return a >= 6 && a <= 14; });
 

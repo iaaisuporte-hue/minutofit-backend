@@ -4,8 +4,16 @@ import { shiftDayKey } from '../utils/appDay';
 const TODAY = '2026-09-16';
 const TARGET: IntakeTarget = { energyKcal: 2100, proteinG: 150, carbohydrateG: 210, fatG: 70, mealsPerDay: 4, source: 'plan_items' };
 
-/** Dia de alta cobertura por padrão: 4 refeições registradas, confiança 1.0, no target. */
-function day(daysAgo: number, opts: Partial<DayAgg> = {}): DayAgg {
+/**
+ * Dia de alta cobertura por padrão: 4 refeições registradas, confiança 1.0, no target.
+ * `closedIndex` 0 = ONTEM: o sinal usa só dias fechados (as janelas ancoram em ontem; hoje ainda está em andamento).
+ * Use `todayDay()` para o dia de hoje.
+ */
+function day(closedIndex: number, opts: Partial<DayAgg> = {}): DayAgg {
+  return dayAt(closedIndex + 1, opts);
+}
+
+function dayAt(daysAgo: number, opts: Partial<DayAgg> = {}): DayAgg {
   return {
     dateKey: shiftDayKey(TODAY, -daysAgo),
     loggedMeals: opts.loggedMeals ?? 4,
@@ -16,6 +24,32 @@ function day(daysAgo: number, opts: Partial<DayAgg> = {}): DayAgg {
     fatG: opts.fatG ?? 70,
   };
 }
+
+function todayDay(opts: Partial<DayAgg> = {}): DayAgg {
+  return dayAt(0, opts);
+}
+
+describe('deriveIntakeSignal — hoje (dia em andamento) fica fora da cobertura, das médias e dos alertas', () => {
+  it('um hoje de alta cobertura NÃO entra em highCoverageDays7d nem nas médias', () => {
+    const days = [todayDay({ totalKcal: 100, proteinG: 5 }), ...Array.from({ length: 7 }, (_, i) => day(i, { totalKcal: 2050, proteinG: 148 }))];
+    const r = deriveIntakeSignal({ days, todayKey: TODAY, target: TARGET });
+    expect(r.highCoverageDays7d).toBe(7);
+    expect(r.avgKcal7d).toBe(2050);
+    expect(r.exception).toBeNull();
+  });
+
+  it('refeição pela metade hoje não vira "proteína baixa"', () => {
+    const days = [todayDay({ proteinG: 10, totalKcal: 400 }), ...Array.from({ length: 5 }, (_, i) => day(i, { proteinG: 148 }))];
+    expect(deriveIntakeSignal({ days, todayKey: TODAY, target: TARGET }).exception).toBeNull();
+  });
+
+  it('hoje conta para NÃO estar silencioso (quem voltou hoje não é "sumido")', () => {
+    // uso regular de 6 a 14 dias atrás, nada nos últimos 5 dias fechados — mas registrou hoje
+    const old = [6, 7, 8, 9].map((a) => dayAt(a));
+    expect(deriveIntakeSignal({ days: [...old], todayKey: TODAY, target: TARGET }).exception?.type).toBe('intake_silent');
+    expect(deriveIntakeSignal({ days: [...old, todayDay()], todayKey: TODAY, target: TARGET }).exception).toBeNull();
+  });
+});
 
 describe('deriveIntakeSignal', () => {
   it('sem logs (persona E): state none, sem meta, sem exceção', () => {

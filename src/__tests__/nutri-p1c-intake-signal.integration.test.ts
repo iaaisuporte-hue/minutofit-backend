@@ -112,7 +112,8 @@ describeWithDb('PLAN_NUTRITION_QUICK_MACROS (P1C) · getPatientsWithSummary.inta
     await grantConsent(nutriId, patientId, ALL_SCOPES);
     await createStructuredPlan(nutriId, patientId);
 
-    for (let d = 0; d < 7; d++) {
+    // dias FECHADOS (ontem em diante): hoje, ainda em andamento, não entra no sinal
+    for (let d = 1; d <= 7; d++) {
       await insertIntakeDay(patientId, d, { kcal: 1520, protein: 148 });
     }
 
@@ -132,13 +133,27 @@ describeWithDb('PLAN_NUTRITION_QUICK_MACROS (P1C) · getPatientsWithSummary.inta
       [patientId]
     );
 
-    for (let d = 0; d < 4; d++) {
+    for (let d = 1; d <= 4; d++) {
       await insertIntakeDay(patientId, d, { kcal: 2050, protein: 90 }); // proteína bem abaixo de 80% de 150
     }
 
     const [summary] = await svc.getPatientsWithSummary(nutriId);
     expect(summary.intake?.target?.source).toBe('self_estimate');
     expect(summary.intake?.exception?.type).toBe('intake_protein_low');
+  });
+
+  it('refeição incremental (N linhas da MESMA refeição) e hoje em andamento não distorcem o sinal', async () => {
+    const { nutriId, patientId } = await dupla();
+    await grantConsent(nutriId, patientId, ALL_SCOPES);
+    await createStructuredPlan(nutriId, patientId);
+    for (let d = 1; d <= 7; d++) await insertIntakeDay(patientId, d, { kcal: 1520, protein: 148 });
+    // hoje: só um alimento do café (refeição pela metade) — não pode puxar média nem virar alerta
+    await insertIntakeDay(patientId, 0, { kcal: 90, protein: 3, loggedMeals: 1 });
+
+    const [summary] = await svc.getPatientsWithSummary(nutriId);
+    expect(summary.intake?.highCoverageDays7d).toBe(7);
+    expect(summary.intake?.avgKcal7d).toBe(1520);
+    expect(summary.intake?.exception).toBeNull();
   });
 
   it('consentimento de nutrição revogado: intake = null (nunca vaza dado nutricional)', async () => {

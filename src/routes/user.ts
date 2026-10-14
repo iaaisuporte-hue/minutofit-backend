@@ -48,6 +48,7 @@ import {
   classifyDayCoverage,
   ValidationError as IntakeValidationError,
   EditWindowError,
+  IntakeConflictError,
   type IntakeItemRequest,
 } from '../services/nutritionIntakeService';
 import { dayKey } from '../utils/appDay';
@@ -505,7 +506,7 @@ router.post('/nutrition-intake/parse', authMiddleware, requireFeature('nutrition
 router.post('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { label, rawText, mealId, items, source } = req.body ?? {};
+    const { label, rawText, mealId, logId, items, source } = req.body ?? {};
     const validSources = ['parse', 'parse_ai', 'manual', 'repeat', 'favorite', 'plan'];
     if (!validSources.includes(source)) {
       return res.status(400).json({ success: false, error: `source deve ser um de: ${validSources.join(', ')}` });
@@ -523,6 +524,8 @@ router.post('/nutrition-intake', authMiddleware, requireFeature('nutrition_intak
       // explícito (refeição extra, PLAN P1B corrective §7) em `mealId: 0`,
       // que quebra a FK (nenhuma `nutrition_plan_meals.id` é 0).
       mealId: mealId != null && Number.isFinite(Number(mealId)) ? Number(mealId) : null,
+      // Registro incremental: anexa à refeição já iniciada (mesma coerção null-safe do `mealId`).
+      logId: logId != null && Number.isFinite(Number(logId)) ? Number(logId) : null,
       items: items as IntakeItemRequest[],
       source,
     });
@@ -530,7 +533,12 @@ router.post('/nutrition-intake', authMiddleware, requireFeature('nutrition_intak
     res.status(201).json({ success: true, data: log });
   } catch (err: any) {
     if (err instanceof IntakeValidationError) {
+      // `log_not_found`: logId de outra pessoa ou apagado — 404, sem confirmar que existe.
+      if (err.message === 'log_not_found') return res.status(404).json({ success: false, error: 'Log not found' });
       return res.status(400).json({ success: false, error: err.message });
+    }
+    if (err instanceof EditWindowError) {
+      return res.status(403).json({ success: false, error: 'edit_window_exceeded' });
     }
     logger.error({ err }, '[user/nutrition-intake POST]');
     res.status(500).json({ success: false, error: 'Failed to save intake log' });
@@ -623,7 +631,7 @@ router.patch('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition_
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ success: false, error: 'Invalid id' });
 
-    const { label, rawText, items, source } = req.body ?? {};
+    const { label, rawText, items, source, baseUpdatedAt } = req.body ?? {};
     const validSources = ['parse', 'parse_ai', 'manual', 'repeat', 'favorite', 'plan'];
     if (!validSources.includes(source)) {
       return res.status(400).json({ success: false, error: `source deve ser um de: ${validSources.join(', ')}` });
@@ -637,6 +645,8 @@ router.patch('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition_
       rawText: typeof rawText === 'string' ? rawText : null,
       items: items as IntakeItemRequest[],
       source,
+      // `undefined` (cliente antigo) = sem checagem; `null` = "a linha nunca foi editada quando li".
+      baseUpdatedAt: baseUpdatedAt === undefined ? undefined : (typeof baseUpdatedAt === 'string' ? baseUpdatedAt : null),
     });
     if (!log) return res.status(404).json({ success: false, error: 'Log not found' });
     res.json({ success: true, data: log });
@@ -646,6 +656,9 @@ router.patch('/nutrition-intake/:id', authMiddleware, requireFeature('nutrition_
     }
     if (err instanceof EditWindowError) {
       return res.status(403).json({ success: false, error: 'edit_window_exceeded' });
+    }
+    if (err instanceof IntakeConflictError) {
+      return res.status(409).json({ success: false, error: 'intake_conflict' });
     }
     logger.error({ err }, '[user/nutrition-intake PATCH]');
     res.status(500).json({ success: false, error: 'Failed to update intake log' });

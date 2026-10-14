@@ -1299,14 +1299,14 @@ export async function getPatientsWithSummary(nutriId: number) {
   // `resolveNutritionTarget` já usado no lado do aluno).
   const intakeDaysRes = await pool.query(
     `SELECT user_id, date_key::text AS date_key,
-            COUNT(*)::int AS logged_meals,
+            COUNT(DISTINCT COALESCE('p' || meal_id::text, 'l' || id::text))::int AS logged_meals,
             SUM(energy_kcal)::float AS total_kcal,
             SUM(protein_g)::float AS protein_g,
             SUM(carbohydrate_g)::float AS carbohydrate_g,
             SUM(fat_g)::float AS fat_g,
             (SUM(energy_kcal * confidence_score) / GREATEST(SUM(energy_kcal), 0.0001))::float AS weighted_confidence
        FROM user_nutrition_intake_logs
-      WHERE user_id = ANY($1) AND deleted_at IS NULL AND date_key >= $2::date - 13
+      WHERE user_id = ANY($1) AND deleted_at IS NULL AND date_key >= $2::date - 14
       GROUP BY user_id, date_key`,
     [patientIds, today]
   );
@@ -1560,12 +1560,12 @@ async function resolvePatientIntakeContext(patientId: number): Promise<PatientIn
       [patientId]
     ),
     pool.query<{ date_key: string; logged_meals: number; total_kcal: number; protein_g: number; carbohydrate_g: number; fat_g: number; weighted_confidence: number }>(
-      `SELECT date_key::text AS date_key, COUNT(*)::int AS logged_meals,
+      `SELECT date_key::text AS date_key, COUNT(DISTINCT COALESCE('p' || meal_id::text, 'l' || id::text))::int AS logged_meals,
               SUM(energy_kcal)::float AS total_kcal, SUM(protein_g)::float AS protein_g,
               SUM(carbohydrate_g)::float AS carbohydrate_g, SUM(fat_g)::float AS fat_g,
               (SUM(energy_kcal * confidence_score) / GREATEST(SUM(energy_kcal), 0.0001))::float AS weighted_confidence
          FROM user_nutrition_intake_logs
-        WHERE user_id = $1 AND deleted_at IS NULL AND date_key >= $2::date - 13
+        WHERE user_id = $1 AND deleted_at IS NULL AND date_key >= $2::date - 14
         GROUP BY date_key`,
       [patientId, today]
     ),

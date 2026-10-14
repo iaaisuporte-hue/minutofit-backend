@@ -48,6 +48,18 @@ export class EditWindowError extends Error {
   }
 }
 
+/**
+ * Edição concorrente (outro aparelho/aba salvou a mesma refeição depois da leitura do cliente) — o `baseUpdatedAt`
+ * enviado não é mais o `updated_at` da linha. O cliente recarrega a refeição e reaplica a alteração; nunca
+ * "último a gravar vence" em silêncio.
+ */
+export class IntakeConflictError extends Error {
+  constructor() {
+    super('intake_conflict');
+    this.name = 'IntakeConflictError';
+  }
+}
+
 function toDateKeyString(v: unknown): string {
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
 }
@@ -525,6 +537,8 @@ export type IntakeItemRequest =
       /** Quantidade/unidade ORIGINAIS tal como o usuário disse (preview) — só para exibição, nunca para cálculo (PLAN P1B.1 §3). */
       displayQuantity?: number | null;
       displayUnitLabel?: string | null;
+      /** Chave de idempotência gerada pelo cliente (UUID) — um reenvio com a mesma chave nunca duplica o item. */
+      clientKey?: string | null;
     }
   | {
       kind: 'manual';
@@ -536,10 +550,24 @@ export type IntakeItemRequest =
       fatG: number;
       displayQuantity?: number | null;
       displayUnitLabel?: string | null;
+      clientKey?: string | null;
     }
   | {
       kind: 'plan';
       planMealItemId: number;
+      clientKey?: string | null;
+    }
+  | {
+      /**
+       * SÓ no PATCH — mantém, sem re-resolver, um item já persistido (snapshot copiado como está). `index` é a
+       * posição no conjunto de itens da refeição (todas as linhas físicas dela, na ordem em que `groupLogsIntoMeals`
+       * as entrega); `logId` aponta a linha de origem (padrão: a linha editada). Evita re-derivar confiança/medida/
+       * preparo a cada salvamento e perder o vínculo de itens `plan`, que não têm `foodId`.
+       */
+      kind: 'existing';
+      index: number;
+      logId?: number;
+      clientKey?: string | null;
     };
 
 export interface PersistedIntakeItem {
@@ -561,6 +589,8 @@ export interface PersistedIntakeItem {
   unitLabel?: string | null;
   /** Identidade de domínio (PLAN CANONICAL_FOOD_MODEL_SPIKE §6) — nome natural, computado no momento do registro; nunca re-derivado ao ler (o registro é um snapshot). */
   canonicalFood?: CanonicalFood | null;
+  /** Chave de idempotência do cliente — guardada com o item para um reenvio ser reconhecido (nunca exibida). */
+  clientKey?: string;
 }
 
 const MANUAL_ITEM_KCAL_MAX = 3000;
@@ -701,6 +731,8 @@ export interface IntakeLogInput {
   label: string;
   rawText?: string | null;
   mealId?: number | null;
+  /** Anexa os itens a ESTA linha (refeição já iniciada hoje/ontem) em vez de procurar por `mealId` — evita criar linha nova. */
+  logId?: number | null;
   items: IntakeItemRequest[];
   source: 'parse' | 'parse_ai' | 'manual' | 'repeat' | 'favorite' | 'plan';
 }
@@ -724,6 +756,8 @@ export interface IntakeLogRecord {
   confidenceScore: number;
   source: string;
   isFavorite: boolean;
+  /** null enquanto a linha nunca foi editada/anexada — base para o `baseUpdatedAt` (detecção de edição concorrente). */
+  updatedAt: string | null;
 }
 
 function mapRow(r: any): IntakeLogRecord {
@@ -744,6 +778,7 @@ function mapRow(r: any): IntakeLogRecord {
     confidenceScore: Number(r.confidence_score),
     source: r.source,
     isFavorite: r.is_favorite,
+    updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
   };
 }
 
@@ -769,67 +804,174 @@ function weightedConfidence(items: PersistedIntakeItem[]): number {
  * definição (§3: não agrupar por rótulo/horário parecido sem associação
  * persistida).
  */
+function totalsOf(items: PersistedIntakeItem[]) {
+  return sumNutrients(items.map((i) => ({
+    energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
+    fiberG: i.fiberG, sodiumMg: null,
+  })));
+}
+
+/** Resolve itens NOVOS (food/manual/plan) e carimba a chave de idempotência do cliente em cada um. */
+async function resolveNewItems(userId: number, items: IntakeItemRequest[]): Promise<PersistedIntakeItem[]> {
+  const out: PersistedIntakeItem[] = [];
+  for (const item of items) {
+    let r: PersistedIntakeItem;
+    if (item.kind === 'food') r = await resolveFoodItem(item);
+    else if (item.kind === 'manual') r = resolveManualItem(item);
+    else if (item.kind === 'plan') r = await resolvePlanItem(userId, item);
+    else throw new ValidationError('invalid_item_kind');
+    if (typeof item.clientKey === 'string' && item.clientKey.length > 0 && item.clientKey.length <= 64) {
+      r.clientKey = item.clientKey;
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+/**
+ * IDOR: `mealId` só vale se for refeição (não excluída) de um plano do PRÓPRIO usuário — antes só a FK era
+ * conferida e dava para anexar o registro à refeição de outro paciente.
+ */
+async function assertOwnPlanMeal(userId: number, mealId: number): Promise<void> {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM nutrition_plan_meals npm
+       JOIN nutrition_plans np ON np.id = npm.plan_id
+      WHERE npm.id = $1 AND npm.deleted_at IS NULL AND np.patient_id = $2`,
+    [mealId, userId]
+  );
+  if (rows.length === 0) throw new ValidationError('meal_not_found');
+}
+
+/** `energy_kcal` tem CHECK no banco; uma refeição que cresce além dele deve virar 400 claro, não 500. */
+function mapDbRangeError(err: unknown): never {
+  if ((err as { code?: string })?.code === '23514') throw new ValidationError('intake_log_out_of_range');
+  throw err;
+}
+
+/** Trava por (usuário, dia): serializa add/edit da mesma refeição — dois POSTs simultâneos não perdem itens nem duplicam linha. */
+async function lockIntakeDay(client: { query: (sql: string, params?: unknown[]) => Promise<unknown> }, userId: number, dateKey: string) {
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`intake:${userId}:${dateKey}`]);
+}
+
+/**
+ * PLAN P1B corrective ("Agrupamento por Refeição") §6/§26 — "adicionar
+ * alimento depois" a uma refeição do PLANO nunca pode virar um segundo
+ * card. Quando `mealId` é informado e já existe um log não-apagado HOJE
+ * para esse `(user_id, date_key, meal_id)`, este registro passa a ser um
+ * UPDATE que junta os itens novos aos já persistidos, em vez de um INSERT
+ * — a mesma ação ("Registrar o que comi" a partir da MESMA refeição do
+ * plano, chamada mais de uma vez no dia) sempre converge para UMA linha.
+ * Preserva o `label`/`logged_at` originais (a refeição continua sendo a
+ * mesma, só ganhou mais itens). Refeição EXTRA (`mealId == null`) nunca
+ * funde por rótulo/horário (§3) — mas pode ser CONTINUADA explicitamente por
+ * `logId` (registro incremental: o aluno segue na mesma refeição extra).
+ *
+ * REGISTRO INCREMENTAL (alimentar P0): cada alimento confirmado é gravado na
+ * hora, então este caminho precisa ser seguro para reenvio e concorrência:
+ * - cada item novo carrega uma `clientKey`; item cuja chave já existe na linha
+ *   alvo é ignorado (reenvio idempotente) — se TODOS já existem, devolve a
+ *   linha sem alterar;
+ * - tudo roda numa transação sob advisory lock do (usuário, dia): sem
+ *   "lido N, gravei N+1" simultâneo (item perdido) nem INSERT duplo.
+ * Só os itens NOVOS são resolvidos — os já persistidos nunca são re-derivados.
+ */
 export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLogRecord> {
   const label = input.label?.trim();
   if (!label) throw new ValidationError('label_required');
   if (label.length > 80) throw new ValidationError('label_too_long');
   if (!Array.isArray(input.items) || input.items.length === 0) throw new ValidationError('items_required');
+  if (input.items.some((i) => (i as { kind: string }).kind === 'existing')) throw new ValidationError('invalid_item_kind');
 
-  const resolved: PersistedIntakeItem[] = [];
-  for (const item of input.items) {
-    if (item.kind === 'food') resolved.push(await resolveFoodItem(item));
-    else if (item.kind === 'manual') resolved.push(resolveManualItem(item));
-    else if (item.kind === 'plan') resolved.push(await resolvePlanItem(input.userId, item));
-    else throw new ValidationError('invalid_item_kind');
-  }
+  const mealId = input.mealId ?? null;
+  if (mealId != null) await assertOwnPlanMeal(input.userId, mealId);
 
   const dateKey = dayKey();
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await lockIntakeDay(client, input.userId, dateKey);
 
-  if (input.mealId != null) {
-    const existing = await pool.query(
-      `SELECT * FROM user_nutrition_intake_logs
-        WHERE user_id = $1 AND date_key = $2 AND meal_id = $3 AND deleted_at IS NULL
-        LIMIT 1`,
-      [input.userId, dateKey, input.mealId]
+    // Linha alvo: `logId` explícito > refeição do plano de hoje > (extra) linha de hoje que já contém uma das chaves.
+    let target: any = null;
+    if (input.logId != null) {
+      const r = await client.query(
+        `SELECT * FROM user_nutrition_intake_logs WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+        [input.logId, input.userId]
+      );
+      if (r.rows.length === 0) throw new ValidationError('log_not_found');
+      assertWithinEditWindow(toDateKeyString(r.rows[0].date_key));
+      target = r.rows[0];
+    } else if (mealId != null) {
+      const r = await client.query(
+        `SELECT * FROM user_nutrition_intake_logs
+          WHERE user_id = $1 AND date_key = $2 AND meal_id = $3 AND deleted_at IS NULL
+          ORDER BY logged_at LIMIT 1`,
+        [input.userId, dateKey, mealId]
+      );
+      target = r.rows[0] ?? null;
+    } else {
+      const keys = input.items.map((i) => i.clientKey).filter((k): k is string => typeof k === 'string' && k.length > 0);
+      if (keys.length > 0) {
+        const r = await client.query(
+          `SELECT * FROM user_nutrition_intake_logs
+            WHERE user_id = $1 AND date_key = $2 AND meal_id IS NULL AND deleted_at IS NULL
+              AND items @> $3::jsonb
+            LIMIT 1`,
+          [input.userId, dateKey, JSON.stringify([{ clientKey: keys[0] }])]
+        );
+        target = r.rows[0] ?? null;
+      }
+    }
+
+    // Idempotência: descarta itens cuja chave já está na linha alvo.
+    const existingKeys = new Set<string>(
+      ((target?.items ?? []) as PersistedIntakeItem[]).map((i) => i.clientKey).filter((k): k is string => !!k)
     );
-    if (existing.rows.length > 0) {
-      const row = existing.rows[0];
-      const mergedItems: PersistedIntakeItem[] = [...(row.items as PersistedIntakeItem[]), ...resolved];
-      const totals = sumNutrients(mergedItems.map((i) => ({
-        energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
-        fiberG: i.fiberG, sodiumMg: null,
-      })));
-      const { rows } = await pool.query(
+    const fresh = input.items.filter((i) => !(typeof i.clientKey === 'string' && existingKeys.has(i.clientKey)));
+    if (fresh.length === 0) {
+      await client.query('COMMIT');
+      return mapRow(target);
+    }
+
+    const resolved = await resolveNewItems(input.userId, fresh);
+
+    if (target) {
+      const merged: PersistedIntakeItem[] = [...(target.items as PersistedIntakeItem[]), ...resolved];
+      const totals = totalsOf(merged);
+      const { rows } = await client.query(
         `UPDATE user_nutrition_intake_logs SET
            energy_kcal = $2, protein_g = $3, carbohydrate_g = $4, fat_g = $5,
            fiber_g = $6, fiber_partial = $7, items = $8, confidence_score = $9, updated_at = NOW()
          WHERE id = $1
          RETURNING *`,
-        [row.id, totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
-          totals.fiberG, totals.fiberPartial, JSON.stringify(mergedItems), weightedConfidence(mergedItems)]
+        [target.id, totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
+          totals.fiberG, totals.fiberPartial, JSON.stringify(merged), weightedConfidence(merged)]
       );
+      await client.query('COMMIT');
       return mapRow(rows[0]);
     }
+
+    const totals = totalsOf(resolved);
+    const { rows } = await client.query(
+      `INSERT INTO user_nutrition_intake_logs
+         (user_id, date_key, meal_id, label, raw_text, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, fiber_partial, items, confidence_score, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING *`,
+      [
+        input.userId, dateKey, mealId, label, input.rawText ?? null,
+        totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
+        totals.fiberG, totals.fiberPartial,
+        JSON.stringify(resolved), weightedConfidence(resolved), input.source,
+      ]
+    );
+    await client.query('COMMIT');
+    return mapRow(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    return mapDbRangeError(err);
+  } finally {
+    client.release();
   }
-
-  const totals = sumNutrients(resolved.map((i) => ({
-    energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
-    fiberG: i.fiberG, sodiumMg: null,
-  })));
-
-  const { rows } = await pool.query(
-    `INSERT INTO user_nutrition_intake_logs
-       (user_id, date_key, meal_id, label, raw_text, energy_kcal, protein_g, carbohydrate_g, fat_g, fiber_g, fiber_partial, items, confidence_score, source)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-     RETURNING *`,
-    [
-      input.userId, dateKey, input.mealId ?? null, label, input.rawText ?? null,
-      totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
-      totals.fiberG, totals.fiberPartial,
-      JSON.stringify(resolved), weightedConfidence(resolved), input.source,
-    ]
-  );
-  return mapRow(rows[0]);
 }
 
 export interface IntakeLogUpdateInput {
@@ -837,21 +979,30 @@ export interface IntakeLogUpdateInput {
   rawText?: string | null;
   items: IntakeItemRequest[];
   source: 'parse' | 'parse_ai' | 'manual' | 'repeat' | 'favorite' | 'plan';
+  /**
+   * `updatedAt` da linha como o cliente a leu (null = nunca editada). Quando presente e diferente do atual → 409
+   * (`IntakeConflictError`). Ausente (cliente antigo) = sem checagem, comportamento de sempre.
+   */
+  baseUpdatedAt?: string | null;
 }
 
 /**
  * Edição de um log já persistido (PLAN P1B corrective — "Consulta + Edição
- * de Refeição Registrada"). Reusa os MESMOS resolvers de `persistIntakeLog`
- * — todo item é revalidado e recalculado no servidor a partir do catálogo
- * atual, nunca aceita totais/kcal do cliente como autoridade. Preserva
- * `date_key`/`logged_at`/`meal_id` originais (não fazem parte do input) —
- * editar o que o usuário declarou ter comido nunca migra o registro para
- * "hoje" nem move o horário; `updated_at` marca que houve edição.
- * `resolvePlanItem` só LÊ `nutrition_plan_meals`/`nutrition_meal_items` —
- * a prescrição do Nutri nunca é escrita por este caminho (§8). Ownership
- * via `WHERE id=$1 AND user_id=$2` no próprio UPDATE — mesmo padrão já
- * usado por `softDeleteLog`/`setFavorite`; `rows.length === 0` cobre tanto
- * "não existe" quanto "log de outro usuário" quanto "já apagado".
+ * de Refeição Registrada"). Itens NOVOS/alterados reusam os MESMOS
+ * resolvers de `persistIntakeLog` — revalidados e recalculados no servidor a
+ * partir do catálogo atual, nunca aceita totais/kcal do cliente como
+ * autoridade. Itens `existing` (alimentar P0) são MANTIDOS com o snapshot
+ * original, sem re-resolver — a edição de um item nunca altera os outros
+ * (e itens `plan`, que não têm `foodId`, sobrevivem a qualquer edição).
+ * Preserva `date_key`/`logged_at`/`meal_id` originais — editar o que o
+ * usuário declarou ter comido nunca migra o registro para "hoje" nem move o
+ * horário; `updated_at` marca que houve edição. A prescrição do Nutri nunca
+ * é escrita por este caminho (§8). Ownership via `user_id` no próprio SELECT/
+ * UPDATE; `null` cobre "não existe", "log de outro usuário" e "já apagado".
+ *
+ * Refeição legada em várias linhas físicas (mesmo `meal_id` no mesmo dia): a
+ * edição consolida TUDO na linha editada e apaga as irmãs NA MESMA transação
+ * (antes eram PATCH + DELETEs separados pelo cliente, não atômicos).
  */
 export async function updateIntakeLog(userId: number, id: number, input: IntakeLogUpdateInput): Promise<IntakeLogRecord | null> {
   const label = input.label?.trim();
@@ -859,40 +1010,99 @@ export async function updateIntakeLog(userId: number, id: number, input: IntakeL
   if (label.length > 80) throw new ValidationError('label_too_long');
   if (!Array.isArray(input.items) || input.items.length === 0) throw new ValidationError('items_required');
 
-  const existing = await pool.query(
-    `SELECT date_key FROM user_nutrition_intake_logs WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
-    [id, userId]
-  );
-  if (existing.rows.length === 0) return null;
-  assertWithinEditWindow(toDateKeyString(existing.rows[0].date_key));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const first = await client.query(
+      `SELECT date_key FROM user_nutrition_intake_logs WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+      [id, userId]
+    );
+    if (first.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const dateKey = toDateKeyString(first.rows[0].date_key);
+    await lockIntakeDay(client, userId, dateKey);
 
-  const resolved: PersistedIntakeItem[] = [];
-  for (const item of input.items) {
-    if (item.kind === 'food') resolved.push(await resolveFoodItem(item));
-    else if (item.kind === 'manual') resolved.push(resolveManualItem(item));
-    else if (item.kind === 'plan') resolved.push(await resolvePlanItem(userId, item));
-    else throw new ValidationError('invalid_item_kind');
+    const cur = await client.query(
+      `SELECT * FROM user_nutrition_intake_logs WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL`,
+      [id, userId]
+    );
+    if (cur.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const row = cur.rows[0];
+    assertWithinEditWindow(dateKey);
+
+    if (input.baseUpdatedAt !== undefined) {
+      const current = row.updated_at ? new Date(row.updated_at).getTime() : null;
+      const base = input.baseUpdatedAt ? new Date(input.baseUpdatedAt).getTime() : null;
+      if (current !== base) throw new IntakeConflictError();
+    }
+
+    // Linhas da MESMA refeição no mesmo dia (a editada + irmãs legadas), na ordem de `groupLogsIntoMeals`.
+    const siblingsRes = row.meal_id != null
+      ? await client.query(
+          `SELECT * FROM user_nutrition_intake_logs
+            WHERE user_id = $1 AND date_key = $2 AND meal_id = $3 AND deleted_at IS NULL
+            ORDER BY logged_at, id`,
+          [userId, dateKey, row.meal_id]
+        )
+      : { rows: [row] };
+    const byLog = new Map<number, PersistedIntakeItem[]>();
+    for (const r of siblingsRes.rows) byLog.set(r.id, r.items as PersistedIntakeItem[]);
+    // Mesma ordem que `groupLogsIntoMeals` entrega ao cliente (linhas por logged_at, itens em sequência).
+    const flat: PersistedIntakeItem[] = siblingsRes.rows.flatMap((r: any) => r.items as PersistedIntakeItem[]);
+
+    const resolved: PersistedIntakeItem[] = [];
+    const pendingNew: IntakeItemRequest[] = [];
+    const slots: Array<PersistedIntakeItem | null> = [];
+    for (const item of input.items) {
+      if (item.kind === 'existing') {
+        // `logId` explícito → índice DENTRO daquela linha; sem `logId` → índice na refeição inteira (o que o cliente vê).
+        const kept = item.logId != null ? byLog.get(item.logId)?.[item.index] : flat[item.index];
+        if (!kept) throw new ValidationError('existing_item_not_found');
+        slots.push(kept);
+      } else {
+        slots.push(null);
+        pendingNew.push(item);
+      }
+    }
+    const fresh = await resolveNewItems(userId, pendingNew);
+    let fi = 0;
+    for (const slot of slots) resolved.push(slot ?? fresh[fi++]);
+
+    const totals = totalsOf(resolved);
+    const { rows } = await client.query(
+      `UPDATE user_nutrition_intake_logs SET
+         label = $3, raw_text = $4, energy_kcal = $5, protein_g = $6, carbohydrate_g = $7, fat_g = $8,
+         fiber_g = $9, fiber_partial = $10, items = $11, confidence_score = $12, source = $13, updated_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+       RETURNING *`,
+      [
+        id, userId, label, input.rawText ?? null,
+        totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
+        totals.fiberG, totals.fiberPartial,
+        JSON.stringify(resolved), weightedConfidence(resolved), input.source,
+      ]
+    );
+
+    const siblingIds = siblingsRes.rows.map((r: any) => r.id).filter((x: number) => x !== id);
+    if (siblingIds.length > 0) {
+      await client.query(
+        `UPDATE user_nutrition_intake_logs SET deleted_at = NOW() WHERE id = ANY($1) AND user_id = $2 AND deleted_at IS NULL`,
+        [siblingIds, userId]
+      );
+    }
+    await client.query('COMMIT');
+    return rows.length ? mapRow(rows[0]) : null;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    return mapDbRangeError(err);
+  } finally {
+    client.release();
   }
-
-  const totals = sumNutrients(resolved.map((i) => ({
-    energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
-    fiberG: i.fiberG, sodiumMg: null,
-  })));
-
-  const { rows } = await pool.query(
-    `UPDATE user_nutrition_intake_logs SET
-       label = $3, raw_text = $4, energy_kcal = $5, protein_g = $6, carbohydrate_g = $7, fat_g = $8,
-       fiber_g = $9, fiber_partial = $10, items = $11, confidence_score = $12, source = $13, updated_at = NOW()
-     WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
-     RETURNING *`,
-    [
-      id, userId, label, input.rawText ?? null,
-      totals.energyKcal, totals.proteinG, totals.carbohydrateG, totals.fatG,
-      totals.fiberG, totals.fiberPartial,
-      JSON.stringify(resolved), weightedConfidence(resolved), input.source,
-    ]
-  );
-  return rows.length ? mapRow(rows[0]) : null;
 }
 
 export async function getDayLogs(userId: number, dateKey: string): Promise<IntakeLogRecord[]> {
@@ -1039,8 +1249,16 @@ export function classifyDaySummary(day: DayLogSummary, expectedMeals: number): D
   return { loggedMeals, expectedMeals, coverageRatio, confidence: Math.round(weightedConfidence * 100) / 100, level };
 }
 
-export function summarizeDayLogs(logs: Array<{ energyKcal: number; confidenceScore: number }>): DayLogSummary {
-  const loggedMeals = logs.length;
+/**
+ * Refeição DISTINTA, não linha: uma refeição do plano é uma só mesmo em registros legados com várias linhas, e a
+ * refeição extra é a própria linha. Antes `loggedMeals = logs.length` inflava a cobertura (e, no registro
+ * incremental, uma refeição com N alimentos não pode valer N refeições). Sem `mealId`/`id` (chamadores que só têm
+ * kcal/confiança) cai na contagem de linhas, como sempre.
+ */
+export function summarizeDayLogs(logs: Array<{ energyKcal: number; confidenceScore: number; id?: number; mealId?: number | null }>): DayLogSummary {
+  const loggedMeals = logs.every((l) => l.id != null)
+    ? new Set(logs.map((l) => (l.mealId != null ? `p${l.mealId}` : `l${l.id}`))).size
+    : logs.length;
   const totalKcal = logs.reduce((s, l) => s + l.energyKcal, 0);
   const weightedConfidence = totalKcal > 0
     ? logs.reduce((s, l) => s + l.energyKcal * l.confidenceScore, 0) / totalKcal

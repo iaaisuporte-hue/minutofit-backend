@@ -157,6 +157,8 @@ export const FOOD_ALIASES: Record<string, string> = {
   // "arroz branco" é como o brasileiro chama o arroz tipo 1 cozido do dia a dia; sem o alias o fuzzy sugeria
   // "Arroz carreteiro" (P1 — reproduzido em QA). "arroz integral" continua SEM alias (cru vs cozido empata).
   'arroz branco': 'arroz tipo 1 cozido',
+  // "café preto" é a bebida (a infusão), nunca o pó — o catálogo só tem "Café, infusão 10%" para a bebida sem adição.
+  'cafe preto': 'cafe infusao 10',
   feijao: 'feijao carioca cozido',
   frango: 'frango peito sem pele grelhado',
   'frango grelhado': 'frango peito sem pele grelhado',

@@ -154,6 +154,12 @@ export interface IntakePreviewItem {
     canonicalFood: CanonicalFood;
     per100g: { kcal: number; p: number; c: number; f: number };
   }>;
+  /**
+   * Mistura de ingredientes ("café com leite", "pão com ovo") sem composição no catálogo: o palpite do fuzzy (um dos
+   * ingredientes) não representa o preparo, então o item sai NÃO resolvido com este aviso — a UI orienta a registrar
+   * cada ingrediente com a sua quantidade. A proporção nunca é adivinhada.
+   */
+  composite?: boolean;
 }
 
 function toPer100g(food: FoodSummary): NutrientsPer100g {
@@ -465,21 +471,44 @@ async function resolveVolumeFallback(token: ParsedIntakeToken): Promise<IntakePr
   };
 }
 
+/**
+ * Densidade energética acima da qual um palpite FRACO para uma medida de volume ("1 xícara de café preto" → "Café, pó,
+ * torrado", 419 kcal/100 g; "1 xícara de chocolate quente" → barra de chocolate) é implausível para algo que se mede
+ * em copo/xícara/ml. Leite integral ≈ 61, suco ≈ 40; pós, chocolates e gorduras passam longe. Só suprime a SUGESTÃO
+ * (o item vira "identifique") — nunca gera valor nutricional.
+ */
+const IMPLAUSIBLE_DRINK_KCAL_PER_100 = 250;
+
+function isMixtureQuery(foodQuery: string): boolean {
+  return /(^| )com( |$)/.test(normalizeFoodText(foodQuery)) && normalizeFoodText(foodQuery).split(' ').length >= 3;
+}
+
 /** Resolve um token do parser contra o catálogo — usado pelo preview (`/parse`). `userId` habilita o estágio de histórico (§ acima); omitido em contextos onde não há usuário autenticado. */
 export async function resolveTokenForPreview(token: ParsedIntakeToken, userId?: number): Promise<IntakePreviewItem> {
   const water = resolvePlainWater(token);
   if (water) return water;
 
-  const resolution = await resolveFoodForQuery(token.foodQuery, token.unitDimension);
+  let resolution = await resolveFoodForQuery(token.foodQuery, token.unitDimension);
+  let composite = false;
 
   // Volume (ml, copo, xícara) com um melhor palpite que NÃO tem respaldo de volume e que não é certeza ("1 copo de
   // leite" → "Leite, condensado", 625 kcal): tenta antes entre alimentos com densidade curada/Bebidas (P1).
   if (resolution && token.unitDimension === 'volume' && resolution.confidence !== 'high') {
     const volumeIndex = await getVolumeCapableIndex();
-    if (!volumeIndex.some((e) => e.id === resolution.food.id)) {
+    const guessId = resolution.food.id;
+    if (!volumeIndex.some((e) => e.id === guessId)) {
       const volumeAlt = await resolveVolumeFallback(token);
       if (volumeAlt) return volumeAlt;
+      // Palpite fraco que ninguém mede em copo ("1 xícara de café preto" → pó de café, 502 kcal): sem sugestão.
+      if (resolution.confidence === 'low' && resolution.food.energyKcal >= IMPLAUSIBLE_DRINK_KCAL_PER_100) resolution = null;
     }
+  }
+
+  // Mistura de ingredientes ("café com leite", "pão com manteiga"): um palpite FRACO que casou só um dos
+  // ingredientes não representa o preparo. Sem composição no catálogo, pede a identificação em vez de sugerir.
+  if (isMixtureQuery(token.foodQuery)) {
+    composite = true;
+    if (resolution && resolution.confidence === 'low') resolution = null;
   }
 
   if (resolution) {
@@ -525,6 +554,7 @@ export async function resolveTokenForPreview(token: ParsedIntakeToken, userId?: 
     resolved: false,
     rawText: token.rawText,
     foodQuery: token.foodQuery,
+    ...(composite ? { composite: true } : {}),
     quantity: token.quantity,
     unitLabel: token.unitLabel,
     // Só quando a dimensão é MASSA a "quantidade" já É a gramagem — permite
@@ -654,6 +684,12 @@ export type IntakeItemRequest =
       index: number;
       logId?: number;
       clientKey?: string | null;
+      /**
+       * Nova quantidade NA MESMA UNIDADE do item ("2 ovos" → 3; "200 ml" → 150; "1 scoop" → 2; "120 g" → 150). O
+       * servidor reescala os gramas a partir do que o PRÓPRIO item já guarda (gramas ÷ quantidade) e recalcula os
+       * nutrientes — nunca converte entre unidades nem inventa peso/densidade. Ausente = mantém tudo como está.
+       */
+      quantity?: number;
     };
 
 export interface PersistedIntakeItem {
@@ -896,6 +932,53 @@ function totalsOf(items: PersistedIntakeItem[]) {
     energyKcal: i.energyKcal, proteinG: i.proteinG, carbohydrateG: i.carbohydrateG, fatG: i.fatG,
     fiberG: i.fiberG, sodiumMg: null,
   })));
+}
+
+/** Limite generoso: protege contra lixo (1e9), o teto real de energia continua no CHECK do banco (→ 400). */
+const MAX_EDIT_QUANTITY = 100000;
+
+/**
+ * Reescala um item JÁ SALVO para outra quantidade na mesma unidade (edição incremental). Gramas novos =
+ * gramas ÷ quantidade-atual × quantidade-nova — a razão vem do próprio snapshot (a medida/densidade que valeu no
+ * registro), então nada é inventado. Nutrientes: pela fórmula canônica a partir de `per100g` quando o item a tem
+ * (alimento de catálogo); itens sem `per100g` (plano, manual, histórico, água) escalam o snapshot proporcionalmente.
+ * Fibra, quando conhecida, escala junto; desconhecida continua desconhecida.
+ */
+function rescaleItem(kept: PersistedIntakeItem, newQuantity: unknown): PersistedIntakeItem {
+  if (typeof newQuantity !== 'number' || !Number.isFinite(newQuantity) || newQuantity <= 0 || newQuantity > MAX_EDIT_QUANTITY) {
+    throw new ValidationError('invalid_quantity');
+  }
+  const grams = kept.grams;
+  if (grams == null || !(grams > 0)) throw new ValidationError('quantity_not_editable');
+  // Sem quantidade de exibição o item está "em gramas": a própria massa é a quantidade.
+  const currentQuantity = kept.quantity != null && kept.quantity > 0 ? kept.quantity : grams;
+  const factor = newQuantity / currentQuantity;
+  const newGrams = round2(grams * factor);
+  if (!(newGrams > 0)) throw new ValidationError('invalid_quantity');
+
+  let nutrients: { energyKcal: number; proteinG: number; carbohydrateG: number; fatG: number };
+  if (kept.per100g) {
+    const calc = calculateNutrition(
+      { energyKcal: kept.per100g.kcal, proteinG: kept.per100g.p, carbohydrateG: kept.per100g.c, fatG: kept.per100g.f, fiberG: null, sodiumMg: null },
+      newGrams,
+    );
+    nutrients = { energyKcal: calc.energyKcal, proteinG: calc.proteinG, carbohydrateG: calc.carbohydrateG, fatG: calc.fatG };
+  } else {
+    const k = newGrams / grams;
+    nutrients = {
+      energyKcal: round2(kept.energyKcal * k),
+      proteinG: round2(kept.proteinG * k),
+      carbohydrateG: round2(kept.carbohydrateG * k),
+      fatG: round2(kept.fatG * k),
+    };
+  }
+  return {
+    ...kept,
+    ...nutrients,
+    grams: newGrams,
+    fiberG: kept.fiberG == null ? null : round2(kept.fiberG * (newGrams / grams)),
+    quantity: kept.quantity != null && kept.quantity > 0 ? newQuantity : kept.quantity,
+  };
 }
 
 /** Resolve itens NOVOS (food/manual/plan) e carimba a chave de idempotência do cliente em cada um. */
@@ -1161,7 +1244,7 @@ export async function updateIntakeLog(userId: number, id: number, input: IntakeL
         // `logId` explícito → índice DENTRO daquela linha; sem `logId` → índice na refeição inteira (o que o cliente vê).
         const kept = item.logId != null ? byLog.get(item.logId)?.[item.index] : flat[item.index];
         if (!kept) throw new ValidationError('existing_item_not_found');
-        slots.push(kept);
+        slots.push(item.quantity === undefined ? kept : rescaleItem(kept, item.quantity));
       } else {
         slots.push(null);
         pendingNew.push(item);

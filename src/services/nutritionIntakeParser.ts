@@ -137,6 +137,14 @@ function dropMediumSize(words: string[]): string[] {
   return words.filter((w) => !MEDIUM_SIZE_WORDS.has(w));
 }
 
+/**
+ * "sem açúcar/adoçante" é a AUSÊNCIA de um ingrediente — não muda o alimento descrito ("café sem açúcar" é o café), então
+ * sai do `foodQuery`. Já "com açúcar", "com leite" etc. são ingredientes e ficam (a mistura é tratada no resolver).
+ */
+function dropNoSugar(text: string): string {
+  return text.replace(/\bsem (?:acucar|adocante)\b/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function dropLeadingDe(words: string[]): string[] {
   return words[0] === 'de' ? words.slice(1) : words;
 }
@@ -167,12 +175,12 @@ function parseSegment(rawText: string): ParsedIntakeToken {
   const lowered = stripAccents(rawText).toLowerCase().trim();
   const qtyMatch = lowered.match(LEADING_QUANTITY);
   if (!qtyMatch) {
-    return { rawText, foodQuery: normalizeText(rawText), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
+    return { rawText, foodQuery: dropNoSugar(normalizeText(rawText)), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
   }
   const quantity = parseQuantity(qtyMatch[1]);
-  const remainder = normalizeText(lowered.slice(qtyMatch[0].length));
+  const remainder = dropNoSugar(normalizeText(lowered.slice(qtyMatch[0].length)));
   if (quantity == null || !remainder) {
-    return { rawText, foodQuery: normalizeText(rawText), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
+    return { rawText, foodQuery: dropNoSugar(normalizeText(rawText)), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
   }
   const remainderWords = remainder.split(' ');
 

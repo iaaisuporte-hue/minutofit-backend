@@ -123,18 +123,53 @@ describeWithDb('linguagem natural — cenários P1 (catálogo real, determiníst
     });
   });
 
+  describe('bebidas e pratos compostos (H2) — nunca um ingrediente como se fosse o preparo', () => {
+    it.each([
+      ['1 copo de café com leite'],
+      ['200 ml de café com leite'],
+      ['café com leite sem açúcar'],
+      ['1 xícara de café com leite e açúcar'],
+      ['1 copo de leite com banana'],
+      ['100 g de pão com manteiga'],
+      ['1 pão com ovo'],
+    ])('%s → não resolvido, marcado como mistura, SEM macros (nem "Café, pó, torrado" com 837 kcal)', async (text) => {
+      const { items, needsConfirmation } = await svc.parseAndResolve(text);
+      const first = items[0] as any;
+      expect(first.resolved).toBe(false);
+      expect(first.composite).toBe(true);
+      expect(first.energyKcal).toBeUndefined();
+      expect(first.foodId).toBeUndefined();
+      expect(needsConfirmation).toBe(true);
+    });
+    it('composição explícita resolve cada ingrediente pelo catálogo, sem assumir proporção nem tipo de leite', async () => {
+      const { items } = await svc.parseAndResolve('1 xícara de café com 100 ml de leite');
+      expect(items).toHaveLength(2);
+      expect(items[0]).toMatchObject({ name: 'Café, infusão 10%', grams: 120, confidence: 'high' });
+      // leite genérico continua sendo SUGESTÃO (média, com a variante em chip) — não vira integral em silêncio
+      expect(items[1]).toMatchObject({ name: 'Leite, de vaca, integral', grams: 103, confidence: 'medium', confirmed: false });
+    });
+    it('café preto / sem açúcar = a bebida (infusão), com ou sem "sem açúcar"; nunca o pó', async () => {
+      for (const t of ['1 xícara de café preto', '1 xícara de café preto sem açúcar', '1 xícara de café sem açúcar', '250 ml de café']) {
+        const i = await one(t);
+        expect(i).toMatchObject({ resolved: true, name: 'Café, infusão 10%', confidence: 'high' });
+      }
+    });
+    it('café em pó explícito continua sendo o ingrediente (exige confirmação, não vira bebida)', async () => {
+      const i = await one('10 g de café em pó');
+      expect(i).toMatchObject({ resolved: true, name: 'Café, pó, torrado', grams: 10 });
+      expect(i.composite).toBeUndefined();
+    });
+    it('palpite fraco e implausível para copo/xícara (chocolate quente → barra de chocolate) não é sugerido', async () => {
+      const i = await one('1 xícara de chocolate quente');
+      expect(i.resolved).toBe(false);
+    });
+    it('não afeta nomes de catálogo que já contêm "com" (canjica com leite integral) nem sucos/refrigerantes', async () => {
+      expect((await one('100 g de canjica com leite integral')).resolved).toBe(true);
+      expect((await one('1 copo de suco')).name).toMatch(/suco/i);
+    });
+  });
+
   describe('pedem confirmação/identificação — nada é inventado', () => {
-    it('1 xícara de café sem açúcar → infusão, baixa confiança (exige toque)', async () => {
-      const i = await one('1 xícara de café sem açúcar');
-      expect(i).toMatchObject({ resolved: true, unitLabel: 'xícara', confirmed: false });
-      expect(i.name).toMatch(/infusão/i);
-      expect(i.confidence).not.toBe('high');
-    });
-    it('1 copo de café com leite → nunca entra sem confirmação', async () => {
-      const i = await one('1 copo de café com leite');
-      expect(i.confirmed).toBe(false);
-      expect(i.confidence).not.toBe('high');
-    });
     it('2 fatias de pão integral → quantidade e medida preservadas, confirmação média', async () => {
       const i = await one('2 fatias de pão integral');
       expect(i).toMatchObject({ resolved: true, quantity: 2, unitLabel: 'fatia', confidence: 'medium', confirmed: false });

@@ -923,14 +923,25 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
       }
     }
 
-    // Idempotência: descarta itens cuja chave já está na linha alvo.
-    const existingKeys = new Set<string>(
-      ((target?.items ?? []) as PersistedIntakeItem[]).map((i) => i.clientKey).filter((k): k is string => !!k)
-    );
-    const fresh = input.items.filter((i) => !(typeof i.clientKey === 'string' && existingKeys.has(i.clientKey)));
+    // Idempotência: descarta itens cuja chave já existe em QUALQUER linha do dia do usuário (não só na alvo) —
+    // resposta perdida + adicionar seguinte (extra sem logId) não pode gravar o mesmo item em duas refeições.
+    const wanted = input.items.map((i) => i.clientKey).filter((k): k is string => typeof k === 'string' && k.length > 0);
+    const keyRow = new Map<string, any>();
+    if (wanted.length > 0) {
+      const day = await client.query(
+        `SELECT * FROM user_nutrition_intake_logs WHERE user_id = $1 AND date_key = $2 AND deleted_at IS NULL`,
+        [input.userId, target ? toDateKeyString(target.date_key) : dateKey]
+      );
+      for (const row of day.rows) {
+        for (const it of (row.items ?? []) as PersistedIntakeItem[]) {
+          if (it.clientKey && wanted.includes(it.clientKey)) keyRow.set(it.clientKey, row);
+        }
+      }
+    }
+    const fresh = input.items.filter((i) => !(typeof i.clientKey === 'string' && keyRow.has(i.clientKey)));
     if (fresh.length === 0) {
       await client.query('COMMIT');
-      return mapRow(target);
+      return mapRow(target ?? keyRow.get(wanted[0]));
     }
 
     const resolved = await resolveNewItems(input.userId, fresh);
@@ -1132,6 +1143,9 @@ export interface NutritionIntakeMeal {
   confidenceScore: number;
   /** Linhas físicas de `user_nutrition_intake_logs` agregadas neste card — normalmente 1; >1 só em registros legados de antes desta correção. */
   sourceLogIds: number[];
+  /** Dia (`YYYY-MM-DD`, America/Sao_Paulo) da refeição e `updated_at` da 1ª linha — o editor usa para reler o dia certo e checar conflito (409). */
+  dateKey: string;
+  updatedAt: string | null;
 }
 
 /**
@@ -1177,6 +1191,8 @@ export function groupLogsIntoMeals(logs: IntakeLogRecord[]): NutritionIntakeMeal
       fiberPartial: totals.fiberPartial,
       confidenceScore: items.length > 0 ? weightedConfidence(items) : sorted[0].confidenceScore,
       sourceLogIds: sorted.map((l) => l.id),
+      dateKey: sorted[0].dateKey,
+      updatedAt: sorted[0].updatedAt,
     });
   }
 

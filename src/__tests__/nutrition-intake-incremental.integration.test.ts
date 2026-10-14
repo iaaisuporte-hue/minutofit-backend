@@ -145,6 +145,18 @@ describeWithDb('registro alimentar incremental — contrato HTTP', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].items).toHaveLength(1);
     });
+
+    it('chave já gravada em OUTRA linha do dia (resposta perdida + add seguinte) não duplica ao reenviar com logId', async () => {
+      // A (k1) gravou mas o cliente não viu a resposta; B (k2) sem logId criou outra linha; o retry de A chega com logId de B.
+      const a = await post({ label: 'Lanche', mealId: null, items: [manual('Banana', 90, 'k1')], source: 'manual' });
+      const b = await post({ label: 'Lanche 2', mealId: null, items: [manual('Aveia', 60, 'k2')], source: 'manual' });
+      const retry = await post({ label: 'Lanche', mealId: null, logId: b.body.data.id, items: [manual('Banana', 90, 'k1')], source: 'manual' });
+      expect(retry.status).toBe(201);
+      const { rows } = await client.query(`SELECT id, items FROM user_nutrition_intake_logs WHERE user_id = $1 AND deleted_at IS NULL ORDER BY id`, [userId]);
+      expect(rows).toHaveLength(2);
+      expect(rows.find((r) => r.id === a.body.data.id).items).toHaveLength(1);
+      expect(rows.find((r) => r.id === b.body.data.id).items).toHaveLength(1); // Banana NÃO foi para a linha B
+    });
   });
 
   describe('continuar a mesma refeição extra por logId', () => {

@@ -1623,7 +1623,7 @@ export interface IntakeDailyRow {
 }
 
 /**
- * Detalhe nível 3 (drawer) — 7 linhas diárias com selo de cobertura, para o
+ * Detalhe nível 3 (drawer) — 7 linhas diárias (dias fechados) com selo de cobertura, para o
  * nutri ver POR QUE o sinal disparou (ou não). Mesmo `classifyDaySummary`
  * usado no dia único do aluno.
  */
@@ -1633,7 +1633,8 @@ export async function getIntakeDailyBreakdown(patientId: number): Promise<{ summ
   const expectedMeals = ctx.target?.mealsPerDay ?? 3;
 
   const last7 = ctx.days
-    .filter((d) => dayKeyDiff(d.dateKey, ctx.today) >= 0 && dayKeyDiff(d.dateKey, ctx.today) <= 6)
+    // Dias FECHADOS (ontem..7 dias atrás), a mesma janela do resumo (`deriveIntakeSignal`): hoje ainda está em andamento.
+    .filter((d) => dayKeyDiff(d.dateKey, ctx.today) >= 1 && dayKeyDiff(d.dateKey, ctx.today) <= 7)
     .sort((a, b) => b.dateKey.localeCompare(a.dateKey));
 
   const days: IntakeDailyRow[] = last7.map((d) => {

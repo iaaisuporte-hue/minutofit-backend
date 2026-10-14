@@ -171,13 +171,15 @@ describeWithDb('PLAN_NUTRITION_QUICK_MACROS (P1C) · getPatientsWithSummary.inta
     const { nutriId, patientId } = await dupla();
     await grantConsent(nutriId, patientId, ALL_SCOPES);
     await createStructuredPlan(nutriId, patientId);
-    await insertIntakeDay(patientId, 0, { kcal: 1520, protein: 148 });
+    await insertIntakeDay(patientId, 1, { kcal: 1520, protein: 148 });
     await insertIntakeDay(patientId, 2, { kcal: 300, protein: 20, loggedMeals: 1 }); // baixa cobertura
+    await insertIntakeDay(patientId, 0, { kcal: 200, protein: 10, loggedMeals: 1 }); // hoje: em andamento, fora do drawer
 
     const { summary, days } = await svc.getIntakeDailyBreakdown(patientId);
     expect(summary.state).toBeDefined();
     expect(days.length).toBe(2);
-    const highDay = days.find((d) => d.dateKey === appDay.dayKey());
+    expect(days.some((d) => d.dateKey === appDay.dayKey())).toBe(false);
+    const highDay = days.find((d) => d.level === 'high');
     const lowDay = days.find((d) => d.loggedMeals === 1);
     expect(highDay?.level).toBe('high');
     expect(lowDay?.level).toBe('low');

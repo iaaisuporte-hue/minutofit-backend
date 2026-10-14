@@ -169,6 +169,41 @@ describeWithDb('linguagem natural — cenários P1 (catálogo real, determiníst
     });
   });
 
+  describe('entrada natural (Alimentação Livre): verbos, numerais e frações até o servidor', () => {
+    it('Tomei 200 ml de leite / Bebi um copo de água / Comi um pão / Um scoop de whey', async () => {
+      expect(await one('Tomei 200 ml de leite')).toMatchObject({ name: 'Leite, de vaca, integral', quantity: 200, unitLabel: 'ml', grams: 206, confidence: 'medium' });
+      expect(await one('Bebi um copo de água')).toMatchObject({ name: 'Água', grams: 200, energyKcal: 0, unitLabel: 'copo' });
+      expect(await one('Comi um pão')).toMatchObject({ quantity: 1 });
+      expect(await one('Um scoop de whey')).toMatchObject({ name: 'Whey protein, isolado', grams: 28.7, unitLabel: 'scoop', confidence: 'high' });
+    });
+    it('Comi dois ovos fritos → 2 ovos, preparo frito, 100 g', async () => {
+      const i = await one('Comi dois ovos fritos');
+      expect(i).toMatchObject({ resolved: true, name: 'Ovo, de galinha, inteiro, frito', quantity: 2, grams: 100 });
+      expect(i.canonicalFood?.preparation).toBe('frito');
+    });
+    it('Duas fatias de pão integral → 2 fatias (50 g), sugestão a confirmar', async () => {
+      expect(await one('Duas fatias de pão integral')).toMatchObject({ resolved: true, quantity: 2, unitLabel: 'fatia', grams: 50, confirmed: false });
+    });
+    it('Meia banana / 1/2 banana → 0,5 unidade = 35 g (metade da medida curada), nunca 1 banana', async () => {
+      for (const t of ['Meia banana', '1/2 banana']) {
+        const i = await one(t);
+        expect(i).toMatchObject({ resolved: true, name: 'Banana, prata, crua', quantity: 0.5, grams: 35 });
+        expect(i.energyKcal).toBeCloseTo(34.38, 1);
+      }
+    });
+    it('Comi um pão e dois ovos → dois itens separados e resolvidos', async () => {
+      const { items } = await svc.parseAndResolve('Comi um pão e dois ovos');
+      expect(items).toHaveLength(2);
+      expect(items[1]).toMatchObject({ resolved: true, quantity: 2, grams: 100 });
+    });
+    it('Comi 4 biscoitos (recheados): quantidade/unidade lidas, mas SEM peso por unidade no catálogo não é gravável — nada de gramas inventadas', async () => {
+      const i = await one('Comi 4 biscoitos recheados');
+      expect(i).toMatchObject({ resolved: false, quantity: 4, unitLabel: 'unidade' });
+      expect(i.grams).toBeUndefined();
+      expect(i.energyKcal).toBeUndefined();
+    });
+  });
+
   describe('pedem confirmação/identificação — nada é inventado', () => {
     it('2 fatias de pão integral → quantidade e medida preservadas, confirmação média', async () => {
       const i = await one('2 fatias de pão integral');

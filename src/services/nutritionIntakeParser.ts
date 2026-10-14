@@ -102,6 +102,59 @@ const KG_WORDS = new Set(['kg', 'quilo', 'quilos', 'kilo', 'kilos']);
 const L_WORDS = new Set(['l', 'litro', 'litros']);
 const LEADING_QUANTITY = /^(\d+(?:[.,]\d+)?)\s*/;
 
+/**
+ * Verbos de consumo no INÍCIO da frase ("comi 4 biscoitos", "tomei 200 ml de leite", "bebi um copo de água") — lista
+ * fechada e explícita; o verbo descreve o ato, não o alimento, então sai do texto interpretado (o `rawText` fica intacto).
+ */
+const CONSUMPTION_VERB = /^(?:eu\s+)?(?:comi|tomei|bebi|ingeri|comemos|tomamos|bebemos)\s+/;
+
+function stripConsumptionVerb(lowered: string): string {
+  return lowered.replace(CONSUMPTION_VERB, '');
+}
+
+/** Numerais por extenso mais comuns na fala ("um pão", "duas fatias", "meia banana"). Lista fechada, sem inferência. */
+const NUMBER_WORDS: Record<string, number> = {
+  um: 1, uma: 1, dois: 2, duas: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12,
+  meio: 0.5, meia: 0.5,
+};
+const WORD_QUANTITY = new RegExp(`^(${Object.keys(NUMBER_WORDS).join('|')})\\b(?:\\s+e\\s+(meio|meia)\\b)?\\s*`);
+const MIXED_FRACTION = /^(\d+)\s+e\s+(\d+)\s*\/\s*(\d+)\b\s*/;
+const SIMPLE_FRACTION = /^(\d+)\s*\/\s*(\d+)\b\s*/;
+const DIGIT_AND_HALF = /^(\d+(?:[.,]\d+)?)\s+e\s+(?:meio|meia)\b\s*/;
+
+/**
+ * Quantidade no início do trecho (já sem acento/minúsculo): fração ("1/2", "1 e 1/2"), "1 e meio", decimal, ou numeral
+ * por extenso ("um", "duas", "meia", "um e meio"). Devolve a quantidade e quantos caracteres consumiu, ou `null`.
+ * Fração com denominador 0 não é quantidade (cai no comportamento antigo) — nunca vira "1 unidade" silenciosa de "1/2".
+ */
+function extractLeadingQuantity(lowered: string): { quantity: number; length: number } | null {
+  let m = lowered.match(MIXED_FRACTION);
+  if (m) {
+    const den = Number(m[3]);
+    return den > 0 ? { quantity: Number(m[1]) + Number(m[2]) / den, length: m[0].length } : null;
+  }
+  m = lowered.match(SIMPLE_FRACTION);
+  if (m) {
+    const den = Number(m[2]);
+    return den > 0 ? { quantity: Number(m[1]) / den, length: m[0].length } : null;
+  }
+  m = lowered.match(DIGIT_AND_HALF);
+  if (m) {
+    const base = parseQuantity(m[1]);
+    return base == null ? null : { quantity: base + 0.5, length: m[0].length };
+  }
+  m = lowered.match(LEADING_QUANTITY);
+  if (m) {
+    const q = parseQuantity(m[1]);
+    return q == null ? null : { quantity: q, length: m[0].length };
+  }
+  m = lowered.match(WORD_QUANTITY);
+  if (m) {
+    return { quantity: NUMBER_WORDS[m[1]] + (m[2] ? 0.5 : 0), length: m[0].length };
+  }
+  return null;
+}
+
 function stripAccents(s: string): string {
   return s.normalize('NFKD').replace(/[̀-ͯ]/g, '');
 }
@@ -159,7 +212,7 @@ function dropLeadingDe(words: string[]): string[] {
  */
 function splitSegments(text: string): string[] {
   return text
-    .split(/\+|;|\n|\s+e\s+|,(?!\d)|\s+com\s+(?=\d)/i)
+    .split(/\+|;|\n|\s+e\s+(?!mei[oa]\b|\d+\s*\/\s*\d+)|,(?!\d)|\s+com\s+(?=\d)/i)
     .map((s) => s.trim())
     .filter(Boolean);
 }
@@ -172,15 +225,15 @@ function splitSegments(text: string): string[] {
 function parseSegment(rawText: string): ParsedIntakeToken {
   // Extrai a quantidade ANTES de normalizar (a normalização apaga o "." decimal
   // junto com o resto da pontuação) — só baixa a caixa/acento aqui.
-  const lowered = stripAccents(rawText).toLowerCase().trim();
-  const qtyMatch = lowered.match(LEADING_QUANTITY);
+  const lowered = stripConsumptionVerb(stripAccents(rawText).toLowerCase().trim());
+  const qtyMatch = extractLeadingQuantity(lowered);
   if (!qtyMatch) {
-    return { rawText, foodQuery: dropNoSugar(normalizeText(rawText)), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
+    return { rawText, foodQuery: dropNoSugar(normalizeText(lowered)), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
   }
-  const quantity = parseQuantity(qtyMatch[1]);
-  const remainder = dropNoSugar(normalizeText(lowered.slice(qtyMatch[0].length)));
-  if (quantity == null || !remainder) {
-    return { rawText, foodQuery: dropNoSugar(normalizeText(rawText)), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
+  const quantity = qtyMatch.quantity;
+  const remainder = dropNoSugar(normalizeText(lowered.slice(qtyMatch.length)));
+  if (!remainder) {
+    return { rawText, foodQuery: dropNoSugar(normalizeText(lowered)), quantity: 1, unitType: 'measure', measureName: null, unitDimension: 'household', unitLabel: 'unidade', preparation: null };
   }
   const remainderWords = remainder.split(' ');
 

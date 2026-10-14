@@ -89,6 +89,27 @@ export interface CreatePlanInput {
 // Plans
 // ---------------------------------------------------------------------------
 
+/**
+ * Espelho SQL de `isHydrationOnlyLog` (nutritionIntakeService): log cujos itens são TODOS água (item manual, nome na lista
+ * fechada, sem energia nem macros). Não conta como refeição na cobertura; segue nos totais (0 kcal). Por identidade do item,
+ * nunca por "0 kcal" isolado.
+ */
+const HYDRATION_ONLY_LOG_SQL = `(
+  jsonb_array_length(items) > 0 AND NOT EXISTS (
+    SELECT 1 FROM jsonb_array_elements(items) AS it
+     WHERE NOT (
+       it->>'resolver' = 'manual'
+       AND COALESCE((it->>'energyKcal')::numeric, 0) = 0
+       AND COALESCE((it->>'proteinG')::numeric, 0) = 0
+       AND COALESCE((it->>'carbohydrateG')::numeric, 0) = 0
+       AND COALESCE((it->>'fatG')::numeric, 0) = 0
+       AND translate(lower(it->>'name'), 'áàâãéêíóôõúç', 'aaaaeeiooouc')
+           IN ('agua', 'agua mineral', 'agua filtrada', 'agua natural', 'agua gelada')
+     )
+  )
+)`;
+const LOGGED_MEALS_SQL = `COUNT(DISTINCT CASE WHEN NOT ${HYDRATION_ONLY_LOG_SQL} THEN COALESCE('p' || meal_id::text, 'l' || id::text) END)::int`;
+
 export async function createPlan(
   nutriId: number,
   patientId: number,
@@ -1299,7 +1320,7 @@ export async function getPatientsWithSummary(nutriId: number) {
   // `resolveNutritionTarget` já usado no lado do aluno).
   const intakeDaysRes = await pool.query(
     `SELECT user_id, date_key::text AS date_key,
-            COUNT(DISTINCT COALESCE('p' || meal_id::text, 'l' || id::text))::int AS logged_meals,
+            ${LOGGED_MEALS_SQL} AS logged_meals,
             SUM(energy_kcal)::float AS total_kcal,
             SUM(protein_g)::float AS protein_g,
             SUM(carbohydrate_g)::float AS carbohydrate_g,
@@ -1560,7 +1581,7 @@ async function resolvePatientIntakeContext(patientId: number): Promise<PatientIn
       [patientId]
     ),
     pool.query<{ date_key: string; logged_meals: number; total_kcal: number; protein_g: number; carbohydrate_g: number; fat_g: number; weighted_confidence: number }>(
-      `SELECT date_key::text AS date_key, COUNT(DISTINCT COALESCE('p' || meal_id::text, 'l' || id::text))::int AS logged_meals,
+      `SELECT date_key::text AS date_key, ${LOGGED_MEALS_SQL} AS logged_meals,
               SUM(energy_kcal)::float AS total_kcal, SUM(protein_g)::float AS protein_g,
               SUM(carbohydrate_g)::float AS carbohydrate_g, SUM(fat_g)::float AS fat_g,
               (SUM(energy_kcal * confidence_score) / GREATEST(SUM(energy_kcal), 0.0001))::float AS weighted_confidence

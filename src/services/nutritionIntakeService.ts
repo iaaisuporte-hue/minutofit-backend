@@ -1441,14 +1441,40 @@ export function classifyDaySummary(day: DayLogSummary, expectedMeals: number): D
  * incremental, uma refeição com N alimentos não pode valer N refeições). Sem `mealId`/`id` (chamadores que só têm
  * kcal/confiança) cai na contagem de linhas, como sempre.
  */
-export function summarizeDayLogs(logs: Array<{ energyKcal: number; confidenceScore: number; id?: number; mealId?: number | null }>): DayLogSummary {
-  const loggedMeals = logs.every((l) => l.id != null)
-    ? new Set(logs.map((l) => (l.mealId != null ? `p${l.mealId}` : `l${l.id}`))).size
-    : logs.length;
+/**
+ * Item de HIDRATAÇÃO pura: a água que o próprio sistema cria (`resolvePlainWater`) ou que o aluno lança como item manual
+ * chamado "água…" — resolver `manual`, nome na lista fechada abaixo E sem energia/macros. A classificação é por IDENTIDADE
+ * (nome + origem manual + zero) e nunca só por "0 kcal": café sem açúcar (~11 kcal), chá, água de coco, adoçante e demais
+ * itens de pouca energia seguem sendo alimento/bebida registrados. Casos sem classificação confiável (ex.: "garrafa de
+ * hidratante isotônico zero") continuam contando como refeição — falha segura, nunca descarta um alimento.
+ */
+export function isHydrationItem(item: { name?: string | null; resolver?: string | null; energyKcal?: number | null; proteinG?: number | null; carbohydrateG?: number | null; fatG?: number | null }): boolean {
+  if (item.resolver !== 'manual') return false;
+  const zero = (n: number | null | undefined) => (n ?? 0) === 0;
+  if (!(zero(item.energyKcal) && zero(item.proteinG) && zero(item.carbohydrateG) && zero(item.fatG))) return false;
+  return PLAIN_WATER_QUERIES.has(normalizeFoodText(item.name ?? ''));
+}
+
+/** Registro composto SÓ por hidratação: não é refeição registrada (não infla a cobertura); continua nos totais (0 kcal) e visível. */
+export function isHydrationOnlyLog(items: Array<Parameters<typeof isHydrationItem>[0]> | null | undefined): boolean {
+  return Array.isArray(items) && items.length > 0 && items.every(isHydrationItem);
+}
+
+/**
+ * Refeição DISTINTA, não linha: uma refeição do plano é uma só mesmo em registros legados com várias linhas, e a
+ * refeição extra é a própria linha. Antes `loggedMeals = logs.length` inflava a cobertura (e, no registro
+ * incremental, uma refeição com N alimentos não pode valer N refeições). Sem `mealId`/`id` (chamadores que só têm
+ * kcal/confiança) cai na contagem de linhas, como sempre. Registro só de hidratação (água) não conta como refeição.
+ */
+export function summarizeDayLogs(logs: Array<{ energyKcal: number; confidenceScore: number; id?: number; mealId?: number | null; items?: Array<Parameters<typeof isHydrationItem>[0]> }>): DayLogSummary {
+  const countable = logs.filter((l) => !isHydrationOnlyLog(l.items));
+  const loggedMeals = countable.every((l) => l.id != null)
+    ? new Set(countable.map((l) => (l.mealId != null ? `p${l.mealId}` : `l${l.id}`))).size
+    : countable.length;
   const totalKcal = logs.reduce((s, l) => s + l.energyKcal, 0);
   const weightedConfidence = totalKcal > 0
     ? logs.reduce((s, l) => s + l.energyKcal * l.confidenceScore, 0) / totalKcal
-    : (loggedMeals > 0 ? logs.reduce((s, l) => s + l.confidenceScore, 0) / loggedMeals : 0);
+    : (loggedMeals > 0 ? countable.reduce((s, l) => s + l.confidenceScore, 0) / loggedMeals : 0);
   return { loggedMeals, totalKcal, weightedConfidence };
 }
 

@@ -126,6 +126,17 @@ function singularize(word: string): string {
   return word;
 }
 
+/**
+ * "média/médio" é só o tamanho-padrão que as medidas curadas já assumem ("unidade média" da banana prata): fora
+ * do `foodQuery` o alimento volta a casar ("1 banana média" = "1 banana"). "pequena/grande" NÃO são removidas —
+ * a medida curada seria a errada, então a menção segue para confirmação em vez de usar o tamanho médio por engano.
+ */
+const MEDIUM_SIZE_WORDS = new Set(['media', 'medio', 'medias', 'medios']);
+
+function dropMediumSize(words: string[]): string[] {
+  return words.filter((w) => !MEDIUM_SIZE_WORDS.has(w));
+}
+
 function dropLeadingDe(words: string[]): string[] {
   return words[0] === 'de' ? words.slice(1) : words;
 }
@@ -218,7 +229,7 @@ function parseSegment(rawText: string): ParsedIntakeToken {
   }
 
   // 3) contagem de alimento no plural, sem palavra de medida — "2 ovos", "3 bananas".
-  const countRest = remainderWords.slice(1);
+  const countRest = dropMediumSize(remainderWords.slice(1));
   const foodQuery = [singularize(remainderWords[0]), ...countRest].join(' ').trim();
   return {
     rawText, foodQuery, quantity, unitType: 'measure', measureName: null, unitDimension: 'count', unitLabel: 'unidade',

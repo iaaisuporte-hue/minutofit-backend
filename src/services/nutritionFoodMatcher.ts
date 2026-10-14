@@ -154,6 +154,9 @@ export const FOOD_ALIASES: Record<string, string> = {
   'ovo frito': 'ovo de galinha inteiro frito',
   arroz: 'arroz tipo 1 cozido',
   'arroz cozido': 'arroz tipo 1 cozido',
+  // "arroz branco" é como o brasileiro chama o arroz tipo 1 cozido do dia a dia; sem o alias o fuzzy sugeria
+  // "Arroz carreteiro" (P1 — reproduzido em QA). "arroz integral" continua SEM alias (cru vs cozido empata).
+  'arroz branco': 'arroz tipo 1 cozido',
   feijao: 'feijao carioca cozido',
   frango: 'frango peito sem pele grelhado',
   'frango grelhado': 'frango peito sem pele grelhado',

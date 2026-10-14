@@ -768,10 +768,16 @@ describeWithDb('nutritionIntakeService (integration)', () => {
   // PLAN P1B.1 ("Smart Food Logging" spike, set/2026) — corpus dos 8 casos do
   // spike como harness permanente, mais os caveats explícitos do usuário.
   describe('P1B.1 — Smart Food Logging (volume, histórico, IA opcional)', () => {
-    it('"200ml de leite" (bare, sem variante) segue honestamente ambíguo — NUNCA vira "integral" silenciosamente (caveat 4)', async () => {
+    it('"200ml de leite" (bare, sem variante) NUNCA vira "integral" silenciosamente (caveat 4) — P1: sai como SUGESTÃO com a variante em chip, nunca resolvido em alta confiança', async () => {
       const preview = await svc.parseAndResolve('200ml de leite');
       const item = preview.items[0];
-      expect(item.resolved).toBe(false);
+      // P1: antes ficava não resolvido (o melhor fuzzy geral, "Leite, condensado", não tem densidade). Agora a sugestão
+      // vem só de alimentos com densidade curada, mas continua exigindo o toque do aluno (média, não confirmada).
+      expect(item.resolved).toBe(true);
+      expect(item.confidence).toBe('medium');
+      expect(item.confirmed).toBe(false);
+      expect(preview.needsConfirmation).toBe(true);
+      expect(item.candidates?.length).toBeGreaterThan(0);
       // A quantidade/unidade que o usuário disse continuam visíveis — nunca
       // reescritas para "g", nunca perdidas.
       expect(item.quantity).toBe(200);

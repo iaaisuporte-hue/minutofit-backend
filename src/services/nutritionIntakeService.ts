@@ -21,8 +21,8 @@ import pool from '../config/database';
 import { dayKey, dayKeyDiff } from '../utils/appDay';
 import { parseIntakeText, type ParsedIntakeToken } from './nutritionIntakeParser';
 import { calculateNutrition, sumNutrients, type NutrientsPer100g } from './nutritionCalculation';
-import { getCatalogFoodById, listCatalogFoodMeasures, getFoodIndex, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
-import { matchFood, normalizeFoodText, BEVERAGE_CATEGORY, FUZZY_MINIMUM_SCORE, type CandidateScore, type MatchConfidence, type UnitHint } from './nutritionFoodMatcher';
+import { getCatalogFoodById, listCatalogFoodMeasures, getFoodIndex, getVolumeCapableIndex, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
+import { matchFood, topCandidates, FUZZY_MEDIUM_CONFIDENCE, normalizeFoodText, BEVERAGE_CATEGORY, FUZZY_MINIMUM_SCORE, type CandidateScore, type MatchConfidence, type UnitHint } from './nutritionFoodMatcher';
 import { interpretIntakeTextWithAi, type IntakeInterpreterDeps } from './ai/intakeInterpreterAi';
 import { getFeatureMapForUser } from './planFeatureService';
 import { toCanonicalFood, derivePreparationFromSourceName, type CanonicalFood } from './canonicalFood';
@@ -392,9 +392,95 @@ async function buildAlternateCandidates(
   return filtered.length > 0 ? filtered : undefined;
 }
 
+/**
+ * Água pura ("200 ml de água", "1 copo de água") — o catálogo TACO não tem água, e o fuzzy escolhia "Coco, água de"
+ * (43 kcal/200 ml) por aproximação de nome. Água é 0 kcal e 1 ml = 1 g (propriedade física, não palpite): vira um
+ * item `manual` zerado, confirmado, em vez de uma sugestão de outro alimento.
+ */
+const PLAIN_WATER_QUERIES = new Set(['agua', 'agua mineral', 'agua filtrada', 'agua natural', 'agua gelada']);
+
+function resolvePlainWater(token: ParsedIntakeToken): IntakePreviewItem | null {
+  if (!PLAIN_WATER_QUERIES.has(normalizeFoodText(token.foodQuery))) return null;
+  let grams: number | null = null;
+  if (token.unitType === 'ml' || token.unitType === 'grams') grams = token.quantity;
+  else if (token.measureName === 'copo' || token.measureName === 'xicara') grams = token.quantity * FALLBACK_MEASURES_G[token.measureName];
+  if (grams == null) return null;
+  return {
+    resolved: true,
+    rawText: token.rawText,
+    foodQuery: token.foodQuery,
+    name: 'Água',
+    grams: round2(grams),
+    quantity: token.quantity,
+    unitLabel: token.unitLabel,
+    per100g: { kcal: 0, p: 0, c: 0, f: 0 },
+    energyKcal: 0,
+    proteinG: 0,
+    carbohydrateG: 0,
+    fatG: 0,
+    resolver: 'manual',
+    confidence: 'high',
+    confirmed: true,
+  };
+}
+
+/**
+ * Volume sem como chegar a gramas no melhor fuzzy geral ("200 ml de leite" → "Leite, condensado", que não tem
+ * densidade): tenta de novo SÓ entre alimentos com respaldo de volume (densidade curada ou Bebidas). Nunca
+ * `high` — "leite" genérico não vira integral em silêncio; sai como sugestão ("Você quis dizer?") com a
+ * variante alternativa em chip. Só roda quando o caminho normal já falharia, então nada que hoje resolve muda.
+ */
+async function resolveVolumeFallback(token: ParsedIntakeToken): Promise<IntakePreviewItem | null> {
+  const volumeIndex = await getVolumeCapableIndex();
+  const top = topCandidates(token.foodQuery, volumeIndex, 3);
+  if (top.length === 0 || top[0].score < FUZZY_MEDIUM_CONFIDENCE) return null;
+  const best = await getCatalogFoodById(top[0].entry.id);
+  if (!best) return null;
+  const quantityResult = await resolveQuantityToGrams(token, best);
+  if (!quantityResult) return null;
+  const per100g = toPer100g(best);
+  const calc = calculateNutrition(per100g, quantityResult.grams);
+  return {
+    resolved: true,
+    rawText: token.rawText,
+    foodQuery: token.foodQuery,
+    foodId: best.id,
+    name: best.name,
+    canonicalFood: toCanonicalFood(best, token.preparation),
+    candidates: await buildAlternateCandidates(top, best.id),
+    grams: quantityResult.grams,
+    measureId: quantityResult.measureId,
+    fallbackMeasureKey: quantityResult.fallbackMeasureKey,
+    quantity: token.quantity,
+    unitLabel: token.unitLabel,
+    per100g: { kcal: per100g.energyKcal, p: per100g.proteinG, c: per100g.carbohydrateG, f: per100g.fatG },
+    energyKcal: calc.energyKcal,
+    proteinG: calc.proteinG,
+    carbohydrateG: calc.carbohydrateG,
+    fatG: calc.fatG,
+    resolver: 'measure',
+    confidence: 'medium',
+    confirmed: false,
+    matchScore: top[0].score,
+  };
+}
+
 /** Resolve um token do parser contra o catálogo — usado pelo preview (`/parse`). `userId` habilita o estágio de histórico (§ acima); omitido em contextos onde não há usuário autenticado. */
 export async function resolveTokenForPreview(token: ParsedIntakeToken, userId?: number): Promise<IntakePreviewItem> {
+  const water = resolvePlainWater(token);
+  if (water) return water;
+
   const resolution = await resolveFoodForQuery(token.foodQuery, token.unitDimension);
+
+  // Volume (ml, copo, xícara) com um melhor palpite que NÃO tem respaldo de volume e que não é certeza ("1 copo de
+  // leite" → "Leite, condensado", 625 kcal): tenta antes entre alimentos com densidade curada/Bebidas (P1).
+  if (resolution && token.unitDimension === 'volume' && resolution.confidence !== 'high') {
+    const volumeIndex = await getVolumeCapableIndex();
+    if (!volumeIndex.some((e) => e.id === resolution.food.id)) {
+      const volumeAlt = await resolveVolumeFallback(token);
+      if (volumeAlt) return volumeAlt;
+    }
+  }
 
   if (resolution) {
     const { food: best, confidence, score, candidates } = resolution;
@@ -689,8 +775,9 @@ function resolveManualItem(item: Extract<IntakeItemRequest, { kind: 'manual' }>)
     carbohydrateG: item.carbohydrateG,
     fatG: item.fatG,
     // Item manual não tem como o usuário informar fibra separadamente hoje —
-    // `null` (não conhecida), nunca 0 (que afirmaria "sem fibra").
-    fiberG: null,
+    // `null` (não conhecida), nunca 0 (que afirmaria "sem fibra"). Única exceção: item sem NENHUM macro nem
+    // energia (água) — fibra tem ~2 kcal/g, então 0 kcal implica 0 de fibra e o dia não vira "fibra parcial".
+    fiberG: nums.every((n) => n === 0) ? 0 : null,
     resolver: 'manual',
     confidence: 'high',
     confirmed: true,

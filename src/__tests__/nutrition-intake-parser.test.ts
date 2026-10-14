@@ -194,4 +194,14 @@ describe('nutritionIntakeParser', () => {
       expect(t.foodQuery).toBe('banana prata');
     });
   });
+
+  // P1 — "média" é o tamanho que as medidas curadas já assumem; sai do foodQuery. "grande"/"pequena" ficam.
+  it('"1 banana média" e "2 bananas médias" → foodQuery só com o alimento', () => {
+    expect(parseIntakeText('1 banana média')[0]).toMatchObject({ foodQuery: 'banana', quantity: 1 });
+    expect(parseIntakeText('2 bananas médias')[0]).toMatchObject({ foodQuery: 'banana', quantity: 2 });
+  });
+
+  it('"1 banana grande" mantém o tamanho no foodQuery (não usa a medida média por engano)', () => {
+    expect(parseIntakeText('1 banana grande')[0].foodQuery).toBe('banana grande');
+  });
 });

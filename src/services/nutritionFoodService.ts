@@ -1,6 +1,6 @@
 import pool from '../config/database';
 import { logDataAccessEvent } from './dataAccessAuditService';
-import { buildFoodIndex, type FoodIndexEntry } from './nutritionFoodMatcher';
+import { buildFoodIndex, BEVERAGE_CATEGORY, type FoodIndexEntry } from './nutritionFoodMatcher';
 
 // ---------------------------------------------------------------------------
 // SPEC 038 (P3A) — catálogo de alimentos (TACO) + alimentos customizados do
@@ -146,9 +146,11 @@ function mapCatalogRow(r: any): FoodSummary {
 // precisem de um catálogo diferente chamam `invalidateFoodIndexCache()`.
 // ---------------------------------------------------------------------------
 let foodIndexCache: FoodIndexEntry[] | null = null;
+let volumeIndexCache: FoodIndexEntry[] | null = null;
 
 export function invalidateFoodIndexCache(): void {
   foodIndexCache = null;
+  volumeIndexCache = null;
 }
 
 export async function getFoodIndex(): Promise<FoodIndexEntry[]> {
@@ -160,6 +162,22 @@ export async function getFoodIndex(): Promise<FoodIndexEntry[]> {
     rows.map((r) => ({ id: r.id, name: r.name, normalizedName: r.normalized_name, category: r.category })),
   );
   return foodIndexCache;
+}
+
+/**
+ * Subconjunto do índice cujo VOLUME é convertível em gramas com respaldo: alimentos com densidade curada
+ * (medida literal "ml" em `nutrition_food_measures`) ou da categoria Bebidas. Usado só para resolver "200 ml de
+ * leite" quando o melhor fuzzy geral (ex.: "Leite, condensado") não tem como chegar a gramas.
+ */
+export async function getVolumeCapableIndex(): Promise<FoodIndexEntry[]> {
+  if (volumeIndexCache) return volumeIndexCache;
+  const [index, { rows }] = await Promise.all([
+    getFoodIndex(),
+    pool.query(`SELECT DISTINCT food_id FROM nutrition_food_measures WHERE lower(name) = 'ml'`),
+  ]);
+  const withDensity = new Set<number>(rows.map((r) => Number(r.food_id)));
+  volumeIndexCache = index.filter((e) => withDensity.has(e.id) || e.category === BEVERAGE_CATEGORY);
+  return volumeIndexCache;
 }
 
 export async function getCatalogFoodById(id: number): Promise<FoodSummary | null> {

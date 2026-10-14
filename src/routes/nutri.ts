@@ -1020,7 +1020,9 @@ router.get(
       const date = typeof req.query.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date)
         ? req.query.date
         : dayKey();
-      const logs = await getIntakeLogsForDay(patientId, date);
+      // Privacidade: o texto livre que o aluno digitou (`rawText`) é dele — o nutri recebe só o resultado estruturado
+      // (itens, quantidades, macros, rótulo, horário). A coluna `raw_text` segue na persistência e nas rotas do próprio aluno.
+      const logs = (await getIntakeLogsForDay(patientId, date)).map(({ rawText: _rawText, ...structured }) => structured);
       void logDataAccessEvent({ actorId: nutriId, subjectUserId: patientId, eventType: 'nutri.intake.read', eventPayload: { date } }).catch(() => {});
       res.json({ success: true, data: { date, logs } });
     } catch (err: any) {

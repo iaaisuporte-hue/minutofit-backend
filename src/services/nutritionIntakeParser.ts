@@ -118,8 +118,8 @@ const NUMBER_WORDS: Record<string, number> = {
   meio: 0.5, meia: 0.5,
 };
 const WORD_QUANTITY = new RegExp(`^(${Object.keys(NUMBER_WORDS).join('|')})\\b(?:\\s+e\\s+(meio|meia)\\b)?\\s*`);
-const MIXED_FRACTION = /^(\d+)\s+e\s+(\d+)\s*\/\s*(\d+)\b\s*/;
-const SIMPLE_FRACTION = /^(\d+)\s*\/\s*(\d+)\b\s*/;
+const MIXED_FRACTION = /^(\d+)\s+e\s+(\d+)\s*\/\s*(\d+)(?!\d)\s*/;
+const SIMPLE_FRACTION = /^(\d+)\s*\/\s*(\d+)(?!\d)\s*/;
 const DIGIT_AND_HALF = /^(\d+(?:[.,]\d+)?)\s+e\s+(?:meio|meia)\b\s*/;
 
 /**
@@ -131,12 +131,14 @@ function extractLeadingQuantity(lowered: string): { quantity: number; length: nu
   let m = lowered.match(MIXED_FRACTION);
   if (m) {
     const den = Number(m[3]);
-    return den > 0 ? { quantity: Number(m[1]) + Number(m[2]) / den, length: m[0].length } : null;
+    const q = den > 0 ? Number(m[1]) + Number(m[2]) / den : 0;
+    return q > 0 ? { quantity: q, length: m[0].length } : null;
   }
   m = lowered.match(SIMPLE_FRACTION);
   if (m) {
     const den = Number(m[2]);
-    return den > 0 ? { quantity: Number(m[1]) / den, length: m[0].length } : null;
+    const q = den > 0 ? Number(m[1]) / den : 0;
+    return q > 0 ? { quantity: q, length: m[0].length } : null; // "0/2" não é quantidade (nunca 0 g "resolvido")
   }
   m = lowered.match(DIGIT_AND_HALF);
   if (m) {
@@ -210,10 +212,17 @@ function dropLeadingDe(words: string[]): string[] {
  * 150g de arroz cozido" são dois itens; "arroz com feijão", sem número
  * depois de "com", continua um prato único — nunca quebrado).
  */
+/** Quantidade (dígitos ou numeral por extenso) que pode ser seguida de " e meio" / " e 1/2" dentro do MESMO item. */
+const SPLIT_GUARD_QUANTITY = '\\d+(?:[.,]\\d+)?|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze';
+
 function splitSegments(text: string): string[] {
+  // " e meio/meia" e " e X/Y" PERTENCEM à quantidade quando vêm logo depois de uma quantidade ("1 e meio pão", "um e 1/2
+  // banana"); depois de um ALIMENTO ("1 pão e meia banana") continuam sendo o separador de itens. Protege só o primeiro caso.
+  const joinedHalf = new RegExp(`\\b(${SPLIT_GUARD_QUANTITY})\\s+e\\s+(?=mei[oa]\\b|\\d+\\s*\\/\\s*\\d+)`, 'gi');
   return text
-    .split(/\+|;|\n|\s+e\s+(?!mei[oa]\b|\d+\s*\/\s*\d+)|,(?!\d)|\s+com\s+(?=\d)/i)
-    .map((s) => s.trim())
+    .replace(joinedHalf, '$1\u0001')
+    .split(/\+|;|\n|\s+e\s+|,(?!\d)|\s+com\s+(?=\d)/i)
+    .map((s) => s.replace(/\u0001/g, ' e ').trim())
     .filter(Boolean);
 }
 

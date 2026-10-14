@@ -255,6 +255,28 @@ describe('nutritionIntakeParser', () => {
       expect(parseIntakeText('dez azeitonas')[0]).toMatchObject({ quantity: 10, foodQuery: 'azeitona' });
     });
 
+    it.each([
+      ['1 pão e meia banana', [[1, 'pao'], [0.5, 'banana']]],
+      ['2 ovos e meio pão', [[2, 'ovo'], [0.5, 'pao']]],
+      ['arroz e meia concha de feijão', [[1, 'arroz'], [0.5, 'feijao']]],
+      ['1 banana e 1/2 maçã', [[1, 'banana'], [0.5, 'maca']]],
+      ['duas colheres de sopa de arroz e meia xícara de feijão', [[2, 'arroz'], [0.5, 'feijao']]],
+      ['comi 2 e meia banana e 1 pão', [[2.5, 'banana'], [1, 'pao']]],
+    ])('"e meia/meio" DEPOIS de um alimento continua separando itens: %s', (text, expected) => {
+      expect(parseIntakeText(text as string).map((t) => [t.quantity, t.foodQuery])).toEqual(expected);
+    });
+
+    it('"e meio/meia" e "e X/Y" logo depois de uma QUANTIDADE continuam dentro do mesmo item', () => {
+      expect(parseIntakeText('1 e 1/2kg de arroz').map((t) => [t.quantity, t.unitType, t.foodQuery])).toEqual([[1500, 'grams', 'arroz']]);
+      expect(parseIntakeText('3 e 1/2 xícaras de arroz')).toHaveLength(1);
+      expect(parseIntakeText('3 e 1/2 xícaras de arroz')[0].quantity).toBe(3.5);
+    });
+
+    it('fração zero ("0/2") nunca vira quantidade 0', () => {
+      expect(parseIntakeText('0/2 banana')[0].quantity).toBe(1);
+      expect(parseIntakeText('0 e 0/3 banana')[0].quantity).toBeGreaterThan(0);
+    });
+
     it('não regride a forma numérica de sempre', () => {
       expect(parseIntakeText('2 ovos')[0]).toMatchObject({ quantity: 2, foodQuery: 'ovo' });
       expect(parseIntakeText('200g de frango')[0]).toMatchObject({ quantity: 200, unitType: 'grams', foodQuery: 'frango' });

@@ -157,6 +157,23 @@ describeWithDb('cobertura sem hidratação isolada (banco real: aluno e nutri)',
     }
   });
 
+  it('nomes com maiúsculas acentuadas, espaços duplos e hífen: TS e SQL classificam igual (hidratação)', async () => {
+    for (const name of ['ÁGUA', 'Água  mineral', 'Água-mineral', '  água gelada ']) {
+      await insert([{ ...WATER, name }], { label: name });
+    }
+    expect(isHydrationOnlyLog([{ ...WATER, name: 'Água-mineral' }])).toBe(true);
+    expect(await sqlMeals()).toBe(0);
+    expect((await studentMeals()).coverage.loggedMeals).toBe(0);
+  });
+
+  it('item sem a chave `resolver`: TS e SQL concordam (não é hidratação — conta como refeição)', async () => {
+    const { resolver: _r, ...noResolver } = WATER;
+    await insert([noResolver], { label: 'sem resolver' });
+    expect(isHydrationOnlyLog([noResolver as never])).toBe(false);
+    expect(await sqlMeals()).toBe(1);
+    expect((await studentMeals()).coverage.loggedMeals).toBe(1);
+  });
+
   it('TS (aluno) e SQL (nutri) concordam no mesmo dia misto', async () => {
     await insert([WATER], { label: 'x' });
     await insert([BANANA], { label: 'y' });

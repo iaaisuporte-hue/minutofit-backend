@@ -95,15 +95,19 @@ export interface CreatePlanInput {
  * nunca por "0 kcal" isolado.
  */
 const HYDRATION_ONLY_LOG_SQL = `(
-  jsonb_array_length(items) > 0 AND NOT EXISTS (
+  jsonb_typeof(items) = 'array' AND jsonb_array_length(items) > 0 AND NOT EXISTS (
     SELECT 1 FROM jsonb_array_elements(items) AS it
      WHERE NOT (
-       it->>'resolver' = 'manual'
+       COALESCE(it->>'resolver', '') = 'manual'
        AND COALESCE((it->>'energyKcal')::numeric, 0) = 0
        AND COALESCE((it->>'proteinG')::numeric, 0) = 0
        AND COALESCE((it->>'carbohydrateG')::numeric, 0) = 0
        AND COALESCE((it->>'fatG')::numeric, 0) = 0
-       AND translate(lower(it->>'name'), 'áàâãéêíóôõúç', 'aaaaeeiooouc')
+       -- mesma normalização de \`normalizeFoodText\` (sem acento, minúsculo, pontuação/espaços colapsados); o translate cobre
+       -- maiúsculas acentuadas porque \`lower()\` depende do LC_CTYPE do banco
+       AND btrim(regexp_replace(regexp_replace(
+             translate(lower(COALESCE(it->>'name', '')), 'áàâãäéêëíïóôõöúüçÁÀÂÃÄÉÊËÍÏÓÔÕÖÚÜÇ', 'aaaaaeeeiioooouucaaaaaeeeiioooouuc'),
+             '[^a-z0-9 ]', ' ', 'g'), '\\s+', ' ', 'g'))
            IN ('agua', 'agua mineral', 'agua filtrada', 'agua natural', 'agua gelada')
      )
   )

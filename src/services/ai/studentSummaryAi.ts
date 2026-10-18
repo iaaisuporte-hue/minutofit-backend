@@ -25,8 +25,11 @@ REGRAS:
 - Nunca faça diagnóstico médico ou clínico.
 - Se dados forem insuficientes, diga isso claramente.`;
 
+/**
+ * Dados enviados à IA — minimizados (Spec 039): SEM nome, e-mail, telefone, CPF nem id do
+ * aluno. O texto fala em "o aluno"; quem correlaciona com a pessoa é a tela do personal.
+ */
 export type StudentSummaryInput = {
-  name: string;
   streakDays: number;
   adherencePct: number;
   workouts7d: number;
@@ -48,6 +51,8 @@ export type StudentSummaryResult = {
 
 export async function generateStudentSummary(
   personalId: number,
+  /** Titular dos dados: só controla o consentimento e a auditoria — NÃO entra no prompt. */
+  studentId: number,
   input: StudentSummaryInput
 ): Promise<StudentSummaryResult> {
   const assignedContext = input.assignedWeeks > 0
@@ -64,7 +69,7 @@ export async function generateStudentSummary(
     ? 'Último sono: positivo.'
     : 'Último sono: negativo (dormiu mal).';
 
-  const userInput = `Aluno: ${input.name}.
+  const userInput = `Dados do aluno acompanhado.
 ${assignedContext}
 Sequência atual: ${input.streakDays} dias.
 Aderência mensal: ${input.adherencePct}%.
@@ -76,6 +81,9 @@ Estado de engajamento: ${input.engagementStatus}. Score de risco: ${input.riskSc
 Gere um resumo breve e contextual sobre a evolução deste aluno.`;
 
   const result = await aiCall({
+    subjectUserId: studentId,
+    actorUserId: personalId,
+    purpose: 'student_summary',
     userId: String(personalId),
     instructions: STUDENT_SUMMARY_SYSTEM_PROMPT,
     input: userInput,

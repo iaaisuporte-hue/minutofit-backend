@@ -24,6 +24,7 @@ import { calculateNutrition, sumNutrients, type NutrientsPer100g } from './nutri
 import { getCatalogFoodById, listCatalogFoodMeasures, getFoodIndex, getVolumeCapableIndex, type FoodSummary, type FoodMeasure } from './nutritionFoodService';
 import { matchFood, topCandidates, FUZZY_MEDIUM_CONFIDENCE, normalizeFoodText, BEVERAGE_CATEGORY, FUZZY_MINIMUM_SCORE, type CandidateScore, type MatchConfidence, type UnitHint } from './nutritionFoodMatcher';
 import { interpretIntakeTextWithAi, type IntakeInterpreterDeps } from './ai/intakeInterpreterAi';
+import { hasValidAiConsent } from './aiConsentService';
 import { getFeatureMapForUser } from './planFeatureService';
 import { toCanonicalFood, derivePreparationFromSourceName, type CanonicalFood } from './canonicalFood';
 
@@ -571,6 +572,12 @@ export interface ParsedPreview {
   needsConfirmation: boolean;
   /** `true` quando a IA (não o parser determinístico) produziu os tokens usados — o chamador decide o `source` do log a partir disto. */
   aiUsed: boolean;
+  /**
+   * `true` quando a IA estava disponível para este usuário e o parser não resolveu todos os
+   * itens, mas ele ainda não autorizou o tratamento por IA de terceiros (Spec 039). A tela
+   * oferece a autorização UMA vez; o resultado determinístico segue valendo.
+   */
+  aiConsentRequired?: boolean;
 }
 
 async function resolveAll(tokens: ParsedIntakeToken[], userId?: number): Promise<IntakePreviewItem[]> {
@@ -595,10 +602,15 @@ export async function parseAndResolve(text: string, userId?: number, aiDeps?: In
 
   let finalItems = items;
   let aiUsed = false;
+  let aiConsentRequired = false;
 
   if (hasUnresolved && userId != null) {
     const aiEnabled = await isNutritionIntakeAiEnabled(userId);
-    if (aiEnabled) {
+    // O texto da refeição é dado de saúde do titular: só vai ao provedor com a autorização
+    // dele. Falha ao ler o consentimento conta como sem consentimento (fail-closed).
+    const consent = aiEnabled ? await hasValidAiConsent(userId) : false;
+    aiConsentRequired = aiEnabled && !consent;
+    if (aiEnabled && consent) {
       const aiTokens = await interpretIntakeTextWithAi(text, userId, aiDeps);
       if (aiTokens && aiTokens.length > 0) {
         const aiItems = await resolveAll(aiTokens, userId);
@@ -623,6 +635,7 @@ export async function parseAndResolve(text: string, userId?: number, aiDeps?: In
     totals: sumNutrients(resolvedCalcs),
     needsConfirmation: finalItems.some((i) => !i.resolved || (i.confidence !== 'high' && !i.confirmed)),
     aiUsed,
+    ...(aiConsentRequired ? { aiConsentRequired } : {}),
   };
 }
 

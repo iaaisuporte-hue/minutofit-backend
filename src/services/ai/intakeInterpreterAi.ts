@@ -18,6 +18,7 @@
  * resultado determinístico — nunca há dependência dura desta camada.
  */
 import { aiCall, TOKEN_BUDGET } from '../../lib/ai/openai';
+import { AiConsentRequiredError } from '../aiConsentService';
 import logger from '../../lib/logger';
 import { INTAKE_INTERPRETER_SYSTEM_PROMPT } from './prompts';
 import type { ParsedIntakeToken, ParsedUnitDimension } from '../nutritionIntakeParser';
@@ -128,6 +129,8 @@ export async function interpretIntakeTextWithAi(
       ? await deps.callModel(text)
       : (
           await aiCall({
+            subjectUserId: userId,
+            purpose: 'nutrition_intake',
             userId: String(userId),
             instructions: INTAKE_INTERPRETER_SYSTEM_PROMPT,
             input: text,
@@ -146,6 +149,9 @@ export async function interpretIntakeTextWithAi(
     logger.info({ userId, latencyMs: Date.now() - started, items: tokens.length }, '[nutrition-intake] ai_interpreter_success');
     return tokens;
   } catch (err) {
+    // Sem consentimento o gate central barra a chamada — não é falha do modelo e não deve
+    // poluir a métrica de falha. O determinístico segue sendo o resultado.
+    if (err instanceof AiConsentRequiredError) return null;
     logger.warn({ err, userId, latencyMs: Date.now() - started }, '[nutrition-intake] ai_interpreter_failure');
     return null;
   }

@@ -197,6 +197,11 @@ export type DataAccessEventType =
   // pessoas precisa de um caminho de report. Sem tabela nova — a trilha de
   // auditoria já é o registro.
   | 'chat.conversation_reported'
+  // Spec 039 — consentimento de IA de terceiros. `ai.processing` registra que dado do
+  // titular SAIU para o provedor (finalidade e ator, nunca o conteúdo do prompt).
+  | 'ai.consent.granted'
+  | 'ai.consent.revoked'
+  | 'ai.processing'
   // Voice Workout (P5A). Só metadados de uso do loop (ativou/ouviu/reconheceu/
   // executou) — nunca transcript, carga, reps, nome de exercício ou observação
   // (pacto de dados, ver `voiceEvents.ts` no frontend).

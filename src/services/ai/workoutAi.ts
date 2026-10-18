@@ -153,6 +153,9 @@ export async function generateWorkout(
       : '';
 
   const { text } = await aiCall({
+    // O prompt é texto do próprio personal + catálogo público de exercícios: o titular é ele.
+    subjectUserId: Number(userId),
+    purpose: 'workout_generation',
     userId,
     instructions: WORKOUT_SYSTEM_PROMPT,
     input: `${catalogSection}Pedido: ${prompt}`,

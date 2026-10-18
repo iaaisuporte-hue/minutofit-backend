@@ -14,6 +14,7 @@
 import OpenAI from 'openai';
 import { getRedisClient } from '../redisClient';
 import logger from '../logger';
+import { assertAiConsent, auditAiProcessing, type AiPurpose } from '../../services/aiConsentService';
 
 // ---------------------------------------------------------------------------
 // Cliente singleton
@@ -127,6 +128,17 @@ export async function checkUserRateLimit(userId: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export interface AiCallOptions {
+  /**
+   * TITULAR dos dados que vão no prompt (Spec 039). Obrigatório e checado aqui, na camada
+   * central: sem consentimento válido dele, `aiCall` lança `AiConsentRequiredError` ANTES de
+   * rate limit e de qualquer rede. Quando o prompt só carrega texto do próprio usuário que
+   * dispara (ex.: personal descrevendo uma ficha), o titular é ele mesmo.
+   */
+  subjectUserId: number;
+  /** Finalidade declarada — vai para a trilha de auditoria (nunca o conteúdo do prompt). */
+  purpose: AiPurpose;
+  /** Quem dispara a chamada, quando difere do titular (profissional agindo sobre um aluno). */
+  actorUserId?: number;
   /** Identificador do usuário para rate limit. Omitir para chamadas de sistema. */
   userId?: string;
   /** Modelo. Padrão: AI_MODEL. */
@@ -161,9 +173,13 @@ const RETRY_DELAY_MS = 1500;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 
 export async function aiCall(opts: AiCallOptions): Promise<AiCallResult> {
+  // Defesa central (Spec 039): vale para TODO fluxo, mesmo que uma rota esqueça o gate
+  // contextual. Falha ao ler o consentimento = sem consentimento = nada sai.
+  await assertAiConsent(opts.subjectUserId, opts.actorUserId);
   if (opts.userId) {
     await checkUserRateLimit(opts.userId);
   }
+  auditAiProcessing(opts.subjectUserId, opts.actorUserId, opts.purpose);
   return _executeWithRetry(opts);
 }
 

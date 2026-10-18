@@ -57,9 +57,16 @@ export interface MetabolicOutput {
   /**
    * Narrativa contextual gerada por IA — frase curta interpretando o estado
    * atual ("o que isso significa pra você hoje") + ação concreta sugerida.
-   * Cache 4h por usuário. `null` quando OPENAI indisponível ou rate-limited.
+   * Cache 4h por usuário. `null` quando OPENAI indisponível, rate-limited ou SEM o
+   * consentimento do titular (Spec 039).
    */
   interpretation?: { hint: string; action: string } | null;
+  /**
+   * `true` quando a IA está configurada mas o titular ainda não autorizou o tratamento
+   * por IA de terceiros. A tela do próprio usuário oferece a autorização; a do
+   * profissional diz que o aluno não autorizou. Ausente quando não se aplica.
+   */
+  aiConsentRequired?: boolean;
 }
 
 export interface MetabolicHistoryPoint {

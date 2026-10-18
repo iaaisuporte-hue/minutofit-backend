@@ -18,10 +18,13 @@ export type MetabolicHint = {
  */
 export async function getMetabolicHint(
   context: string,
-  userId: string,
+  /** Titular do score descrito em `context` — quem precisa ter autorizado a IA. */
+  subjectUserId: number,
 ): Promise<MetabolicHint> {
   const { text } = await aiCall({
-    userId,
+    subjectUserId,
+    purpose: 'metabolic_interpretation',
+    userId: String(subjectUserId),
     instructions: METABOLIC_HINT_SYSTEM_PROMPT,
     input: context,
     maxOutputTokens: TOKEN_BUDGET.SUGGEST_SHORT,

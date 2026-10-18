@@ -63,7 +63,7 @@ import {
   type ProtocolScope,
 } from '../services/workoutProtocolService';
 import { generateWorkout } from '../services/ai/workoutAi';
-import { getMetabolicHint } from '../services/ai/metabolicHint';
+import { AiConsentRequiredError, hasValidAiConsent } from '../services/aiConsentService';
 import pool from '../config/database';
 import { logDataAccessEvent } from '../services/dataAccessAuditService';
 import { createRateLimiter } from '../lib/rateLimiter';
@@ -85,7 +85,7 @@ import {
   PersonalPerformanceError,
   getStudentPerformanceSnapshot,
 } from '../modules/performance/personalPerformance.service';
-import { generatePerformanceInsight } from '../services/ai/performanceInsightAi';
+import { buildDeterministicSummary, generatePerformanceInsight } from '../services/ai/performanceInsightAi';
 import {
   createSession,
   listSessions,
@@ -362,6 +362,16 @@ router.get(
   }
 );
 
+/**
+ * 403 padronizado quando a IA seria usada sem o consentimento do titular (Spec 039).
+ * `subject` diz de quem falta a autorização: do próprio personal ou do aluno. A mensagem é
+ * legível porque o Android já publicado exibe `error` cru.
+ */
+function respondAiConsentRequired(res: Response, subject: 'self' | 'student') {
+  const error = new AiConsentRequiredError(0, subject).message;
+  return res.status(403).json({ success: false, code: 'AI_CONSENT_REQUIRED', subject, error });
+}
+
 router.get(
   '/students/:studentId/ai-summary',
   roleCheckMiddleware('personal'),
@@ -382,6 +392,11 @@ router.get(
         return res.status(503).json({ success: false, error: 'Módulo de IA não configurado.' });
       }
 
+      // Titular dos dados é o ALUNO: sem a autorização dele, nada sai (Spec 039).
+      if (!(await hasValidAiConsent(studentId))) {
+        return respondAiConsentRequired(res, 'student');
+      }
+
       const academyId = req.user!.activeAcademyId ?? req.tenantHost?.academyId ?? null;
       const dashboard = await getPersonalDashboard(req.user!.id, academyId);
       const student = dashboard.students.find((s) => s.id === String(studentId));
@@ -400,8 +415,8 @@ router.get(
       const hasMetabolic = scopes.has('metabolic');
       const hasCheckins = scopes.has('daily_checkins') || scopes.has('sleep');
 
-      const data = await generateStudentSummary(req.user!.id, {
-        name: student.name,
+      // Sem `name`: o prompt não leva identificador direto do aluno (Spec 039).
+      const data = await generateStudentSummary(req.user!.id, studentId, {
         streakDays: student.streakDays,
         adherencePct: student.adherencePct,
         workouts7d: student.workouts7d,
@@ -426,6 +441,7 @@ router.get(
 
       res.json({ success: true, data });
     } catch (error: any) {
+      if (error instanceof AiConsentRequiredError) return respondAiConsentRequired(res, error.subject);
       if (error?.message?.includes('Limite de')) {
         return res.status(429).json({ success: false, error: error.message });
       }
@@ -826,6 +842,10 @@ router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req:
   if (!process.env.OPENAI_API_KEY) {
     return res.status(503).json({ success: false, error: 'Geração com IA não configurada neste ambiente.' });
   }
+  // O pedido é texto do próprio personal: o titular é ele (Spec 039).
+  if (!(await hasValidAiConsent(req.user!.id))) {
+    return respondAiConsentRequired(res, 'self');
+  }
   const prompt = typeof req.body.prompt === 'string' ? req.body.prompt.trim() : '';
   if (!prompt || prompt.length < 5) {
     return res.status(400).json({ success: false, error: 'Prompt muito curto. Descreva o treino desejado.' });
@@ -837,6 +857,7 @@ router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req:
     const workout = await generateWorkout(prompt, catalogNames as string[], String(req.user!.id));
     res.json({ success: true, data: workout });
   } catch (error: any) {
+    if (error instanceof AiConsentRequiredError) return respondAiConsentRequired(res, error.subject);
     const msg = String(error?.message ?? '');
     const status = msg.includes('Limite de')
       ? 429
@@ -844,27 +865,6 @@ router.post('/ai/generate-workout', roleCheckMiddleware('personal'), async (req:
         ? 504
         : 500;
     res.status(status).json({ success: false, error: msg || 'Falha na geração com IA.' });
-  }
-});
-
-router.post('/ai/metabolic-hint', roleCheckMiddleware('personal'), async (req: Request, res: Response) => {
-  const planConfig = await getPersonalPlan(req.user!.id);
-  if (!planConfig.aiEnabled) {
-    return res.status(403).json({ success: false, code: 'AI_NOT_ENABLED', upgradeRequired: 'pro' });
-  }
-  if (!process.env.OPENAI_API_KEY) {
-    return res.status(503).json({ success: false, error: 'IA não configurada neste ambiente.' });
-  }
-  const context = typeof req.body.context === 'string' ? req.body.context.trim() : '';
-  if (!context || context.length < 5) {
-    return res.status(400).json({ success: false, error: 'Contexto muito curto.' });
-  }
-  try {
-    const hint = await getMetabolicHint(context, String(req.user!.id));
-    res.json({ success: true, data: hint });
-  } catch (error: any) {
-    const status = error.message?.includes('Limite de') ? 429 : 500;
-    res.status(status).json({ success: false, error: error.message || 'Falha na dica metabólica.' });
   }
 });
 
@@ -2343,6 +2343,15 @@ router.post(
       }
 
       const snapshot = await getStudentPerformanceSnapshot(req.user!.id, studentId);
+
+      // Titular = aluno (Spec 039). Sem a autorização dele a tela continua completa, com o
+      // texto montado dos próprios números, e a resposta diz que a IA está indisponível por isso.
+      // O gate roda ANTES do cache do insight: revogar vale na hora.
+      if (!(await hasValidAiConsent(studentId))) {
+        const deterministic = buildDeterministicSummary(snapshot.facts, snapshot.signals);
+        return res.json({ success: true, data: deterministic, aiConsentRequired: 'student' });
+      }
+
       const summary = await generatePerformanceInsight(
         req.user!.id,
         studentId,

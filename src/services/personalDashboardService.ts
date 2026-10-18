@@ -1476,7 +1476,9 @@ export async function getPersonalStudentSnapshot(
          LIMIT 1`,
         [personalId, studentId, academyId ?? null]
       ),
-      getMetabolismForUser(studentId, academyId ?? null),
+      // Cockpit do personal não exibe a narrativa de IA: sem `interpret`, abrir a ficha do
+      // aluno não envia o dado dele a provedor externo (Spec 039).
+      getMetabolismForUser(studentId, academyId ?? null, { interpret: false }),
       getMetabolismHistoryForUser(studentId),
       pool.query(
         `SELECT muscle_group, COUNT(*)::int AS count

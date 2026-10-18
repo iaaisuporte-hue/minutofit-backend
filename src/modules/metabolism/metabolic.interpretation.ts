@@ -1,4 +1,5 @@
 import { getMetabolicHint } from '../../services/ai/metabolicHint';
+import { hasValidAiConsent } from '../../services/aiConsentService';
 import logger from '../../lib/logger';
 import type { MetabolicOutput } from './metabolic.types';
 
@@ -30,6 +31,8 @@ function buildContext(output: Omit<MetabolicOutput, 'interpretation'>): string {
  *
  * Nunca lança — degrada silenciosamente para `null` quando:
  *   - OPENAI_API_KEY ausente
+ *   - o titular não autorizou o tratamento por IA de terceiros (Spec 039) — checado ANTES
+ *     do cache, para que a revogação valha na hora e não sirva texto antigo por até 4h
  *   - rate limit (10/usuário/hora em aiCall)
  *   - resposta da IA inválida/incompleta
  *   - erro de rede
@@ -40,23 +43,29 @@ function buildContext(output: Omit<MetabolicOutput, 'interpretation'>): string {
 export async function getMetabolismInterpretation(
   userId: number,
   output: Omit<MetabolicOutput, 'interpretation'>,
-): Promise<{ hint: string; action: string } | null> {
-  if (!process.env.OPENAI_API_KEY) return null;
+): Promise<{ interpretation: { hint: string; action: string } | null; aiConsentRequired: boolean }> {
+  if (!process.env.OPENAI_API_KEY) return { interpretation: null, aiConsentRequired: false };
+
+  // Consentimento primeiro, cache depois. Falha ao ler = sem consentimento.
+  if (!(await hasValidAiConsent(userId))) {
+    cache.delete(userId);
+    return { interpretation: null, aiConsentRequired: true };
+  }
 
   const now = Date.now();
   const cached = cache.get(userId);
   if (cached && cached.expiresAt > now) {
-    return cached.interpretation;
+    return { interpretation: cached.interpretation, aiConsentRequired: false };
   }
 
   try {
     const context = buildContext(output);
-    const hint = await getMetabolicHint(context, String(userId));
+    const hint = await getMetabolicHint(context, userId);
     const interpretation = { hint: hint.hint, action: hint.action };
     cache.set(userId, { interpretation, expiresAt: now + CACHE_TTL_MS });
-    return interpretation;
+    return { interpretation, aiConsentRequired: false };
   } catch (err) {
     logger.debug({ err, userId }, '[metabolism] interpretation unavailable');
-    return null;
+    return { interpretation: null, aiConsentRequired: false };
   }
 }

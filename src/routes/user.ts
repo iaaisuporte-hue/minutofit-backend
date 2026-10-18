@@ -24,6 +24,7 @@ import {
 } from '../services/progressPhotoService';
 import { StorageNotConfiguredError } from '../lib/storage';
 import { deleteUserAccount, exportUserData } from '../services/accountDeletionService';
+import { getAiConsentState, grantAiConsent, revokeAiConsent } from '../services/aiConsentService';
 import bcryptjs from 'bcryptjs';
 import pool from '../config/database';
 import { registerNumericParams } from '../middleware/numericParam';
@@ -956,6 +957,43 @@ router.get('/account/export', authMiddleware, async (req: Request, res: Response
   } catch (err: any) {
     logger.error({ err }, '[user/account/export]');
     return res.status(500).json({ success: false, error: 'Failed to export data' });
+  }
+});
+
+// ── Consentimento de IA de terceiros (Spec 039) ─────────────────────────────
+// Do TITULAR, qualquer papel: o aluno autoriza para os dados dele; o personal, para o texto
+// que ele mesmo manda à IA (geração de ficha). Profissional nenhum consente pelo aluno.
+
+router.get('/ai-consent', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    res.json({ success: true, data: await getAiConsentState(req.user!.id) });
+  } catch (err) {
+    logger.error({ err }, '[user/ai-consent GET]');
+    res.status(500).json({ success: false, error: 'Falha ao consultar o consentimento de IA.' });
+  }
+});
+
+router.post('/ai-consent', authMiddleware, async (req: Request, res: Response) => {
+  // O aceite tem de ser explícito: nada de default, nada de inferir de outro aceite.
+  if (req.body?.accepted !== true) {
+    return res.status(400).json({ success: false, error: 'accepted_required' });
+  }
+  try {
+    res.json({ success: true, data: await grantAiConsent(req.user!.id, req.ip) });
+  } catch (err: any) {
+    if (err?.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: 'user_not_found' });
+    // Falha ao gravar: nada é considerado concedido (fail-closed) e o usuário vê o erro.
+    logger.error({ err }, '[user/ai-consent POST]');
+    res.status(500).json({ success: false, error: 'Não foi possível registrar a autorização. Tente novamente.' });
+  }
+});
+
+router.delete('/ai-consent', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    res.json({ success: true, data: await revokeAiConsent(req.user!.id, req.ip) });
+  } catch (err) {
+    logger.error({ err }, '[user/ai-consent DELETE]');
+    res.status(500).json({ success: false, error: 'Não foi possível revogar agora. Tente novamente.' });
   }
 });
 

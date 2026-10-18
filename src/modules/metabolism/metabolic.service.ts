@@ -72,12 +72,31 @@ async function attachTrends(userId: number, base: Omit<MetabolicOutput, 'trend7d
   return { ...base, trend7d, trend30d };
 }
 
-async function attachInterpretation(userId: number, output: MetabolicOutput): Promise<MetabolicOutput> {
-  const interpretation = await getMetabolismInterpretation(userId, output);
-  return { ...output, interpretation };
+async function attachInterpretation(
+  userId: number,
+  output: MetabolicOutput,
+  interpret: boolean,
+): Promise<MetabolicOutput> {
+  // Visão de profissional que não exibe a narrativa não dispara IA sobre dado do aluno.
+  if (!interpret) return { ...output, interpretation: null };
+  const { interpretation, aiConsentRequired } = await getMetabolismInterpretation(userId, output);
+  return aiConsentRequired ? { ...output, interpretation, aiConsentRequired } : { ...output, interpretation };
 }
 
-export async function getMetabolismForUser(userId: number, academyId: number | null = null): Promise<MetabolicOutput> {
+export interface GetMetabolismOptions {
+  /**
+   * Gera a narrativa por IA (padrão). Telas de profissional que não a exibem passam `false`
+   * para que abrir o cockpit do aluno não envie o dado dele a um provedor externo (Spec 039).
+   */
+  interpret?: boolean;
+}
+
+export async function getMetabolismForUser(
+  userId: number,
+  academyId: number | null = null,
+  options: GetMetabolismOptions = {},
+): Promise<MetabolicOutput> {
+  const interpret = options.interpret !== false;
   const [cached, trends] = await Promise.all([loadTodaySnapshot(userId), loadScoreTrendBlocks(userId, academyId)]);
 
   if (cached) {
@@ -92,7 +111,7 @@ export async function getMetabolismForUser(userId: number, academyId: number | n
         trend7d: trends.trend7d,
         trend30d: trends.trend30d,
       };
-      return attachInterpretation(userId, fromCache);
+      return attachInterpretation(userId, fromCache, interpret);
     }
   }
 
@@ -122,7 +141,7 @@ export async function getMetabolismForUser(userId: number, academyId: number | n
   }
 
   const withTrends = await attachTrends(userId, { ...result, recommendations }, academyId);
-  return attachInterpretation(userId, withTrends);
+  return attachInterpretation(userId, withTrends, interpret);
 }
 
 export async function getMetabolismHistoryForUser(userId: number, days = 14): Promise<MetabolicHistory> {

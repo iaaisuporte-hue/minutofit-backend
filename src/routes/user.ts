@@ -1030,15 +1030,26 @@ router.delete('/account', authMiddleware, async (req: Request, res: Response) =>
       return res.json({ success: true, status: 'completed' });
     }
     // Há cobrança recorrente do titular que o gateway ainda não confirmou cancelada (Spec 040).
-    // A conta é MANTIDA: nada é apagado enquanto a cobrança estiver viva. 202 = aceito, não concluído.
-    return res.status(202).json({
-      success: true,
+    // A conta é MANTIDA: nada é apagado enquanto a cobrança estiver viva.
+    const message =
+      result.status === 'stalled'
+        ? 'Não conseguimos confirmar o cancelamento da sua cobrança recorrente. Nossa equipe foi acionada e vai concluir a exclusão manualmente.'
+        : 'Estamos encerrando a sua cobrança recorrente. Assim que o cancelamento for confirmado, sua conta será excluída automaticamente (em até 24 horas).';
+
+    // Os apps já publicados tratam QUALQUER 2xx como "conta excluída": encerram a sessão e mostram sucesso
+    // — o titular acreditaria que saiu quando a conta continua. Só o cliente que declara entender o estado
+    // pendente (`acceptsPending`) recebe 202; os demais recebem 409 com a explicação, que no pior caso
+    // aparece como "não foi possível excluir" e mantém a sessão.
+    if (req.body?.acceptsPending === true) {
+      return res.status(202).json({ success: true, status: result.status, subscriptionsPending: result.subscriptionsPending, message });
+    }
+    return res.status(409).json({
+      success: false,
+      error: 'deletion_pending',
+      code: 'deletion_pending',
       status: result.status,
       subscriptionsPending: result.subscriptionsPending,
-      message:
-        result.status === 'stalled'
-          ? 'Não conseguimos confirmar o cancelamento da sua cobrança recorrente. Nossa equipe foi acionada e vai concluir a exclusão manualmente.'
-          : 'Estamos encerrando a sua cobrança recorrente. Assim que o cancelamento for confirmado, sua conta será excluída automaticamente (em até 24 horas).',
+      message,
     });
   } catch (err: any) {
     if (err instanceof AccountDeletionBlockedError) {

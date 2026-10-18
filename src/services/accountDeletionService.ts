@@ -100,6 +100,19 @@ async function finalizeDeletion(
       throw err;
     }
 
+    // Trava as academias em que o titular é responsável ANTES de reavaliar a regra do sucessor: sem
+    // isto, dois donos que se excluem ao mesmo tempo veem um ao outro como sucessor e a academia
+    // fica órfã. Em ordem de id para não gerar deadlock entre as duas transações.
+    await client.query(
+      `SELECT a.id FROM academies a
+        WHERE a.status <> 'cancelled'
+          AND ( a.owner_user_id = $1
+                OR EXISTS (SELECT 1 FROM academy_users au JOIN academy_roles ar ON ar.id = au.role_id
+                            WHERE au.academy_id = a.id AND au.user_id = $1
+                              AND au.status = 'active' AND ar.slug = 'academy_owner') )
+        ORDER BY a.id FOR UPDATE OF a`,
+      [userId],
+    );
     await assertDeletionAllowed(userId, client);
 
     const recorrencias = await listOwnedRecurrences(userId, client);
@@ -262,6 +275,19 @@ async function advanceDeletion(
   known: DeletionRequest | null,
 ): Promise<DeleteResult> {
   let request = known ?? (await findOpenRequest(userId));
+
+  // Pedido do usuário repetido (duplo clique, "tentar de novo") ANTES da próxima janela de retentativa:
+  // devolve o estado sem chamar o gateway nem gastar tentativa — senão cinco cliques esgotariam em
+  // minutos o prazo que é de 24h. O cron (`known`) e o admin passam direto.
+  if (!known && request?.status === 'pending_cancellation' && request.nextRetryAt && new Date(request.nextRetryAt).getTime() > Date.now()) {
+    return {
+      status: 'pending_cancellation',
+      storageObjectsDeleted: 0,
+      subscriptionsCancelled: await countCancelled(request.id),
+      subscriptionsPending: await pendingCount(request.id),
+      requestId: request.id,
+    };
+  }
 
   for (let round = 0; round < 3; round += 1) {
     await assertDeletionAllowed(userId);

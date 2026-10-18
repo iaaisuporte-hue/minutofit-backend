@@ -20,6 +20,7 @@
  */
 import type { PoolClient } from 'pg';
 import pool from '../config/database';
+import logger from '../lib/logger';
 import {
   cancelRecurringAtGateway,
   GatewayCancelError,
@@ -218,6 +219,7 @@ export interface DeletionRequest {
   status: RequestStatus;
   attempts: number;
   deadlineAt: Date;
+  nextRetryAt: Date | null;
 }
 
 const mapRequest = (r: Record<string, any>): DeletionRequest => ({
@@ -229,6 +231,7 @@ const mapRequest = (r: Record<string, any>): DeletionRequest => ({
   status: r.status,
   attempts: r.attempts,
   deadlineAt: r.deadline_at,
+  nextRetryAt: r.next_retry_at ?? null,
 });
 
 /** Abre o pedido do usuário — ou devolve o que já está aberto (no máximo um por usuário). */
@@ -297,6 +300,11 @@ export async function attemptPendingCancellations(
     rows.map(async (row) => {
       try {
         const outcome = await gateway(row.mp_preapproval_id);
+        // 404 libera a exclusão, mas também é o que um token de OUTRA conta/ambiente devolveria para
+        // uma recorrência viva. Não dá para distinguir daqui: fica o alerta para quem opera conferir.
+        if (outcome === 'not_found') {
+          logger.warn({ requestId, cancellationId: row.id }, '[account-deletion] recorrência não encontrada no gateway — tratada como inexistente; conferir se o token/ambiente é o mesmo que a criou');
+        }
         await pool.query(
           `UPDATE account_deletion_cancellations
               SET status = $2, attempts = attempts + 1, last_error = NULL, resolved_at = NOW()
@@ -346,13 +354,15 @@ export async function recordFailedRound(
   lastError: string | null,
   now: Date = new Date(),
 ): Promise<{ status: RequestStatus; attempts: number; becameStalled: boolean }> {
+  // `attempts + 1` no SQL (e não o valor lido antes): o cron e a requisição do usuário podem fechar
+  // rodadas ao mesmo tempo, e ler-modificar-escrever perderia uma delas.
   const attempts = request.attempts + 1;
 
   if (request.status === 'stalled') {
     // Já em reconciliação manual: só registra a tentativa extra, sem reagendar.
     await pool.query(
-      `UPDATE account_deletion_requests SET attempts = $2, last_error = $3, updated_at = NOW() WHERE id = $1`,
-      [request.id, attempts, lastError],
+      `UPDATE account_deletion_requests SET attempts = attempts + 1, last_error = $2, updated_at = NOW() WHERE id = $1`,
+      [request.id, lastError],
     );
     return { status: 'stalled', attempts, becameStalled: false };
   }
@@ -361,20 +371,20 @@ export async function recordFailedRound(
   if (exhausted) {
     await pool.query(
       `UPDATE account_deletion_requests
-          SET status = 'stalled', attempts = $2, last_error = $3,
+          SET status = 'stalled', attempts = attempts + 1, last_error = $2,
               stalled_at = NOW(), next_retry_at = NULL, updated_at = NOW()
         WHERE id = $1`,
-      [request.id, attempts, lastError],
+      [request.id, lastError],
     );
     return { status: 'stalled', attempts, becameStalled: true };
   }
 
   await pool.query(
     `UPDATE account_deletion_requests
-        SET attempts = $2, last_error = $3,
-            next_retry_at = NOW() + ($4::bigint * INTERVAL '1 millisecond'), updated_at = NOW()
+        SET attempts = attempts + 1, last_error = $2,
+            next_retry_at = NOW() + ($3::bigint * INTERVAL '1 millisecond'), updated_at = NOW()
       WHERE id = $1`,
-    [request.id, attempts, lastError, backoffMs(attempts)],
+    [request.id, lastError, backoffMs(attempts)],
   );
   return { status: 'pending_cancellation', attempts, becameStalled: false };
 }

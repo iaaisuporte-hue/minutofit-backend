@@ -192,10 +192,13 @@ describeWithDb('Spec 040 · encerramento de conta × cobrança recorrente', () =
     );
   }
 
-  const excluirPelaApi = (id: number, role = 'user', produto = 'app') =>
+  const excluirPelaApi = (id: number, role = 'user', produto = 'app', corpo: object = {}) =>
     import('supertest').then(({ default: request }) =>
-      request(app).delete('/api/user/account').set('Authorization', `Bearer ${bearer(id, role, produto)}`).send({ confirmation: 'EXCLUIR' }),
+      request(app).delete('/api/user/account').set('Authorization', `Bearer ${bearer(id, role, produto)}`).send({ confirmation: 'EXCLUIR', ...corpo }),
     );
+  /** Faz chegar a próxima janela de retentativa (o pedido repetido antes disso não gasta tentativa). */
+  const vencerJanela = (requestId: number) =>
+    c.query(`UPDATE account_deletion_requests SET next_retry_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [requestId]);
 
   // ── Caminho comum e ordem ──────────────────────────────────────────────────
 
@@ -332,6 +335,20 @@ describeWithDb('Spec 040 · encerramento de conta × cobrança recorrente', () =
     expect((await c.query(`SELECT COUNT(*)::int AS n FROM account_deletion_requests WHERE user_id = $1`, [id])).rows[0].n).toBe(1);
   });
 
+  it('clique repetido ANTES da próxima janela não chama o gateway nem gasta tentativa (cinco cliques não esgotam as 24h)', async () => {
+    const id = await usuario('cliques');
+    await assinaturaDoApp(id, novoRef());
+    gateway.falha = 'server';
+    const a = await svc.deleteUserAccount(id, { requestedBy: 'self' });
+    const chamadasAntes = gateway.gets.length;
+
+    for (let i = 0; i < 6; i += 1) await svc.deleteUserAccount(id, { requestedBy: 'self' });
+
+    expect(gateway.gets.length).toBe(chamadasAntes);
+    const req = await c.query(`SELECT status, attempts FROM account_deletion_requests WHERE id = $1`, [a.requestId]);
+    expect(req.rows[0]).toMatchObject({ status: 'pending_cancellation', attempts: 1 });
+  });
+
   it('12. falha permanente → esgota as tentativas, vira "stalled" com evidência, MANTÉM a conta e é reconciliável pelo admin', async () => {
     const id = await usuario('permanente');
     const ref = novoRef();
@@ -339,7 +356,10 @@ describeWithDb('Spec 040 · encerramento de conta × cobrança recorrente', () =
     gateway.falha = 'auth';
 
     let ultimo = await svc.deleteUserAccount(id, { requestedBy: 'self' });
-    for (let i = 1; i < billing.MAX_ATTEMPTS; i += 1) ultimo = await svc.deleteUserAccount(id, { requestedBy: 'self' });
+    for (let i = 1; i < billing.MAX_ATTEMPTS; i += 1) {
+      await vencerJanela(ultimo.requestId!);
+      ultimo = await svc.deleteUserAccount(id, { requestedBy: 'self' });
+    }
 
     expect(ultimo.status).toBe('stalled');
     expect(await existe(id)).toBe(true);
@@ -368,6 +388,7 @@ describeWithDb('Spec 040 · encerramento de conta × cobrança recorrente', () =
     gateway.falha = 'server';
     const a = await svc.deleteUserAccount(id, { requestedBy: 'self' });
     await c.query(`UPDATE account_deletion_requests SET deadline_at = NOW() - INTERVAL '1 hour' WHERE id = $1`, [a.requestId]);
+    await vencerJanela(a.requestId!);
     const b = await svc.deleteUserAccount(id, { requestedBy: 'self' });
     expect(b.status).toBe('stalled');
     expect(await existe(id)).toBe(true);
@@ -377,6 +398,34 @@ describeWithDb('Spec 040 · encerramento de conta × cobrança recorrente', () =
     expect(billing.backoffMs(1)).toBe(15 * 60_000);
     expect(billing.backoffMs(2)).toBe(30 * 60_000);
     expect(billing.backoffMs(10)).toBe(6 * 60 * 60_000);
+  });
+
+  describe('cliente antigo × novo diante de um encerramento pendente', () => {
+    it('SEM `acceptsPending` (apps já publicados tratam todo 2xx como "excluída") → 409 deletion_pending, nunca 2xx', async () => {
+      const id = await usuario('legado');
+      await assinaturaDoApp(id, novoRef());
+      gateway.falha = 'server';
+      const r = await excluirPelaApi(id);
+      expect(r.status).toBe(409);
+      expect(r.body).toMatchObject({ success: false, code: 'deletion_pending', status: 'pending_cancellation' });
+      expect(String(r.body.message)).toMatch(/24 horas/);
+      expect(await existe(id)).toBe(true);
+    });
+
+    it('COM `acceptsPending: true` → 202 com a mensagem e o estado', async () => {
+      const id = await usuario('novo-cliente');
+      await assinaturaDoApp(id, novoRef());
+      gateway.falha = 'server';
+      const r = await excluirPelaApi(id, 'user', 'app', { acceptsPending: true });
+      expect(r.status).toBe(202);
+      expect(r.body).toMatchObject({ success: true, status: 'pending_cancellation', subscriptionsPending: 1 });
+      expect(await existe(id)).toBe(true);
+    });
+
+    it('conta concluída é 200 para os dois', async () => {
+      const id = await usuario('concluida-http');
+      expect((await excluirPelaApi(id, 'user', 'app', { acceptsPending: true })).status).toBe(200);
+    });
   });
 
   // ── Dono de academia ───────────────────────────────────────────────────────
@@ -442,6 +491,19 @@ describeWithDb('Spec 040 · encerramento de conta × cobrança recorrente', () =
       expect(await existe(dono)).toBe(true);
       expect(gateway.puts).toEqual([]);
       expect(gateway.status.get(ref)).toBe('authorized'); // o Pro da academia continua vivo
+    });
+
+    it('dois donos que se excluem um depois do outro: o 1º sai, o 2º (agora único) é barrado — a academia nunca fica órfã', async () => {
+      const a = await usuario('co-dono-a');
+      const b = await usuario('co-dono-b');
+      const ac = await academia('dois-donos', a);
+      await membro(ac.id, b, 'academy_owner');
+
+      expect((await excluirPelaApi(a)).status).toBe(200);
+      const r = await excluirPelaApi(b);
+      expect(r.status).toBe(409);
+      expect(r.body.code).toBe('academy_owner_transfer_required');
+      expect(await existe(b)).toBe(true);
     });
 
     it('10. staff que NÃO é proprietário exclui normalmente, e a academia não é afetada', async () => {

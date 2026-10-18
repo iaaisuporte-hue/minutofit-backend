@@ -24,6 +24,7 @@ import {
 } from '../services/progressPhotoService';
 import { StorageNotConfiguredError } from '../lib/storage';
 import { deleteUserAccount, exportUserData } from '../services/accountDeletionService';
+import { AccountDeletionBlockedError } from '../services/accountDeletionBilling';
 import { getAiConsentState, grantAiConsent, revokeAiConsent } from '../services/aiConsentService';
 import bcryptjs from 'bcryptjs';
 import pool from '../config/database';
@@ -1023,9 +1024,27 @@ router.delete('/account', authMiddleware, async (req: Request, res: Response) =>
       }
     }
 
-    await deleteUserAccount(userId, { requestedBy: 'self', reason: 'self_service' });
-    return res.json({ success: true });
+    const result = await deleteUserAccount(userId, { requestedBy: 'self', reason: 'self_service' });
+
+    if (result.status === 'completed') {
+      return res.json({ success: true, status: 'completed' });
+    }
+    // Há cobrança recorrente do titular que o gateway ainda não confirmou cancelada (Spec 040).
+    // A conta é MANTIDA: nada é apagado enquanto a cobrança estiver viva. 202 = aceito, não concluído.
+    return res.status(202).json({
+      success: true,
+      status: result.status,
+      subscriptionsPending: result.subscriptionsPending,
+      message:
+        result.status === 'stalled'
+          ? 'Não conseguimos confirmar o cancelamento da sua cobrança recorrente. Nossa equipe foi acionada e vai concluir a exclusão manualmente.'
+          : 'Estamos encerrando a sua cobrança recorrente. Assim que o cancelamento for confirmado, sua conta será excluída automaticamente (em até 24 horas).',
+    });
   } catch (err: any) {
+    if (err instanceof AccountDeletionBlockedError) {
+      // `error` é o código de máquina (mesmo padrão de 'invalid_password'); `message` é para a tela.
+      return res.status(409).json({ success: false, error: err.code, code: err.code, message: err.message, ...err.details });
+    }
     if (err?.code === 'NOT_FOUND') return res.status(404).json({ success: false, error: 'user_not_found' });
     logger.error({ err }, '[user/account DELETE]');
     return res.status(500).json({ success: false, error: 'Failed to delete account' });

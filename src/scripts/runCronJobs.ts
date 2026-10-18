@@ -42,6 +42,7 @@ import { expireOverdueGraces } from '../services/membershipService';
 import { expireOverdueAcademySubs } from '../services/academySubscriptionService';
 import { expireStaleRequests } from '../services/connectionRequestService';
 import { sweepStorageOrphans } from '../services/storageOrphanService';
+import { processPendingAccountDeletions } from '../services/accountDeletionService';
 import { runDataRetention } from '../jobs/dataRetention';
 
 if (process.env.SENTRY_DSN) {
@@ -71,6 +72,9 @@ const TASKS: Record<Schedule, Task[]> = {
   ],
   'six-hourly': [
     { name: 'storageOrphanSweep', lockKey: 8106, run: sweepStorageOrphans },
+    // Spec 040: reencerra as exclusões de conta que esperam o Mercado Pago confirmar o
+    // cancelamento da cobrança recorrente do titular (janela de 24h, ~5 tentativas).
+    { name: 'accountDeletionRetry', lockKey: 8107, run: () => processPendingAccountDeletions() },
   ],
 };
 

@@ -15,8 +15,9 @@ import { findOrCreateUserFromContext } from '../services/userIdentityService';
 import { cancelMembership, expireOverdueGraces, grantMembership } from '../services/membershipService';
 import { logAcademyAction } from '../services/auditService';
 import logger from '../lib/logger';
-import { getStorage, isStorageConfigured } from '../lib/storage';
-import { recordStorageOrphan, getStorageOrphanSummary } from '../services/storageOrphanService';
+import { getStorageOrphanSummary } from '../services/storageOrphanService';
+import { deleteUserAccount, listDeletionRequests, retryDeletionRequest } from '../services/accountDeletionService';
+import { AccountDeletionBlockedError } from '../services/accountDeletionBilling';
 import {
   createPlatformProtocol,
   deletePlatformProtocol,
@@ -1641,31 +1642,13 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, requireAdminPermiss
       return res.status(403).json({ success: false, error: 'Não é possível excluir outro admin.' });
     }
 
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
+    // Mesmo núcleo da exclusão self-service (Spec 040): anonimização financeira, limpeza do que o
+    // CASCADE não cobre (protocolos/desafios do personal), tombstone, purga de storage — e agora
+    // o cancelamento das recorrências do titular ANTES de apagar. A cópia que vivia aqui divergia
+    // desse núcleo e não fazia nada disso.
+    const result = await deleteUserAccount(targetId, { requestedBy: 'admin', reason: 'admin_delete' });
 
-      // Tables without CASCADE that reference the user — clean up explicitly.
-      await client.query(`DELETE FROM personal_direct_invites       WHERE accepted_user_id = $1`, [targetId]);
-
-      // Fotos de progresso (dado corporal sensível, LGPD art. 11): o CASCADE em
-      // progress_photos.user_id apaga as LINHAS, mas não os binários no storage.
-      // Enumeramos as storage_key DENTRO da transação; a deleção real dos objetos
-      // acontece SÓ APÓS o COMMIT (deleteObject é chamada de rede ao R2, não
-      // participa da tx — se o DELETE sofrer rollback, o storage não é tocado).
-      const photoRes = await client.query<{ storage_key: string }>(
-        `SELECT storage_key FROM progress_photos WHERE user_id = $1`,
-        [targetId],
-      );
-      const photoKeys = photoRes.rows.map((r) => r.storage_key);
-
-      // Hard delete the user. Physical content tables (personal_workout_plans,
-      // student_exercise_notes, workout_reviews) have ON DELETE SET NULL — they
-      // survive as orphans. Everything else CASCADEs away.
-      await client.query(`DELETE FROM users WHERE id = $1`, [targetId]);
-
-      await client.query('COMMIT');
-
+    if (result.status === 'completed') {
       // Deleção é irreversível (CASCADE) — registrar quem, quando e o alvo.
       logAcademyAction({
         academyId: null,
@@ -1676,43 +1659,66 @@ router.delete('/users/:id', authMiddleware, adminMiddleware, requireAdminPermiss
         meta: { adminId: req.user!.id, targetUserId: targetId, targetRole: target.role, targetEmail: target.email },
         ipAddress: req.ip,
       });
-
-      // Pós-COMMIT: purga best-effort dos objetos de storage do usuário (fotos de
-      // progresso). Só roda DEPOIS do COMMIT — o banco já está consistente; se o
-      // DELETE tivesse sofrido rollback, nenhum binário teria sido tocado. A falha
-      // de deleteObject NÃO derruba a exclusão (o direito de exclusão do aluno não
-      // fica refém do R2), mas é REGISTRADA em storage_orphans (Spec 023) para o job
-      // de varredura reconciliar — nunca fire-and-forget silencioso.
-      if (photoKeys.length > 0) {
-        if (!isStorageConfigured()) {
-          await Promise.all(
-            photoKeys.map((key) => recordStorageOrphan(key, 'storage_not_configured', { userId: targetId })),
-          );
-        } else {
-          const storage = getStorage();
-          await Promise.all(
-            photoKeys.map((key) =>
-              storage
-                .deleteObject(key)
-                .catch((delErr: any) =>
-                  recordStorageOrphan(key, 'admin_user_delete', { userId: targetId }, delErr?.message),
-                ),
-            ),
-          );
-        }
-      }
-
-      return res.json({ success: true, data: { deleted: true, userId: targetId } });
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
+    } else {
+      logger.warn({ adminId: req.user!.id, targetUserId: targetId, status: result.status, requestId: result.requestId }, '[admin] exclusão de usuário aguardando cancelamento da cobrança recorrente');
     }
+
+    if (result.status !== 'completed') {
+      return res.status(202).json({
+        success: true,
+        data: { deleted: false, status: result.status, userId: targetId, requestId: result.requestId, subscriptionsPending: result.subscriptionsPending },
+      });
+    }
+    return res.json({ success: true, data: { deleted: true, userId: targetId } });
   } catch (err: any) {
+    if (err instanceof AccountDeletionBlockedError) {
+      return res.status(409).json({ success: false, error: err.code, code: err.code, message: err.message, ...err.details });
+    }
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Reconciliação de encerramentos de conta (Spec 040): pedidos que aguardam o gateway ou que
+// esgotaram as tentativas. Só ids e estados — sem PII. Mesma permissão do delete de usuário.
+router.get(
+  '/account-deletions',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.users.delete'),
+  async (req: Request, res: Response) => {
+    try {
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      if (status && !['pending_cancellation', 'stalled', 'completed'].includes(status)) {
+        return res.status(400).json({ success: false, error: 'invalid_status' });
+      }
+      return res.json({ success: true, data: await listDeletionRequests(status) });
+    } catch (err: any) {
+      logger.error({ err: err?.message }, '[admin/account-deletions]');
+      return res.status(500).json({ success: false, error: 'Falha ao listar os pedidos de exclusão.' });
+    }
+  },
+);
+
+router.post(
+  '/account-deletions/:id/retry',
+  authMiddleware,
+  adminMiddleware,
+  requireAdminPermission('admin.users.delete'),
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return res.status(400).json({ success: false, error: 'Invalid id' });
+    try {
+      const r = await retryDeletionRequest(id);
+      if (r === 'not_found') return res.status(404).json({ success: false, error: 'not_found' });
+      if (r === 'gone') return res.json({ success: true, data: { status: 'completed' } });
+      if (r === 'blocked') return res.status(409).json({ success: false, error: 'blocked_by_rule' });
+      return res.json({ success: true, data: { status: r.status, subscriptionsPending: r.subscriptionsPending } });
+    } catch (err: any) {
+      logger.error({ err: err?.message }, '[admin/account-deletions/retry]');
+      return res.status(500).json({ success: false, error: 'Falha ao reprocessar o pedido.' });
+    }
+  },
+);
 
 // Observabilidade (Spec 023): contagem agregada de órfãos de storage a reconciliar.
 // NUNCA lista `storage_key` (evita expor caminhos de dados sensíveis). Mesma

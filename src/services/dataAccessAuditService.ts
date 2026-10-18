@@ -202,6 +202,9 @@ export type DataAccessEventType =
   | 'ai.consent.granted'
   | 'ai.consent.revoked'
   | 'ai.processing'
+  // Spec 040 — pedido de exclusão que esgotou as tentativas de cancelar a cobrança recorrente
+  // do titular. Evidência operacional para a reconciliação manual (sem PII, só ids).
+  | 'account.deletion_stalled'
   // Voice Workout (P5A). Só metadados de uso do loop (ativou/ouviu/reconheceu/
   // executou) — nunca transcript, carga, reps, nome de exercício ou observação
   // (pacto de dados, ver `voiceEvents.ts` no frontend).

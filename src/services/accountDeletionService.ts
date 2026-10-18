@@ -7,8 +7,27 @@ import crypto from 'crypto';
 import type { PoolClient } from 'pg';
 import pool from '../config/database';
 import logger from '../lib/logger';
+import * as Sentry from '@sentry/node';
 import { getStorage, isStorageConfigured } from '../lib/storage';
 import { recordStorageOrphan } from './storageOrphanService';
+import { logDataAccessEvent } from './dataAccessAuditService';
+import {
+  AccountDeletionBlockedError,
+  assertDeletionAllowed,
+  attemptPendingCancellations,
+  countCancelled,
+  enqueueCancellations,
+  findOpenRequest,
+  getRequest,
+  listDueRequests,
+  listOwnedRecurrences,
+  markStalledByBlock,
+  openRequest,
+  recordFailedRound,
+  resolvedPreapprovals,
+  type DeletionRequest,
+  type GatewayCancel,
+} from './accountDeletionBilling';
 
 export type DeletionActor = 'self' | 'admin';
 
@@ -32,34 +51,63 @@ async function anonymizeFinancials(client: PoolClient, userId: number, hash: str
   }
 }
 
+export type DeleteStatus = 'completed' | 'pending_cancellation' | 'stalled';
+
 export interface DeleteResult {
+  /**
+   * `completed`: conta excluída. `pending_cancellation`: há cobrança recorrente do titular que o
+   * gateway ainda não confirmou cancelada — a conta é MANTIDA e o cron retenta por até 24h.
+   * `stalled`: esgotou o prazo; conta mantida, evidência operacional gerada, reconciliação manual.
+   */
+  status: DeleteStatus;
   storageObjectsDeleted: number;
+  /** Recorrências efetivamente canceladas por este encerramento. */
+  subscriptionsCancelled: number;
+  /** Recorrências do titular ainda sem confirmação do gateway. */
+  subscriptionsPending: number;
+  requestId?: number;
 }
 
-/**
- * Exclui a conta do usuário: anonimiza financeiro, enumera as fotos, apaga o
- * usuário (CASCADE no resto), grava o tombstone, e SÓ APÓS o COMMIT remove os
- * objetos no storage (rede ao R2 fora da transação — rollback ⇒ storage intocado).
- */
-export async function deleteUserAccount(
-  userId: number,
-  opts: { requestedBy: DeletionActor; reason?: string },
-): Promise<DeleteResult> {
-  const userRes = await pool.query<{ email: string | null }>(
-    `SELECT email FROM users WHERE id = $1 LIMIT 1`,
-    [userId],
-  );
-  if (userRes.rows.length === 0) {
-    const err = new Error('user_not_found');
-    (err as any).code = 'NOT_FOUND';
-    throw err;
-  }
-  const hash = emailHash(userRes.rows[0].email);
+type DeleteOpts = { requestedBy: DeletionActor; reason?: string };
 
+type Finalized = { done: false } | { done: true; photoKeys: string[]; cancelled: number };
+
+/**
+ * Transação que efetivamente exclui: anonimiza financeiro, enumera as fotos, apaga o usuário
+ * (CASCADE no resto) e grava o tombstone.
+ *
+ * Trava a linha do usuário (`FOR UPDATE`) e RELÊ as regras dentro da transação: qualquer
+ * assinatura criada depois da enumeração do orquestrador fica bloqueada pela FK até o COMMIT,
+ * e uma recorrência que apareça sem estar resolvida aborta a exclusão (`done: false`) em vez de
+ * ser apagada pelo CASCADE junto com o id que permitiria cancelá-la.
+ */
+async function finalizeDeletion(
+  userId: number,
+  hash: string,
+  opts: DeleteOpts,
+  requestId: number | null,
+): Promise<Finalized> {
   const client = await pool.connect();
   let photoKeys: string[] = [];
+  let cancelled = 0;
   try {
     await client.query('BEGIN');
+
+    const locked = await client.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [userId]);
+    if (locked.rows.length === 0) {
+      const err = new Error('user_not_found');
+      (err as any).code = 'NOT_FOUND';
+      throw err;
+    }
+
+    await assertDeletionAllowed(userId, client);
+
+    const recorrencias = await listOwnedRecurrences(userId, client);
+    const resolvidas = requestId != null ? await resolvedPreapprovals(requestId, client) : new Set<string>();
+    if (recorrencias.some((r) => !resolvidas.has(r.preapprovalId))) {
+      await client.query('ROLLBACK');
+      return { done: false };
+    }
 
     await anonymizeFinancials(client, userId, hash);
 
@@ -120,13 +168,24 @@ export async function deleteUserAccount(
     );
     photoKeys = photoRes.rows.map((r) => r.storage_key);
 
+    if (requestId != null) cancelled = await countCancelled(requestId, client);
+
     await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
 
     await client.query(
-      `INSERT INTO account_deletions (user_id, email_hash, requested_by, reason, storage_objects_deleted)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [userId, hash, opts.requestedBy, opts.reason ?? null, photoKeys.length],
+      `INSERT INTO account_deletions (user_id, email_hash, requested_by, reason, storage_objects_deleted, subscriptions_cancelled)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [userId, hash, opts.requestedBy, opts.reason ?? null, photoKeys.length, cancelled],
     );
+
+    if (requestId != null) {
+      await client.query(
+        `UPDATE account_deletion_requests
+            SET status = 'completed', completed_at = NOW(), next_retry_at = NULL, updated_at = NOW()
+          WHERE id = $1`,
+        [requestId],
+      );
+    }
 
     await client.query('COMMIT');
   } catch (err) {
@@ -136,29 +195,264 @@ export async function deleteUserAccount(
     client.release();
   }
 
-  // Pós-COMMIT: purga best-effort dos objetos no storage. Falhas viram órfãos
-  // registrados (Spec 023) para o job de varredura reconciliar — nunca silencioso.
-  const orphanReason = opts.requestedBy === 'admin' ? 'admin_user_delete' : 'student_delete';
+  return { done: true, photoKeys, cancelled };
+}
+
+/**
+ * Pós-COMMIT: purga best-effort dos objetos no storage. Falhas viram órfãos registrados
+ * (Spec 023) para o job de varredura reconciliar — nunca silencioso.
+ */
+async function purgeStorage(photoKeys: string[], requestedBy: DeletionActor, userId: number): Promise<number> {
+  const orphanReason = requestedBy === 'admin' ? 'admin_user_delete' : 'student_delete';
   let deleted = 0;
-  if (photoKeys.length > 0) {
-    if (!isStorageConfigured()) {
-      await Promise.all(
-        photoKeys.map((key) => recordStorageOrphan(key, 'storage_not_configured', { userId })),
-      );
-    } else {
-      const storage = getStorage();
-      for (const key of photoKeys) {
-        try {
-          await storage.deleteObject(key);
-          deleted += 1;
-        } catch (delErr: any) {
-          await recordStorageOrphan(key, orphanReason, { userId }, delErr?.message);
-        }
-      }
+  if (photoKeys.length === 0) return 0;
+  if (!isStorageConfigured()) {
+    await Promise.all(photoKeys.map((key) => recordStorageOrphan(key, 'storage_not_configured', { userId })));
+    return 0;
+  }
+  const storage = getStorage();
+  for (const key of photoKeys) {
+    try {
+      await storage.deleteObject(key);
+      deleted += 1;
+    } catch (delErr: any) {
+      await recordStorageOrphan(key, orphanReason, { userId }, delErr?.message);
     }
   }
+  return deleted;
+}
 
-  return { storageObjectsDeleted: deleted };
+/** Evidência operacional de um pedido que esgotou as tentativas: alto e claro, nunca silencioso. */
+async function reportStalled(request: DeletionRequest, lastError: string | null, subscriptionsPending: number): Promise<void> {
+  logger.error(
+    { requestId: request.id, userId: request.userId, attempts: request.attempts + 1, lastError, subscriptionsPending },
+    '[account-deletion] STALLED — recorrência do titular sem confirmação de cancelamento; reconciliação manual necessária',
+  );
+  Sentry.captureMessage('account_deletion_stalled', {
+    level: 'error',
+    tags: { account_deletion_request: String(request.id) },
+    extra: { lastError, subscriptionsPending },
+  });
+  await logDataAccessEvent({
+    actorId: request.userId,
+    subjectUserId: request.userId,
+    eventType: 'account.deletion_stalled',
+    eventPayload: { requestId: request.id, lastError, subscriptionsPending },
+  });
+}
+
+async function pendingCount(requestId: number): Promise<number> {
+  const { rows } = await pool.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM account_deletion_cancellations WHERE request_id = $1 AND status = 'pending'`,
+    [requestId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Faz o pedido avançar o quanto der: confere as regras, cancela no gateway o que é do titular e,
+ * só quando tudo estiver em estado terminal, exclui. Idempotente — a requisição do usuário, o
+ * cron e a reconciliação do admin chamam o mesmo caminho.
+ */
+async function advanceDeletion(
+  userId: number,
+  hash: string,
+  opts: DeleteOpts,
+  gateway: GatewayCancel | undefined,
+  known: DeletionRequest | null,
+): Promise<DeleteResult> {
+  let request = known ?? (await findOpenRequest(userId));
+
+  for (let round = 0; round < 3; round += 1) {
+    await assertDeletionAllowed(userId);
+    const recorrencias = await listOwnedRecurrences(userId);
+
+    // Caminho comum: nada a cancelar e nenhum pedido aberto → exclusão direta, como sempre foi.
+    if (recorrencias.length === 0 && !request) {
+      const f = await finalizeDeletion(userId, hash, opts, null);
+      if (f.done) {
+        return {
+          status: 'completed',
+          storageObjectsDeleted: await purgeStorage(f.photoKeys, opts.requestedBy, userId),
+          subscriptionsCancelled: 0,
+          subscriptionsPending: 0,
+        };
+      }
+      continue; // uma recorrência apareceu entre a leitura e a trava
+    }
+
+    request ??= await openRequest(userId, hash, opts.requestedBy, opts.reason);
+    await enqueueCancellations(request.id, recorrencias);
+    const { pending, lastError } = await attemptPendingCancellations(request.id, gateway);
+
+    if (pending > 0) {
+      const round_ = await recordFailedRound(request, lastError);
+      if (round_.becameStalled) await reportStalled(request, lastError, pending);
+      else logger.warn({ requestId: request.id, pending, attempts: round_.attempts, lastError }, '[account-deletion] cancelamento pendente — será retentado');
+      return {
+        status: round_.status === 'stalled' ? 'stalled' : 'pending_cancellation',
+        storageObjectsDeleted: 0,
+        subscriptionsCancelled: await countCancelled(request.id),
+        subscriptionsPending: pending,
+        requestId: request.id,
+      };
+    }
+
+    const f = await finalizeDeletion(userId, hash, opts, request.id);
+    if (f.done) {
+      return {
+        status: 'completed',
+        storageObjectsDeleted: await purgeStorage(f.photoKeys, opts.requestedBy, userId),
+        subscriptionsCancelled: f.cancelled,
+        subscriptionsPending: 0,
+        requestId: request.id,
+      };
+    }
+    // recorrência nova sem resolução: a próxima rodada a enfileira e cancela
+  }
+
+  return {
+    status: 'pending_cancellation',
+    storageObjectsDeleted: 0,
+    subscriptionsCancelled: request ? await countCancelled(request.id) : 0,
+    subscriptionsPending: request ? await pendingCount(request.id) : 0,
+    requestId: request?.id,
+  };
+}
+
+/**
+ * Exclui a conta do usuário (self-service, admin-delete e cron compartilham este núcleo).
+ *
+ * Antes de apagar qualquer coisa: (1) as travas — dono de academia e contratos de terceiros —,
+ * (2) o cancelamento, no Mercado Pago, das recorrências que são do PRÓPRIO titular. Se o gateway
+ * não confirmar, a conta é mantida e o pedido fica reconciliável (ver `accountDeletionBilling`).
+ * Lança `AccountDeletionBlockedError` (409) quando uma trava impede.
+ */
+export async function deleteUserAccount(
+  userId: number,
+  opts: DeleteOpts,
+  deps: { gateway?: GatewayCancel } = {},
+): Promise<DeleteResult> {
+  const userRes = await pool.query<{ email: string | null }>(
+    `SELECT email FROM users WHERE id = $1 LIMIT 1`,
+    [userId],
+  );
+  if (userRes.rows.length === 0) {
+    const err = new Error('user_not_found');
+    (err as any).code = 'NOT_FOUND';
+    throw err;
+  }
+  return advanceDeletion(userId, emailHash(userRes.rows[0].email), opts, deps.gateway, null);
+}
+
+// ---------------------------------------------------------------------------
+// Retentativa (cron de 6 em 6 horas) e reconciliação manual
+// ---------------------------------------------------------------------------
+
+export interface PendingDeletionsReport {
+  due: number;
+  completed: number;
+  stillPending: number;
+  stalled: number;
+  blocked: number;
+}
+
+async function advanceKnownRequest(request: DeletionRequest, gateway?: GatewayCancel): Promise<DeleteResult | 'blocked' | 'gone'> {
+  const exists = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [request.userId]);
+  if (exists.rows.length === 0) {
+    // O usuário já não existe (excluído por outro caminho): o pedido não tem mais o que fazer.
+    await pool.query(
+      `UPDATE account_deletion_requests SET status = 'completed', completed_at = NOW(), next_retry_at = NULL, updated_at = NOW() WHERE id = $1`,
+      [request.id],
+    );
+    return 'gone';
+  }
+  try {
+    return await advanceDeletion(
+      request.userId,
+      request.emailHash,
+      { requestedBy: request.requestedBy, reason: request.reason ?? undefined },
+      gateway,
+      request,
+    );
+  } catch (err) {
+    if (err instanceof AccountDeletionBlockedError) {
+      // O cenário mudou desde o pedido (virou dono, ganhou contrato…): para de tentar sozinho.
+      await markStalledByBlock(request.id, err.code);
+      logger.error({ requestId: request.id, userId: request.userId, code: err.code }, '[account-deletion] pedido bloqueado por regra — reconciliação manual');
+      return 'blocked';
+    }
+    throw err;
+  }
+}
+
+/** Tarefa do `runCronJobs six-hourly`. Idempotente; uma falha isolada não impede as demais. */
+export async function processPendingAccountDeletions(gateway?: GatewayCancel): Promise<PendingDeletionsReport> {
+  const due = await listDueRequests();
+  const report: PendingDeletionsReport = { due: due.length, completed: 0, stillPending: 0, stalled: 0, blocked: 0 };
+
+  for (const request of due) {
+    try {
+      const r = await advanceKnownRequest(request, gateway);
+      if (r === 'blocked') report.blocked += 1;
+      else if (r === 'gone' || r.status === 'completed') report.completed += 1;
+      else if (r.status === 'stalled') report.stalled += 1;
+      else report.stillPending += 1;
+    } catch (err) {
+      logger.error({ err, requestId: request.id }, '[account-deletion] retentativa falhou');
+      report.stillPending += 1;
+    }
+  }
+  return report;
+}
+
+export interface DeletionRequestSummary {
+  id: number;
+  userId: number;
+  requestedBy: string;
+  status: string;
+  attempts: number;
+  lastError: string | null;
+  deadlineAt: string;
+  createdAt: string;
+  cancellations: Array<{ source: string; preapprovalId: string; status: string; attempts: number; lastError: string | null }>;
+}
+
+/** Visão operacional dos pedidos em aberto (ou de um status). Só ids e estados — sem PII. */
+export async function listDeletionRequests(status?: string, limit = 100): Promise<DeletionRequestSummary[]> {
+  const { rows } = await pool.query(
+    `SELECT r.id, r.user_id, r.requested_by, r.status, r.attempts, r.last_error, r.deadline_at, r.created_at,
+            COALESCE(json_agg(json_build_object(
+              'source', c.source_table, 'preapprovalId', c.mp_preapproval_id,
+              'status', c.status, 'attempts', c.attempts, 'lastError', c.last_error) ORDER BY c.id)
+              FILTER (WHERE c.id IS NOT NULL), '[]') AS cancellations
+       FROM account_deletion_requests r
+       LEFT JOIN account_deletion_cancellations c ON c.request_id = r.id
+      WHERE ($1::text IS NULL AND r.status IN ('pending_cancellation','stalled')) OR r.status = $1
+      GROUP BY r.id
+      ORDER BY r.created_at DESC
+      LIMIT $2`,
+    [status ?? null, limit],
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    userId: r.user_id,
+    requestedBy: r.requested_by,
+    status: r.status,
+    attempts: r.attempts,
+    lastError: r.last_error,
+    deadlineAt: new Date(r.deadline_at).toISOString(),
+    createdAt: new Date(r.created_at).toISOString(),
+    cancellations: r.cancellations,
+  }));
+}
+
+/** Reconciliação manual: reexecuta o pedido (inclusive `stalled`) pelo mesmo caminho do cron. */
+export async function retryDeletionRequest(requestId: number, gateway?: GatewayCancel): Promise<DeleteResult | 'blocked' | 'gone' | 'not_found'> {
+  const request = await getRequest(requestId);
+  if (!request) return 'not_found';
+  if (request.status === 'completed') return 'gone';
+  return advanceKnownRequest(request, gateway);
 }
 
 // ===========================================================================

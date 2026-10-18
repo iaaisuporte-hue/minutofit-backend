@@ -317,6 +317,17 @@ export async function handlePlatformPreapprovalWebhook(
   const action = actionForMpStatus(mpStatus);
   const mpPreapprovalId = payload?.id != null ? String(payload.id) : null;
 
+  // Titular excluído (Spec 040). Ao excluir a conta, cancelamos a recorrência no gateway ANTES de
+  // apagar o usuário — então a notificação de "cancelado" que o Mercado Pago manda em seguida chega
+  // quando o personal já não existe. O INSERT do evento violaria a FK, o handler devolveria 500 e o
+  // gateway repetiria a notificação indefinidamente. Não há nada a aplicar a uma conta que não existe:
+  // reconhece (200) e segue.
+  const titular = await pool.query(`SELECT 1 FROM users WHERE id = $1`, [personalId]);
+  if ((titular.rowCount ?? 0) === 0) {
+    logger.info({ personalId, mpStatus, eventId }, '[platform-billing] titular inexistente (conta excluída) — notificação reconhecida e ignorada');
+    return;
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -372,6 +383,11 @@ export async function handlePlatformPreapprovalWebhook(
     await client.query('COMMIT');
   } catch (err) {
     await client.query('ROLLBACK');
+    // A conta foi excluída entre a checagem acima e o INSERT (FK violada): mesmo caso, mesma resposta.
+    if ((err as { code?: string })?.code === '23503') {
+      logger.info({ personalId, mpStatus, eventId }, '[platform-billing] conta excluída durante o processamento — notificação ignorada');
+      return;
+    }
     throw err;
   } finally {
     client.release();

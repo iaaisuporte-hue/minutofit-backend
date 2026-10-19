@@ -36,6 +36,7 @@ import {
   type NutritionObjective,
   type ActivityLevel,
 } from '../services/nutritionTarget';
+import { getNutritionGoals, getPrescribedTargetInput } from '../services/nutritionGoalsService';
 import {
   parseAndResolve,
   persistIntakeLog,
@@ -298,6 +299,18 @@ router.get('/nutrition-plan', authMiddleware, async (req: Request, res: Response
   }
 });
 
+// Metas diárias prescritas pelo nutri (Spec 039) — read-only do próprio
+// usuário, mesma linha que o nutri lê/edita em /nutri/patients/:id/nutrition-goals.
+router.get('/nutrition-goals', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const goals = await getNutritionGoals(req.user!.id);
+    res.json({ success: true, data: { goals } });
+  } catch (err: any) {
+    logger.error({ err }, '[user/nutrition-goals]');
+    res.status(500).json({ success: false, error: 'Failed to load nutrition goals' });
+  }
+});
+
 // Perfil Alimentar (Spec 019) — read-only do próprio usuário.
 router.get('/dietary-profile', authMiddleware, async (req: Request, res: Response) => {
   try {
@@ -365,13 +378,14 @@ router.post('/nutrition-target/estimate', authMiddleware, requireFeature('nutrit
 router.get('/nutrition-target', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const [plan, selfRow] = await Promise.all([
+    const [plan, selfRow, prescribedGoal] = await Promise.all([
       getUserActivePlan(userId),
       pool.query(
         `SELECT energy_kcal, protein_g, carbohydrate_g, fat_g, meals_per_day, inputs
          FROM user_nutrition_targets WHERE user_id = $1 LIMIT 1`,
         [userId]
       ),
+      getPrescribedTargetInput(userId),
     ]);
 
     const selfTarget = selfRow.rows[0]
@@ -385,6 +399,7 @@ router.get('/nutrition-target', authMiddleware, requireFeature('nutrition_intake
       : null;
 
     const resolved = resolveNutritionTarget({
+      prescribedGoal,
       planDayTotals: plan?.dayTotals ?? null,
       planMealsCount: plan?.meals?.length ?? null,
       selfTarget,
@@ -395,7 +410,12 @@ router.get('/nutrition-target', authMiddleware, requireFeature('nutrition_intake
       data: {
         target: resolved,
         selfEstimateInputs: selfRow.rows[0]?.inputs ?? null,
-        nutriName: resolved?.source === 'plan_items' ? plan?.nutri_name ?? null : null,
+        nutriName:
+          resolved?.source === 'nutri_goal'
+            ? prescribedGoal?.updatedByName ?? null
+            : resolved?.source === 'plan_items'
+              ? plan?.nutri_name ?? null
+              : null,
       },
     });
   } catch (err: any) {
@@ -447,9 +467,10 @@ router.put('/nutrition-target', authMiddleware, requireFeature('nutrition_intake
       ]
     );
 
-    const plan = await getUserActivePlan(userId);
+    const [plan, prescribedGoal] = await Promise.all([getUserActivePlan(userId), getPrescribedTargetInput(userId)]);
     const row = upserted.rows[0];
     const resolved = resolveNutritionTarget({
+      prescribedGoal,
       planDayTotals: plan?.dayTotals ?? null,
       planMealsCount: plan?.meals?.length ?? null,
       selfTarget: {
@@ -552,7 +573,7 @@ router.get('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake
       ? req.query.date
       : dayKey();
 
-    const [logs, plan, selfRow] = await Promise.all([
+    const [logs, plan, selfRow, prescribedGoal] = await Promise.all([
       getDayLogs(userId, date),
       getUserActivePlan(userId),
       pool.query(
@@ -560,6 +581,7 @@ router.get('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake
            FROM user_nutrition_targets WHERE user_id = $1 LIMIT 1`,
         [userId]
       ),
+      getPrescribedTargetInput(userId),
     ]);
 
     const selfTarget = selfRow.rows[0]
@@ -573,6 +595,7 @@ router.get('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake
       : null;
 
     const target = resolveNutritionTarget({
+      prescribedGoal,
       planDayTotals: plan?.dayTotals ?? null,
       planMealsCount: plan?.meals?.length ?? null,
       selfTarget,

@@ -20,6 +20,7 @@ import {
 } from './nutritionFoodService';
 import { resolveGrams, calculateNutrition, sumNutrients, type CalculatedNutrients } from './nutritionCalculation';
 import { resolveNutritionTarget } from './nutritionTarget';
+import { getPrescribedTargetInputs, getPrescribedTargetInput } from './nutritionGoalsService';
 import { deriveIntakeSignal, type DayAgg, type IntakeTarget, type PatientIntakeSummary } from './nutritionIntake';
 import { classifyDaySummary, type DayCoverageLevel } from './nutritionIntakeService';
 
@@ -1375,6 +1376,8 @@ export async function getPatientsWithSummary(nutriId: number) {
     [patientIds]
   );
   const selfTargetsByPatient = new Map(selfTargetsRes.rows.map((r) => [r.user_id, r]));
+  // Spec 039 — meta prescrita pelo nutri entra na MESMA resolução (batch, nunca N+1).
+  const prescribedByPatient = await getPrescribedTargetInputs(patientIds);
 
   return patientsResult.rows.map((p) => {
     const scopes = consentByPatient.get(p.id);
@@ -1491,6 +1494,7 @@ export async function getPatientsWithSummary(nutriId: number) {
     const planTotalsRow = planTotalsByPatient.get(p.id);
     const selfTargetRow = selfTargetsByPatient.get(p.id);
     const resolvedTarget = resolveNutritionTarget({
+      prescribedGoal: prescribedByPatient.get(p.id) ?? null,
       planDayTotals: planTotalsRow
         ? { energyKcal: planTotalsRow.energy_kcal, proteinG: planTotalsRow.protein_g, carbohydrateG: planTotalsRow.carbohydrate_g, fatG: planTotalsRow.fat_g }
         : null,
@@ -1563,7 +1567,7 @@ async function resolvePatientIntakeContext(patientId: number): Promise<PatientIn
   );
   const plan = planRes.rows[0] ?? null;
 
-  const [mealCountRes, planTotalsRes, selfTargetRes, intakeDaysRes] = await Promise.all([
+  const [mealCountRes, planTotalsRes, selfTargetRes, intakeDaysRes, prescribedGoal] = await Promise.all([
     plan
       ? pool.query<{ meal_count: string }>(
           `SELECT COUNT(*)::int AS meal_count FROM nutrition_plan_meals WHERE plan_id = $1 AND deleted_at IS NULL`,
@@ -1594,6 +1598,7 @@ async function resolvePatientIntakeContext(patientId: number): Promise<PatientIn
         GROUP BY date_key`,
       [patientId, today]
     ),
+    getPrescribedTargetInput(patientId),
   ]);
 
   const mealsPerDay = Number(mealCountRes.rows[0]?.meal_count ?? 0);
@@ -1601,6 +1606,7 @@ async function resolvePatientIntakeContext(patientId: number): Promise<PatientIn
   const selfTargetRow = selfTargetRes.rows[0];
 
   const resolvedTarget = resolveNutritionTarget({
+    prescribedGoal,
     planDayTotals: planTotalsRow ? { energyKcal: planTotalsRow.energy_kcal, proteinG: planTotalsRow.protein_g, carbohydrateG: planTotalsRow.carbohydrate_g, fatG: planTotalsRow.fat_g } : null,
     planMealsCount: mealsPerDay || null,
     selfTarget: selfTargetRow

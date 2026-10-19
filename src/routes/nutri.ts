@@ -56,6 +56,11 @@ import {
   ValidationError as FoodValidationError,
   ForbiddenError as FoodForbiddenError,
 } from '../services/nutritionFoodService';
+import {
+  getNutritionGoals,
+  parseNutritionGoalsInput,
+  upsertNutritionGoals,
+} from '../services/nutritionGoalsService';
 import { registerNumericParams } from '../middleware/numericParam';
 
 const router = Router();
@@ -647,6 +652,60 @@ router.post(
       if (err instanceof FoodForbiddenError) return res.status(403).json({ success: false, error: err.message });
       if (err instanceof FoodValidationError) return res.status(400).json({ success: false, error: err.message });
       logger.error({ err }, '[nutri] create plan error');
+      res.status(500).json({ success: false, error: 'internal_error' });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Metas diárias do paciente (Spec 039) — fonte única que o aluno também lê
+// (/user/nutrition-goals) e que o diário consome via resolveNutritionTarget.
+// Vínculo ativo + consent `profile` vêm do prefixo `/patients/:patientId`;
+// `nutrition` é exigido aqui, como nas rotas de plano.
+// ─────────────────────────────────────────────────────────────────────────────
+
+router.get(
+  '/patients/:patientId/nutrition-goals',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const goals = await getNutritionGoals(patientId);
+      await logDataAccessEvent({ actorId: nutriId, subjectUserId: patientId, eventType: 'nutri.goals.read', eventPayload: {} });
+      res.json({ success: true, data: { goals } });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] get nutrition goals error');
+      res.status(500).json({ success: false, error: 'internal_error' });
+    }
+  }
+);
+
+router.put(
+  '/patients/:patientId/nutrition-goals',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const parsed = parseNutritionGoalsInput(req.body);
+      if (!parsed.ok) {
+        return res.status(400).json({ success: false, error: parsed.error, field: parsed.field });
+      }
+      const goals = await upsertNutritionGoals(patientId, nutriId, parsed.value);
+      await logDataAccessEvent({
+        actorId: nutriId,
+        subjectUserId: patientId,
+        eventType: 'nutri.goals.updated',
+        eventPayload: {
+          fields: Object.entries(parsed.value)
+            .filter(([, v]) => v != null && !(Array.isArray(v) && v.length === 0))
+            .map(([k]) => k),
+        },
+      });
+      res.json({ success: true, data: { goals } });
+    } catch (err: any) {
+      logger.error({ err }, '[nutri] put nutrition goals error');
       res.status(500).json({ success: false, error: 'internal_error' });
     }
   }

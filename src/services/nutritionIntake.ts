@@ -33,11 +33,12 @@ export interface IntakeException {
 
 export interface IntakeTarget {
   energyKcal: number;
-  proteinG: number;
-  carbohydrateG: number;
-  fatG: number;
+  /** `null` quando nenhuma fonte tem o nutriente (Spec 039 — precedência por nutriente). */
+  proteinG: number | null;
+  carbohydrateG: number | null;
+  fatG: number | null;
   mealsPerDay: number;
-  source: 'plan_items' | 'self_estimate';
+  source: 'nutri_goal' | 'plan_items' | 'self_estimate';
 }
 
 export interface PatientIntakeSummary {
@@ -48,7 +49,7 @@ export interface PatientIntakeSummary {
   avgProteinG7d: number | null;
   avgCarbG7d: number | null;
   avgFatG7d: number | null;
-  target: { kcal: number; p: number; c: number; f: number; source: 'plan_items' | 'self_estimate' } | null;
+  target: { kcal: number; p: number | null; c: number | null; f: number | null; source: IntakeTarget['source'] } | null;
   kcalTrend: IntakeTrend;
   /** Nunca mais de 1 — a exceção mais severa vence; severidade em ordem fixa. */
   exception: IntakeException | null;
@@ -163,13 +164,14 @@ export function deriveIntakeSignal(input: {
 
   // intake_protein_low: proteína < 80% da meta em >=4 dos últimos 5 dias de ALTA cobertura.
   const last5High = [...high7].sort((a, b) => daysAgo(a, todayKey) - daysAgo(b, todayKey)).slice(0, 5);
-  if (target && last5High.length >= 4) {
-    const lowProteinDays = last5High.filter((d) => d.proteinG < target.proteinG * 0.8);
+  const proteinTarget = target?.proteinG ?? null;
+  if (proteinTarget != null && last5High.length >= 4) {
+    const lowProteinDays = last5High.filter((d) => d.proteinG < proteinTarget * 0.8);
     if (lowProteinDays.length >= 4) {
       const avgLowProtein = round1(lowProteinDays.reduce((s, d) => s + d.proteinG, 0) / lowProteinDays.length);
       exceptions.push({
         type: 'intake_protein_low',
-        detail: `Proteína média ${avgLowProtein} g vs meta ${target.proteinG} g em ${lowProteinDays.length} dos últimos ${last5High.length} dias de alta cobertura`,
+        detail: `Proteína média ${avgLowProtein} g vs meta ${proteinTarget} g em ${lowProteinDays.length} dos últimos ${last5High.length} dias de alta cobertura`,
       });
     }
   }

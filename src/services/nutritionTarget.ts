@@ -142,23 +142,36 @@ export function splitTargetByMeals(
   return meals;
 }
 
-export type NutritionTargetSource = 'plan_items' | 'self_estimate';
+export type NutritionTargetSource = 'nutri_goal' | 'plan_items' | 'self_estimate';
 
 export interface ResolvedNutritionTarget {
   energyKcal: number;
-  proteinG: number;
-  carbohydrateG: number;
-  fatG: number;
+  /** `null` só quando nenhuma fonte tem o nutriente (ex.: meta do nutri só com kcal, sem plano e sem estimativa). */
+  proteinG: number | null;
+  carbohydrateG: number | null;
+  fatG: number | null;
   mealsPerDay: number;
+  /** Fonte da kcal — o número-manchete. Cada nutriente pode vir de uma fonte diferente. */
   source: NutritionTargetSource;
+  /** Presente só quando a proteína veio da meta do nutri: `proteinG` é o mínimo da faixa. */
+  proteinRange: { minG: number; maxG: number | null } | null;
 }
 
 /**
- * O plano do nutri vence quando existe (decisão do usuário, P1A). Um plano
- * só-texto (sem itens estruturados da SPEC 038) tem `dayTotals.energyKcal
- * === 0` — isso é lido como "sem meta do plano", NUNCA como "meta zero".
+ * Precedência POR NUTRIENTE (Spec 039, decisão do usuário 19/10/2026):
+ * meta prescrita pelo nutri > itens do plano > estimativa própria.
+ *
+ * - kcal e proteína: a meta do nutri vence quando o nutriente foi prescrito;
+ *   ausente (`null`) cai para o próximo nível — nunca é lido como zero.
+ * - carboidrato e gordura: regra anterior intacta (plano > estimativa). A
+ *   meta do nutri não os recalcula.
+ * - Um plano só-texto (sem itens estruturados da SPEC 038) tem
+ *   `dayTotals.energyKcal === 0` — isso é "sem meta do plano", NUNCA "meta
+ *   zero".
+ * - Sem kcal em nenhuma fonte → `null` (diário mostra só o registrado).
  */
 export function resolveNutritionTarget(input: {
+  prescribedGoal?: { energyKcal: number | null; proteinMinG: number | null; proteinMaxG: number | null } | null;
   planDayTotals?: { energyKcal: number; proteinG: number; carbohydrateG: number; fatG: number } | null;
   planMealsCount?: number | null;
   selfTarget?: {
@@ -169,29 +182,35 @@ export function resolveNutritionTarget(input: {
     mealsPerDay: number;
   } | null;
 }): ResolvedNutritionTarget | null {
-  const { planDayTotals, planMealsCount, selfTarget } = input;
+  const { prescribedGoal, planDayTotals, planMealsCount, selfTarget } = input;
+  const plan = planDayTotals && planDayTotals.energyKcal > 0 ? planDayTotals : null;
+  const self = selfTarget ?? null;
 
-  if (planDayTotals && planDayTotals.energyKcal > 0) {
-    return {
-      energyKcal: planDayTotals.energyKcal,
-      proteinG: planDayTotals.proteinG,
-      carbohydrateG: planDayTotals.carbohydrateG,
-      fatG: planDayTotals.fatG,
-      mealsPerDay: planMealsCount && planMealsCount > 0 ? planMealsCount : 3,
-      source: 'plan_items',
-    };
+  let energyKcal: number;
+  let source: NutritionTargetSource;
+  if (prescribedGoal?.energyKcal != null) {
+    energyKcal = prescribedGoal.energyKcal;
+    source = 'nutri_goal';
+  } else if (plan) {
+    energyKcal = plan.energyKcal;
+    source = 'plan_items';
+  } else if (self) {
+    energyKcal = self.energyKcal;
+    source = 'self_estimate';
+  } else {
+    return null;
   }
 
-  if (selfTarget) {
-    return {
-      energyKcal: selfTarget.energyKcal,
-      proteinG: selfTarget.proteinG,
-      carbohydrateG: selfTarget.carbohydrateG,
-      fatG: selfTarget.fatG,
-      mealsPerDay: selfTarget.mealsPerDay,
-      source: 'self_estimate',
-    };
-  }
+  const proteinRange =
+    prescribedGoal?.proteinMinG != null
+      ? { minG: prescribedGoal.proteinMinG, maxG: prescribedGoal.proteinMaxG ?? null }
+      : null;
+  const proteinG = proteinRange ? proteinRange.minG : plan ? plan.proteinG : self ? self.proteinG : null;
+  const carbohydrateG = plan ? plan.carbohydrateG : self ? self.carbohydrateG : null;
+  const fatG = plan ? plan.fatG : self ? self.fatG : null;
 
-  return null;
+  const planMeals = planMealsCount && planMealsCount > 0 ? planMealsCount : null;
+  const mealsPerDay = plan ? planMeals ?? 3 : self ? self.mealsPerDay : planMeals ?? 3;
+
+  return { energyKcal, proteinG, carbohydrateG, fatG, mealsPerDay, source, proteinRange };
 }

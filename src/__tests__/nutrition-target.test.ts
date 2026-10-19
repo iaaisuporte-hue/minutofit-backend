@@ -101,7 +101,7 @@ describe('nutritionTarget', () => {
       });
       expect(resolved).toEqual({
         energyKcal: 1800, proteinG: 140, carbohydrateG: 180, fatG: 60,
-        mealsPerDay: 4, source: 'plan_items',
+        mealsPerDay: 4, source: 'plan_items', proteinRange: null,
       });
     });
 
@@ -126,7 +126,7 @@ describe('nutritionTarget', () => {
       });
       expect(resolved).toEqual({
         energyKcal: 2000, proteinG: 150, carbohydrateG: 200, fatG: 65,
-        mealsPerDay: 4, source: 'self_estimate',
+        mealsPerDay: 4, source: 'self_estimate', proteinRange: null,
       });
     });
 
@@ -136,6 +136,88 @@ describe('nutritionTarget', () => {
         planMealsCount: null,
       });
       expect(resolved?.mealsPerDay).toBe(3);
+    });
+  });
+
+  // Spec 039 — precedência POR NUTRIENTE: meta do nutri > itens do plano > estimativa própria.
+  describe('resolveNutritionTarget · meta prescrita pelo nutri', () => {
+    const plan = { energyKcal: 1800, proteinG: 140, carbohydrateG: 180, fatG: 60 };
+    const self = { energyKcal: 2200, proteinG: 160, carbohydrateG: 220, fatG: 70, mealsPerDay: 5 };
+
+    it('meta + plano: kcal e proteína da meta; carb/gordura e refeições seguem o plano', () => {
+      const resolved = resolveNutritionTarget({
+        prescribedGoal: { energyKcal: 2300, proteinMinG: 150, proteinMaxG: 170 },
+        planDayTotals: plan,
+        planMealsCount: 4,
+        selfTarget: self,
+      });
+      expect(resolved).toEqual({
+        energyKcal: 2300, proteinG: 150, carbohydrateG: 180, fatG: 60,
+        mealsPerDay: 4, source: 'nutri_goal', proteinRange: { minG: 150, maxG: 170 },
+      });
+    });
+
+    it('meta sem plano: carb/gordura vêm da estimativa própria', () => {
+      const resolved = resolveNutritionTarget({
+        prescribedGoal: { energyKcal: 2300, proteinMinG: 150, proteinMaxG: null },
+        planDayTotals: null,
+        selfTarget: self,
+      });
+      expect(resolved).toMatchObject({
+        energyKcal: 2300, proteinG: 150, carbohydrateG: 220, fatG: 70,
+        mealsPerDay: 5, source: 'nutri_goal', proteinRange: { minG: 150, maxG: null },
+      });
+    });
+
+    it('meta só com calorias, sem plano e sem estimativa: P/C/G ficam null (nunca 0)', () => {
+      const resolved = resolveNutritionTarget({
+        prescribedGoal: { energyKcal: 2000, proteinMinG: null, proteinMaxG: null },
+        planDayTotals: null,
+        selfTarget: null,
+      });
+      expect(resolved).toEqual({
+        energyKcal: 2000, proteinG: null, carbohydrateG: null, fatG: null,
+        mealsPerDay: 3, source: 'nutri_goal', proteinRange: null,
+      });
+    });
+
+    it('meta só com calorias + plano: proteína continua sendo a do plano', () => {
+      const resolved = resolveNutritionTarget({
+        prescribedGoal: { energyKcal: 2000, proteinMinG: null, proteinMaxG: null },
+        planDayTotals: plan,
+        planMealsCount: 4,
+      });
+      expect(resolved?.proteinG).toBe(140);
+      expect(resolved?.proteinRange).toBeNull();
+      expect(resolved?.source).toBe('nutri_goal');
+    });
+
+    it('meta só com proteína: kcal cai para o plano, proteína vem da meta', () => {
+      const resolved = resolveNutritionTarget({
+        prescribedGoal: { energyKcal: null, proteinMinG: 160, proteinMaxG: 180 },
+        planDayTotals: plan,
+        planMealsCount: 4,
+      });
+      expect(resolved).toMatchObject({ energyKcal: 1800, source: 'plan_items', proteinG: 160, proteinRange: { minG: 160, maxG: 180 } });
+    });
+
+    it('meta só com proteína e nenhuma fonte de kcal: null (diário sem meta, como hoje)', () => {
+      expect(resolveNutritionTarget({
+        prescribedGoal: { energyKcal: null, proteinMinG: 160, proteinMaxG: null },
+        planDayTotals: null,
+        selfTarget: null,
+      })).toBeNull();
+    });
+
+    it('meta vazia (só fibra/água prescritas) não altera a resolução anterior', () => {
+      const semMeta = resolveNutritionTarget({ planDayTotals: plan, planMealsCount: 4, selfTarget: self });
+      const comMetaVazia = resolveNutritionTarget({
+        prescribedGoal: { energyKcal: null, proteinMinG: null, proteinMaxG: null },
+        planDayTotals: plan,
+        planMealsCount: 4,
+        selfTarget: self,
+      });
+      expect(comMetaVazia).toEqual(semMeta);
     });
   });
 });

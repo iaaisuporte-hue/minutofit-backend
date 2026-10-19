@@ -38,6 +38,15 @@ import {
 } from '../services/nutritionTarget';
 import { getNutritionGoals, getPrescribedTargetInput } from '../services/nutritionGoalsService';
 import {
+  getSupplementsForStudent,
+  logSupplementUsage,
+  parseUsageInput,
+  undoSupplementUsage,
+  SupplementConflictError,
+  SupplementNotFoundError,
+  SupplementValidationError,
+} from '../services/nutritionSupplementService';
+import {
   parseAndResolve,
   persistIntakeLog,
   updateIntakeLog,
@@ -57,7 +66,7 @@ import { searchCatalogFoods } from '../services/nutritionFoodService';
 import { sumNutrients } from '../services/nutritionCalculation';
 
 const router = Router();
-registerNumericParams(router, ['planId', 'mealId', 'id']);
+registerNumericParams(router, ['planId', 'mealId', 'id', 'supplementId', 'logId']);
 
 // Eventos de UX do frontend do aluno — allow-list; actorId = subjectUserId = self.
 // Mede percepção real do aluno (card renderizado), não só fetch. Espelha POST /training/events.
@@ -308,6 +317,45 @@ router.get('/nutrition-goals', authMiddleware, async (req: Request, res: Respons
   } catch (err: any) {
     logger.error({ err }, '[user/nutrition-goals]');
     res.status(500).json({ success: false, error: 'Failed to load nutrition goals' });
+  }
+});
+
+// Suplementação (Spec 040) — o aluno lê as orientações ATIVAS e registra o
+// próprio uso; nunca altera a orientação. O uso não tem nutrientes e não toca
+// o diário alimentar. Tudo filtrado por `patient_id = req.user.id`.
+router.get('/supplements', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const data = await getSupplementsForStudent(req.user!.id);
+    res.json({ success: true, data });
+  } catch (err: any) {
+    logger.error({ err }, '[user/supplements]');
+    res.status(500).json({ success: false, error: 'Failed to load supplements' });
+  }
+});
+
+router.post('/supplements/:supplementId/usage', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const input = parseUsageInput(req.body);
+    const { log, created } = await logSupplementUsage(req.user!.id, Number(req.params.supplementId), input);
+    res.status(created ? 201 : 200).json({ success: true, data: { log } });
+  } catch (err: any) {
+    if (err instanceof SupplementValidationError) return res.status(400).json({ success: false, error: err.message, field: err.field });
+    if (err instanceof SupplementNotFoundError) return res.status(404).json({ success: false, error: 'supplement_not_found' });
+    if (err instanceof SupplementConflictError) return res.status(409).json({ success: false, error: err.message });
+    logger.error({ err }, '[user/supplements usage POST]');
+    res.status(500).json({ success: false, error: 'Failed to log supplement usage' });
+  }
+});
+
+router.delete('/supplements/usage/:logId', authMiddleware, async (req: Request, res: Response) => {
+  try {
+    const result = await undoSupplementUsage(req.user!.id, Number(req.params.logId));
+    if (result === 'not_found') return res.status(404).json({ success: false, error: 'usage_not_found' });
+    if (result === 'not_today') return res.status(403).json({ success: false, error: 'Só é possível desfazer registros de hoje' });
+    res.json({ success: true });
+  } catch (err: any) {
+    logger.error({ err }, '[user/supplements usage DELETE]');
+    res.status(500).json({ success: false, error: 'Failed to undo supplement usage' });
   }
 });
 

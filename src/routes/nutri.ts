@@ -61,10 +61,20 @@ import {
   parseNutritionGoalsInput,
   upsertNutritionGoals,
 } from '../services/nutritionGoalsService';
+import {
+  createSupplement,
+  listSupplementsForNutri,
+  parseSupplementInput,
+  parseSupplementPatch,
+  updateSupplement,
+  SupplementConflictError,
+  SupplementNotFoundError,
+  SupplementValidationError,
+} from '../services/nutritionSupplementService';
 import { registerNumericParams } from '../middleware/numericParam';
 
 const router = Router();
-registerNumericParams(router, ['patientId', 'planId', 'itemId', 'id']);
+registerNumericParams(router, ['patientId', 'planId', 'itemId', 'id', 'supplementId']);
 
 /**
  * SPEC 038 (P3A) — validação de FORMA (não de composição — isso é
@@ -707,6 +717,89 @@ router.put(
     } catch (err: any) {
       logger.error({ err }, '[nutri] put nutrition goals error');
       res.status(500).json({ success: false, error: 'internal_error' });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Suplementação (Spec 040) — orientação do nutri + resumo SOMENTE LEITURA do
+// uso registrado pelo aluno (último uso e contagem de 7 dias). Vínculo ativo
+// + consent `profile` vêm do prefixo; `nutrition` é exigido aqui. Toda
+// escrita por id confere `patient_id` no service (id de outro paciente → 404).
+// A auditoria registra quais campos mudaram, nunca nome/dose do suplemento.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function sendSupplementError(res: Response, err: unknown, logLabel: string) {
+  if (err instanceof SupplementValidationError) {
+    return res.status(400).json({ success: false, error: err.message, field: err.field });
+  }
+  if (err instanceof SupplementNotFoundError) {
+    return res.status(404).json({ success: false, error: 'supplement_not_found' });
+  }
+  if (err instanceof SupplementConflictError) {
+    return res.status(409).json({ success: false, error: err.message });
+  }
+  logger.error({ err }, logLabel);
+  return res.status(500).json({ success: false, error: 'internal_error' });
+}
+
+router.get(
+  '/patients/:patientId/supplements',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const supplements = await listSupplementsForNutri(patientId);
+      await logDataAccessEvent({ actorId: nutriId, subjectUserId: patientId, eventType: 'nutri.supplements.read', eventPayload: {} });
+      res.json({ success: true, data: { supplements } });
+    } catch (err) {
+      sendSupplementError(res, err, '[nutri] list supplements error');
+    }
+  }
+);
+
+router.post(
+  '/patients/:patientId/supplements',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const fields = parseSupplementInput(req.body);
+      const supplement = await createSupplement(patientId, nutriId, fields);
+      await logDataAccessEvent({
+        actorId: nutriId,
+        subjectUserId: patientId,
+        eventType: 'nutri.supplements.created',
+        eventPayload: { supplementId: supplement.id },
+      });
+      res.status(201).json({ success: true, data: { supplement } });
+    } catch (err) {
+      sendSupplementError(res, err, '[nutri] create supplement error');
+    }
+  }
+);
+
+router.patch(
+  '/patients/:patientId/supplements/:supplementId',
+  requireActiveConsent('nutrition'),
+  async (req: Request, res: Response) => {
+    try {
+      const nutriId = req.user!.id;
+      const patientId = Number(req.params.patientId);
+      const supplementId = Number(req.params.supplementId);
+      const patch = parseSupplementPatch(req.body);
+      const supplement = await updateSupplement(patientId, supplementId, nutriId, patch);
+      await logDataAccessEvent({
+        actorId: nutriId,
+        subjectUserId: patientId,
+        eventType: 'nutri.supplements.updated',
+        eventPayload: { supplementId, fields: Object.keys(patch.fields), status: patch.status },
+      });
+      res.json({ success: true, data: { supplement } });
+    } catch (err) {
+      sendSupplementError(res, err, '[nutri] update supplement error');
     }
   }
 );

@@ -59,6 +59,7 @@ import {
   ValidationError as IntakeValidationError,
   EditWindowError,
   IntakeConflictError,
+  MealAlreadyLoggedError,
   type IntakeItemRequest,
 } from '../services/nutritionIntakeService';
 import { dayKey } from '../utils/appDay';
@@ -575,13 +576,16 @@ router.post('/nutrition-intake/parse', authMiddleware, requireFeature('nutrition
 router.post('/nutrition-intake', authMiddleware, requireFeature('nutrition_intake'), async (req: Request, res: Response) => {
   try {
     const userId = req.user!.id;
-    const { label, rawText, mealId, logId, items, source } = req.body ?? {};
+    const { label, rawText, mealId, logId, items, source, onlyIfMealEmpty } = req.body ?? {};
     const validSources = ['parse', 'parse_ai', 'manual', 'repeat', 'favorite', 'plan'];
     if (!validSources.includes(source)) {
       return res.status(400).json({ success: false, error: `source deve ser um de: ${validSources.join(', ')}` });
     }
     if (!Array.isArray(items)) {
       return res.status(400).json({ success: false, error: 'items é obrigatório' });
+    }
+    if (onlyIfMealEmpty !== undefined && typeof onlyIfMealEmpty !== 'boolean') {
+      return res.status(400).json({ success: false, error: 'onlyIfMealEmpty deve ser booleano' });
     }
 
     const log = await persistIntakeLog({
@@ -597,10 +601,15 @@ router.post('/nutrition-intake', authMiddleware, requireFeature('nutrition_intak
       logId: logId != null && Number.isFinite(Number(logId)) ? Number(logId) : null,
       items: items as IntakeItemRequest[],
       source,
+      onlyIfMealEmpty: onlyIfMealEmpty === true,
     });
 
     res.status(201).json({ success: true, data: log });
   } catch (err: any) {
+    if (err instanceof MealAlreadyLoggedError) {
+      // P0 Feito → diário: a refeição já tem consumo hoje; devolve a linha para o cliente mostrar "já registrado".
+      return res.status(409).json({ success: false, error: 'meal_already_logged', data: err.log });
+    }
     if (err instanceof IntakeValidationError) {
       // `log_not_found`: logId de outra pessoa ou apagado — 404, sem confirmar que existe.
       if (err.message === 'log_not_found') return res.status(404).json({ success: false, error: 'Log not found' });

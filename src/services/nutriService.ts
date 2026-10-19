@@ -974,6 +974,21 @@ export async function getMealTimeline(userId: number) {
     checkinsMap = new Map(checkinsResult.rows.map((r) => [r.meal_id, r]));
   }
 
+  // P0 Feito → diário: consumo JÁ registrado hoje por refeição do plano, para
+  // a timeline mostrar "registrado" e o convite pós-"Segui" não oferecer o
+  // registro integral de novo. Só leitura — adesão e consumo seguem separados.
+  let intakeByMeal = new Map<number, { logId: number; energyKcal: number }>();
+  if (mealIds.length > 0) {
+    const intakeResult = await pool.query(
+      `SELECT meal_id, MIN(id) AS log_id, SUM(energy_kcal)::float AS energy_kcal
+         FROM user_nutrition_intake_logs
+        WHERE user_id = $1 AND date_key = $2 AND deleted_at IS NULL AND meal_id = ANY($3)
+        GROUP BY meal_id`,
+      [userId, today, mealIds]
+    );
+    intakeByMeal = new Map(intakeResult.rows.map((r) => [r.meal_id, { logId: Number(r.log_id), energyKcal: Number(r.energy_kcal) }]));
+  }
+
   const workoutToday = workoutResult.rows[0]
     ? { title: workoutResult.rows[0].title as string, muscleGroups: workoutResult.rows[0].muscle_groups as string[] }
     : null;
@@ -1003,7 +1018,7 @@ export async function getMealTimeline(userId: number) {
       checkin,
       nowMinutes
     );
-    return { ...m, status, checkin };
+    return { ...m, status, checkin, intakeToday: intakeByMeal.get(m.id) ?? null };
   });
 
   return { ...plan, today, meals, workoutToday, streak };

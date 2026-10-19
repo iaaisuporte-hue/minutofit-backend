@@ -60,6 +60,18 @@ export class IntakeConflictError extends Error {
   }
 }
 
+/**
+ * "Sim, registrar conforme o plano" numa refeição que JÁ tem consumo hoje
+ * (P0 Feito → diário). Carrega a linha existente para o cliente mostrar
+ * "já registrado" em vez de somar o plano por cima do que o aluno comeu.
+ */
+export class MealAlreadyLoggedError extends Error {
+  constructor(public log: IntakeLogRecord) {
+    super('meal_already_logged');
+    this.name = 'MealAlreadyLoggedError';
+  }
+}
+
 function toDateKeyString(v: unknown): string {
   return v instanceof Date ? v.toISOString().slice(0, 10) : String(v);
 }
@@ -858,6 +870,13 @@ export interface IntakeLogInput {
   logId?: number | null;
   items: IntakeItemRequest[];
   source: 'parse' | 'parse_ai' | 'manual' | 'repeat' | 'favorite' | 'plan';
+  /**
+   * Registro integral da refeição do plano: só grava se a refeição (`mealId`)
+   * ainda não tem consumo hoje. Decidido DENTRO da trava do dia, então dois
+   * toques simultâneos ou um registro manual concorrente nunca somam o plano
+   * duas vezes. Reenvio com as mesmas `clientKey`s continua idempotente.
+   */
+  onlyIfMealEmpty?: boolean;
 }
 
 export interface IntakeLogRecord {
@@ -1053,6 +1072,7 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
   if (input.items.some((i) => (i as { kind: string }).kind === 'existing')) throw new ValidationError('invalid_item_kind');
 
   const mealId = input.mealId ?? null;
+  if (input.onlyIfMealEmpty && mealId == null) throw new ValidationError('meal_required');
   if (mealId != null) await assertOwnPlanMeal(input.userId, mealId);
 
   const dateKey = dayKey();
@@ -1112,6 +1132,11 @@ export async function persistIntakeLog(input: IntakeLogInput): Promise<IntakeLog
     if (fresh.length === 0) {
       await client.query('COMMIT');
       return mapRow(target ?? keyRow.get(wanted[0]));
+    }
+    // Reenvio idempotente já saiu acima; aqui a refeição tem consumo que NÃO veio deste registro integral.
+    if (input.onlyIfMealEmpty && target) {
+      await client.query('ROLLBACK');
+      throw new MealAlreadyLoggedError(mapRow(target));
     }
 
     const resolved = await resolveNewItems(input.userId, fresh);
